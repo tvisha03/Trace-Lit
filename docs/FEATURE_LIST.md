@@ -19,6 +19,14 @@
 - WebSocket pushes per-paper stage progress (extraction 0–25%, chunking 25–40%, embedding 40–90%, indexing 90–100%)
 - Paper becomes queryable immediately upon completion — progressive availability
 
+**Smart Queue Algorithm**: The `SmartPaperQueue` manages processing with memory-aware scheduling:
+- Monitors system RAM before starting each paper (skips if >75% used)
+- Enforces `max_concurrent` limit (default 3) based on available memory
+- Sends structured WebSocket progress events per-paper: `{paper_id, stage, progress, eta}`
+- Enables partial-collection querying — the RAG pipeline queries only `completed` papers while others are still processing
+
+> **📖 Full implementation**: See `RAG_AND_CHUNKING_STRATEGY.md` → **Section 18: Progressive Paper Processing** for the complete `SmartPaperQueue` class with memory-aware scheduling, WebSocket progress protocol, and partial availability handling.
+
 **Key Files**:
 - `backend/app/api/papers.py`
 - `backend/app/extraction/pdf_processor.py`

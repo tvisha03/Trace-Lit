@@ -102,6 +102,16 @@ def check_memory():
         logger.warning(f"Memory high: {used_gb:.1f}GB used")
 ```
 
+**Advanced Memory Management**: The `check_memory()` snippet above is entry-level monitoring. The full mitigation uses two dedicated classes:
+
+- **`MemoryMonitor`** — Runs as a background task with 3 response tiers:
+  - **Warning (60%)**: Trigger garbage collection, log alert
+  - **Critical (75%)**: Unload unused models, clear caches, reduce batch sizes
+  - **Emergency (90%)**: Reject new paper uploads, force-unload all optional models
+- **`LazyModelLoader`** — Defers loading of `SentenceTransformer` (~400MB) and `CrossEncoder` (~500MB) until first query, and auto-unloads after 10 minutes of inactivity. This alone saves ~1.2GB at startup.
+
+> **📖 Full implementation**: See `RAG_AND_CHUNKING_STRATEGY.md` → **Section 20: Memory Management for M3** for complete `LazyModelLoader` and `MemoryMonitor` classes with threshold configurations, GC integration, and model lifecycle management.
+
 ---
 
 ### Risk 8: Running Out of Time

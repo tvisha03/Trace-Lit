@@ -156,6 +156,31 @@ Log on every request:
 - HAVF verification time
 - Memory usage at time of request
 
+### Comprehensive Performance Monitoring
+
+The basic logging above covers essential request-level metrics. For production-grade observability, TraceLit implements a `PerformanceMonitor` that tracks:
+
+- **Query performance**: End-to-end latency, retrieval time, LLM generation time, HAVF verification time (per-level breakdown)
+- **System health**: Memory usage trends, GC frequency, CPU utilisation
+- **Quality metrics**: HAVF pass rates, citation density, fallback frequency, average confidence scores
+- **Provider analytics**: Per-provider latency percentiles (p50/p95/p99), rate limit proximity, cost tracking
+
+The monitor exposes a `/api/metrics` endpoint returning a JSON dashboard payload and triggers alerts when metrics cross configurable thresholds (e.g., p95 latency >3s, HAVF pass rate <80%).
+
+> **📖 Full implementation**: See `RAG_AND_CHUNKING_STRATEGY.md` → **Section 19: Performance Metrics & Monitoring** for the complete `PerformanceMonitor` class with metric recording, percentile calculations, and alert thresholds.
+
+### Advanced Memory Management
+
+The `memory_watchdog` above provides basic threshold alerts. The full memory management system adds:
+
+- **`MemoryMonitor`**: Tiered response at 60%/75%/90% usage — from GC nudges to model unloading to emergency cleanup
+- **`LazyModelLoader`**: Loads `SentenceTransformer` and `CrossEncoder` on first use, not at startup — saving ~1.2GB until needed
+- **On-demand unloading**: Models unused for >10 minutes are automatically unloaded and reloaded when next needed
+
+This is critical for the 8GB M3 MacBook constraint where Docker containers, ChromaDB, and ML models compete for limited unified memory.
+
+> **📖 Full implementation**: See `RAG_AND_CHUNKING_STRATEGY.md` → **Section 20: Memory Management for M3** for the complete `LazyModelLoader` and `MemoryMonitor` classes with threshold-based tiered responses and automatic model lifecycle management.
+
 ---
 
 ## 5. Health Check Endpoint

@@ -258,6 +258,36 @@ Current question: {query}"""
 
 **Key behavior**: When provider switches mid-conversation (e.g. Gemini → Groq), the conversation history is passed to the new provider so context is not lost.
 
+### 6.1 Context Token Budget Management
+
+The simple session manager above handles conversation history — but the full system also enforces **token budget allocation** to prevent context overflow within provider limits:
+
+- **System prompt**: 500 tokens (fixed)
+- **Retrieved context**: 2,000 tokens (variable, based on paper count)
+- **Conversation history**: 800 tokens (adaptive, compressed if needed)
+- **Response headroom**: 700 tokens (reserved)
+
+The `ContextBudgetManager` class dynamically adjusts these allocations based on available papers and active provider token limits. When papers exceed the budget, it prioritizes the most relevant chunks and truncates conversation history before reducing retrieved context.
+
+> **📖 Full implementation**: See `RAG_AND_CHUNKING_STRATEGY.md` → **Section 13: Context Token Budget Management** for the complete `ContextBudgetManager` class with per-provider budget calculation, priority-based allocation, and automatic compression strategies.
+
+### 6.2 Query Type Routing
+
+Not all queries need the same processing pipeline. The `QueryRouter` classifies incoming queries into 6 types and routes each through an optimised path:
+
+| Query Type | `top_k` | Context Strategy | HAVF Level |
+|------------|---------|-----------------|------------|
+| `factual` | 3 | Exact match focused | Both levels |
+| `comparison` | 5 per paper | Multi-paper balanced | Both levels |
+| `summary` | 8 | Broad coverage | Level 1 only |
+| `methodology` | 4 | Section-filtered (methods/experiments) | Both levels |
+| `follow_up` | 3 | History-aware, reuses prior context | Level 1 only |
+| `exploratory` | 6 | Diverse retrieval | Level 1 only |
+
+This ensures factual queries get tight, verifiable context while summary queries get broader coverage — directly impacting citation quality and HAVF pass rates.
+
+> **📖 Full implementation**: See `RAG_AND_CHUNKING_STRATEGY.md` → **Section 16: Query Type Routing** for the complete `QueryRouter` class with keyword/pattern classification, per-type retrieval strategies, and integration with the `ContextBudgetManager`.
+
 ---
 
 ## 7. Streaming (SSE)
