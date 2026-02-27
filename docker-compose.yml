@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DATABASE_URL=sqlite:///./data/tracelit.db
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+      - HIGH_CONFIDENCE_THRESHOLD=0.85
+      - MEDIUM_CONFIDENCE_THRESHOLD=0.65
+      - MAX_PAPERS=7
+      - MAX_CONCURRENT_PAPERS=3
+    volumes:
+      - ./data:/app/data
+    mem_limit: 3g
+    cpus: 2
+    depends_on: [chromadb]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports: ["8001:8000"]
+    volumes:
+      - chroma_data:/chroma/chroma
+    mem_limit: 1g
+    cpus: 0.5
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+
+  frontend:
+    build: ./frontend
+    ports: ["3000:80"]
+    mem_limit: 512m
+    cpus: 0.5
+    depends_on: [backend]
+
+volumes:
+  chroma_data:

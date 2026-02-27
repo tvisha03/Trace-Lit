@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Environment
+.env
+*.env.local
+
+# Data (don't commit uploads or DB)
+data/uploads/
+data/exports/
+data/logs/
+*.db
+*.sqlite
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML Models (too large for git)
+models/
+
+# Test papers (copyrighted PDFs)
+test_papers/
