@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TraceLit — Academic Literature Assistant</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:       #080808;
+      --s1:       #0f0f0f;
+      --s2:       #141414;
+      --s3:       #1a1a1a;
+      --s4:       #212121;
+      --s5:       #2a2a2a;
+
+      --b1:       #222222;
+      --b2:       #2e2e2e;
+      --b3:       #3a3a3a;
+
+      --t1:       #ececec;
+      --t2:       #aaaaaa;
+      --t3:       #666666;
+      --t4:       #444444;
+
+      --gold:     #c9a96e;
+      --gold-dim: rgba(201,169,110,0.12);
+      --gold-glow:rgba(201,169,110,0.06);
+
+      --hi:       #34d399;
+      --hi-dim:   rgba(52,211,153,0.12);
+      --med:      #fbbf24;
+      --low:      #f87171;
+      --info:     #60a5fa;
+
+      --serif: 'DM Serif Display', Georgia, serif;
+      --mono:  'DM Mono', monospace;
+      --sans:  'DM Sans', system-ui, sans-serif;
+      --r:     6px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%; font-family: var(--sans);
+      background: var(--bg); color: var(--t1);
+      font-size: 14px; line-height: 1.5;
+      overflow: hidden; -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar { width: 3px; height: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--s5); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--b3); }
+
+    /* ── App shell ── */
+    .app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── Topbar ── */
+    .topbar {
+      display: flex; align-items: center;
+      height: 50px; padding: 0 20px;
+      background: var(--s1); border-bottom: 1px solid var(--b1);
+    }
+    .logo { display: flex; align-items: baseline; gap: 7px; margin-right: 36px; }
+    .logo-name { font-family: var(--serif); font-size: 17px; color: var(--t1); letter-spacing: 0.01em; }
+    .logo-badge {
+      font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+      color: var(--gold); opacity: 0.75; border: 1px solid rgba(201,169,110,0.3);
+      padding: 1px 5px; border-radius: 3px;
+    }
+
+    .nav-tabs { display: flex; gap: 1px; flex: 1; }
+    .nav-tab {
+      padding: 5px 13px; border-radius: var(--r);
+      font-size: 13px; color: var(--t3); cursor: pointer; transition: all 0.15s;
+    }
+    .nav-tab:hover { color: var(--t2); background: var(--s2); }
+    .nav-tab.active { color: var(--t1); background: var(--s3); }
+
+    .topbar-right { display: flex; align-items: center; gap: 14px; }
+    .status-indicator {
+      display: flex; align-items: center; gap: 6px;
+      font-family: var(--mono); font-size: 10.5px; color: var(--t3);
+    }
+    .status-dot {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--hi); box-shadow: 0 0 6px var(--hi);
+      animation: breathe 3s ease-in-out infinite;
+    }
+    @keyframes breathe { 0%,100% { opacity:1; } 50% { opacity:0.45; } }
+
+    .avatar {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: var(--s4); border: 1.5px solid var(--b3);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; color: var(--gold); cursor: pointer; transition: border-color 0.2s;
+    }
+    .avatar:hover { border-color: var(--gold); }
+
+    /* ── Workspace ── */
+    .workspace { display: flex; flex: 1; overflow: hidden; }
+
+    .panel {
+      display: flex; flex-direction: column; overflow: hidden;
+      background: var(--s1); border-right: 1px solid var(--b1);
+    }
+
+    /* ── Left panel ── */
+    .panel-left { width: 224px; flex-shrink: 0; }
+
+    .sessions-pane { height: 265px; overflow-y: auto; border-bottom: 1px solid var(--b1); }
+
+    .pane-header {
+      padding: 11px 16px; display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid var(--b1);
+    }
+    .pane-title { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.09em; color: var(--t4); }
+    .pane-action { font-size: 16px; color: var(--t3); cursor: pointer; line-height: 1; }
+    .pane-action:hover { color: var(--gold); }
+
+    .session-item {
+      padding: 11px 16px; cursor: pointer; position: relative; transition: background 0.15s;
+    }
+    .session-item:hover { background: var(--s2); }
+    .session-item.active { background: var(--gold-glow); }
+    .session-item.active::before {
+      content: ''; position: absolute; left: 0; top: 22%; height: 56%;
+      width: 2px; background: var(--gold); border-radius: 0 1px 1px 0;
+    }
+    .session-name { font-size: 13px; color: var(--t1); margin-bottom: 3px; font-weight: 500; }
+    .session-meta { font-family: var(--mono); font-size: 10px; color: var(--t3); }
+
+    .tools-pane { flex: 1; overflow-y: auto; padding: 8px; }
+    .tool-group { margin-bottom: 18px; }
+    .tool-group-label {
+      font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em;
+      color: var(--t4); padding: 4px 10px; margin-bottom: 3px;
+    }
+    .tool-item {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+      border-radius: var(--r); cursor: pointer; transition: all 0.15s;
+    }
+    .tool-item:hover { background: var(--s2); }
+    .tool-item.active { background: rgba(96,165,250,0.08); }
+    .tool-icon { font-size: 13px; width: 18px; text-align: center; }
+    .tool-name { flex: 1; font-size: 12.5px; color: var(--t2); }
+    .tool-item.active .tool-name { color: var(--info); }
+    .tool-key { font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
+
+    /* ── Chat Panel ── */
+    .panel-chat { flex: 1; min-width: 400px; }
+
+    .chat-bar {
+      height: 46px; padding: 0 24px;
+      display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid var(--b1);
+    }
+    .context-pill {
+      padding: 3px 10px; border-radius: 100px;
+      background: var(--s2); border: 1px solid var(--b1);
+      font-size: 11.5px; color: var(--t3);
+      display: flex; align-items: center; gap: 5px;
+    }
+    .pill-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--hi); }
+    .spacer { flex: 1; }
+    .bar-btn {
+      padding: 5px 10px; font-size: 11.5px; color: var(--t3);
+      cursor: pointer; border-radius: var(--r); transition: all 0.15s;
+    }
+    .bar-btn:hover { background: var(--s2); color: var(--t2); }
+
+    /* ── Messages ── */
+    .messages { flex: 1; overflow-y: auto; padding: 28px 44px; }
+
+    .message { margin-bottom: 30px; }
+    .message-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .message-author { font-size: 12.5px; font-weight: 600; color: var(--t1); }
+    .message-time { font-family: var(--mono); font-size: 10px; color: var(--t3); }
+
+    .message-content {
+      padding: 16px 20px; border-radius: 8px;
+      background: var(--s2); line-height: 1.75; font-size: 14px;
+    }
+    .message.user .message-content { background: var(--s3); color: var(--t2); }
+
+    /* ── Cited sentence ── */
+    .cited-sentence {
+      border-radius: 3px; padding: 1px 2px; margin: 0 -2px;
+      transition: background 0.18s;
+      cursor: default;
+    }
+    .cited-sentence:hover { background: rgba(201,169,110,0.07); }
+    .cited-sentence.peek-active { background: rgba(201,169,110,0.12); }
+
+    /* ── Citation superscript ── */
+    .citation {
+      color: var(--gold); font-size: 0.72em; vertical-align: super;
+      cursor: pointer; padding: 0 1.5px; border-radius: 2px;
+      font-weight: 600; font-family: var(--mono);
+      transition: all 0.15s; position: relative; top: 0.5px;
+    }
+    .citation:hover { background: var(--gold-dim); }
+
+    /* ── Confidence bar ── */
+    .confidence-bar {
+      margin-top: 14px; padding-top: 12px;
+      border-top: 1px solid var(--b1);
+      display: flex; align-items: center; gap: 10px;
+      font-size: 11.5px; color: var(--t3);
+    }
+    .conf-badge { display: flex; align-items: center; gap: 5px; color: var(--hi); font-weight: 500; }
+
+    /* ── Input ── */
+    .chat-input { border-top: 1px solid var(--b1); padding: 14px 24px; }
+    .input-wrapper { display: flex; flex-direction: column; gap: 10px; }
+    .input-field { display: flex; gap: 8px; }
+
+    textarea {
+      flex: 1; background: var(--s2); border: 1px solid var(--b1);
+      border-radius: var(--r); padding: 11px 14px; color: var(--t1);
+      font-family: var(--sans); font-size: 14px; resize: none;
+      min-height: 48px; transition: border-color 0.15s;
+    }
+    textarea::placeholder { color: var(--t4); }
+    textarea:focus { outline: none; border-color: rgba(201,169,110,0.4); }
+
+    .send-btn {
+      background: var(--gold); color: var(--bg);
+      border: none; padding: 11px 22px; border-radius: var(--r);
+      font-weight: 600; font-size: 13px;
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    .send-btn:hover { opacity: 0.88; }
+
+    .input-controls { display: flex; gap: 7px; }
+    .control-btn {
+      padding: 5px 11px; background: var(--s2); border: 1px solid var(--b1);
+      border-radius: var(--r); font-size: 11.5px; color: var(--t2);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .control-btn:hover { background: var(--s3); }
+    .control-btn.active { background: var(--gold-dim); border-color: rgba(201,169,110,0.35); color: var(--gold); }
+
+    /* ── Right panel ── */
+    .panel-right { width: 274px; flex-shrink: 0; }
+
+    .tab-bar { display: flex; border-bottom: 1px solid var(--b1); }
+    .tab {
+      flex: 1; padding: 11px 8px; text-align: center;
+      font-size: 11.5px; color: var(--t3); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: all 0.15s;
+    }
+    .tab:hover { color: var(--t2); background: var(--s2); }
+    .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+    .tab-content { flex: 1; overflow-y: auto; padding: 14px; }
+
+    .paper-card {
+      padding: 11px; margin-bottom: 7px;
+      border-radius: var(--r); border: 1px solid var(--b1);
+      transition: all 0.15s; cursor: pointer;
+    }
+    .paper-card:hover { background: var(--s2); border-color: var(--b2); }
+    .paper-card.active { background: var(--gold-glow); border-color: rgba(201,169,110,0.3); }
+
+    .paper-card-header { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 5px; }
+    .paper-num {
+      background: var(--s3); color: var(--t3); padding: 2px 5px;
+      border-radius: 3px; font-size: 9.5px; font-family: var(--mono); font-weight: 600;
+    }
+    .paper-card.active .paper-num { background: var(--gold); color: var(--bg); }
+    .paper-title { flex: 1; font-size: 12.5px; font-weight: 500; color: var(--t1); line-height: 1.4; }
+    .pdf-btn {
+      background: none; border: none; font-size: 13px;
+      cursor: pointer; opacity: 0.55; transition: all 0.2s;
+    }
+    .pdf-btn:hover { opacity: 1; transform: scale(1.1); }
+    .paper-meta { font-size: 10.5px; color: var(--t3); margin-top: 3px; }
+
+    /* ── PDF Side Panel ── */
+    .panel-pdf {
+      width: 580px; flex-shrink: 0;
+      transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .panel-pdf.hidden { width: 0; border: none; overflow: hidden; }
+
+    .pdf-header {
+      height: 54px; padding: 0 20px; border-bottom: 1px solid var(--b1);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .pdf-title-info { flex: 1; min-width: 0; }
+    .pdf-title {
+      font-size: 13px; font-weight: 600; color: var(--t1);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px;
+    }
+    .pdf-meta { font-size: 10.5px; color: var(--t3); }
+    .pdf-controls { display: flex; gap: 6px; }
+    .pdf-control-btn {
+      background: var(--s2); border: 1px solid var(--b1);
+      padding: 5px 9px; border-radius: var(--r);
+      font-size: 12px; color: var(--t2); cursor: pointer; transition: all 0.15s;
+    }
+    .pdf-control-btn:hover { background: var(--s3); border-color: var(--b2); }
+
+    .pdf-nav {
+      height: 38px; padding: 0 20px; border-bottom: 1px solid var(--b1);
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11.5px; color: var(--t3);
+    }
+    .pdf-content { flex: 1; overflow-y: auto; padding: 24px; }
+    .pdf-section { margin-bottom: 32px; }
+    .section-title { font-size: 19px; font-weight: 700; margin-bottom: 16px; color: var(--t1); }
+    .section-subtitle { font-size: 15px; font-weight: 600; margin: 18px 0 10px; color: var(--t2); }
+    .pdf-paragraph {
+      padding: 11px 15px; margin: 7px 0; border-radius: var(--r);
+      line-height: 1.72; color: var(--t2); transition: all 0.3s ease; position: relative;
+    }
+    .pdf-paragraph.highlighted {
+      background: linear-gradient(90deg, rgba(201,169,110,0) 0%, rgba(201,169,110,0.16) 4%, rgba(201,169,110,0.16) 96%, rgba(201,169,110,0) 100%);
+      box-shadow: 0 0 0 1px rgba(201,169,110,0.25);
+      color: var(--t1);
+      animation: para-pulse 2s ease-in-out;
+    }
+    @keyframes para-pulse {
+      0% { background-color: rgba(201,169,110,0.3); }
+      100% { background-color: rgba(201,169,110,0.12); }
+    }
+    .pdf-paragraph.highlighted::before {
+      content: "↓ Citation source";
+      position: absolute; top: -18px; left: 14px;
+      font-size: 9.5px; font-family: var(--mono); color: var(--gold);
+      animation: label-fade 2s ease-in-out forwards;
+    }
+    @keyframes label-fade {
+      0% { opacity:0; transform: translateY(4px); }
+      15%,80% { opacity:1; transform: translateY(0); }
+      100% { opacity:0; }
+    }
+
+    /* ══════════════════════════════════════════
+       HOVER PAPER PREVIEW PANE — the new feature
+       ══════════════════════════════════════════ */
+
+    .peek-pane {
+      position: fixed;
+      width: 430px;
+      max-height: 520px;
+      background: var(--s2);
+      border: 1px solid var(--b2);
+      border-radius: 10px;
+      box-shadow:
+        0 0 0 1px rgba(201,169,110,0.08),
+        0 20px 50px rgba(0,0,0,0.7),
+        0 4px 16px rgba(0,0,0,0.5);
+      z-index: 900;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .peek-pane.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .peek-header {
+      padding: 13px 16px 11px;
+      border-bottom: 1px solid var(--b1);
+      background: var(--s3);
+      flex-shrink: 0;
+    }
+    .peek-paper-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-family: var(--mono); font-size: 9.5px;
+      color: var(--gold); margin-bottom: 6px;
+      letter-spacing: 0.06em;
+    }
+    .peek-paper-tag::before {
+      content: ''; display: block; width: 6px; height: 6px;
+      background: var(--gold); border-radius: 50%;
+    }
+    .peek-title { font-size: 13px; font-weight: 600; color: var(--t1); line-height: 1.35; margin-bottom: 3px; }
+    .peek-authors { font-size: 11px; color: var(--t3); }
+    .peek-section-path {
+      display: flex; align-items: center; gap: 5px;
+      font-family: var(--mono); font-size: 10px; color: var(--t3);
+      margin-top: 7px;
+    }
+    .peek-section-path span { color: var(--t3); }
+    .peek-section-path strong { color: var(--t2); }
+    .peek-chevron { color: var(--t4); font-size: 9px; }
+
+    .peek-body { flex: 1; overflow-y: auto; padding: 16px; }
+
+    .peek-para {
+      padding: 9px 12px; margin: 5px 0;
+      border-radius: 5px; font-size: 13px;
+      line-height: 1.7; color: var(--t3);
+      transition: all 0.15s;
+    }
+    .peek-para.context { opacity: 0.5; font-size: 12px; line-height: 1.6; }
+    .peek-para.cited {
+      background: linear-gradient(135deg, rgba(201,169,110,0.14) 0%, rgba(201,169,110,0.08) 100%);
+      border: 1px solid rgba(201,169,110,0.22);
+      color: var(--t1); position: relative;
+    }
+    .peek-para.cited::before {
+      content: ''; position: absolute;
+      left: 0; top: 8px; bottom: 8px;
+      width: 2px; background: var(--gold);
+      border-radius: 0 1px 1px 0;
+    }
+
+    .peek-cited-label {
+      display: flex; align-items: center; gap: 5px;
+      font-family: var(--mono); font-size: 9px; color: var(--gold);
+      letter-spacing: 0.07em; margin-bottom: 5px;
+      padding-left: 12px;
+    }
+
+    .peek-footer {
+      padding: 11px 16px;
+      border-top: 1px solid var(--b1);
+      background: var(--s3);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .peek-conf {
+      display: flex; align-items: center; gap: 8px; font-size: 11.5px;
+    }
+    .peek-conf-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--hi); box-shadow: 0 0 5px rgba(52,211,153,0.6);
+    }
+    .peek-conf-text { color: var(--hi); font-weight: 500; }
+    .peek-conf-label { color: var(--t3); font-size: 10.5px; }
+    .peek-jump-btn {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11.5px; color: var(--gold);
+      background: var(--gold-dim); border: 1px solid rgba(201,169,110,0.25);
+      padding: 5px 10px; border-radius: var(--r);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .peek-jump-btn:hover { background: rgba(201,169,110,0.2); }
+
+    /* Highlight text within a para */
+    .peek-highlight {
+      background: rgba(201,169,110,0.2);
+      border-radius: 2px; padding: 0 1px;
+    }
+
+    /* Legacy tooltip (kept minimal) */
+    .tooltip {
+      position: fixed; background: var(--s4); color: var(--t1);
+      padding: 10px 14px; border-radius: var(--r); font-size: 11.5px;
+      pointer-events: none; z-index: 1000; display: none;
+      max-width: 280px; border: 1px solid var(--b2);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .tooltip.show { display: block; }
+    .tooltip-paper { color: var(--gold); font-weight: 600; margin-bottom: 3px; }
+    .tooltip-preview { color: var(--t3); font-style: italic; margin: 5px 0; }
+    .tooltip-conf { font-size: 10.5px; color: var(--hi); }
+    .tooltip-hint {
+      margin-top: 7px; padding-top: 7px;
+      border-top: 1px solid var(--b1);
+      font-size: 9.5px; color: var(--t3);
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="logo">
+      <span class="logo-name">TraceLit</span>
+      <span class="logo-badge">HAVF v3</span>
+    </div>
+    <div class="nav-tabs">
+      <div class="nav-tab active">Workspace</div>
+      <div class="nav-tab">Library</div>
+      <div class="nav-tab">Analytics</div>
+      <div class="nav-tab">Settings</div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-indicator">
+        <span class="status-dot"></span>
+        <span>llama3.1:8b</span>
+      </div>
+      <div class="avatar">AK</div>
+    </div>
+  </div>
+
+  <!-- Workspace -->
+  <div class="workspace">
+
+    <!-- Left Panel -->
+    <div class="panel panel-left">
+      <div class="sessions-pane">
+        <div class="pane-header">
+          <span class="pane-title">SESSIONS</span>
+          <span class="pane-action">+</span>
+        </div>
+        <div class="session-item active">
+          <div class="session-name">Transformer Architecture</div>
+          <div class="session-meta">Today · 8p · 47c</div>
+        </div>
+        <div class="session-item">
+          <div class="session-name">BERT vs GPT Comparison</div>
+          <div class="session-meta">Yesterday · 5p</div>
+        </div>
+        <div class="session-item">
+          <div class="session-name">LoRA Fine-tuning</div>
+          <div class="session-meta">Feb 22 · 12p</div>
+        </div>
+        <div class="session-item">
+          <div class="session-name">Diffusion Models Survey</div>
+          <div class="session-meta">Feb 18 · 9p</div>
+        </div>
+      </div>
+
+      <div class="tools-pane">
+        <div class="pane-header">
+          <span class="pane-title">TOOLS</span>
+        </div>
+        <div class="tool-group">
+          <div class="tool-group-label">ANALYSIS</div>
+          <div class="tool-item active">
+            <span class="tool-icon">💬</span>
+            <span class="tool-name">Chat Q&amp;A</span>
+            <span class="tool-key">⌘1</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-icon">🔬</span>
+            <span class="tool-name">Deep Extraction</span>
+            <span class="tool-key">⌘2</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-icon">⚖️</span>
+            <span class="tool-name">Compare Papers</span>
+            <span class="tool-key">⌘3</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-icon">🕳️</span>
+            <span class="tool-name">Gap Analysis</span>
+            <span class="tool-key">⌘4</span>
+          </div>
+        </div>
+        <div class="tool-group">
+          <div class="tool-group-label">VERIFY</div>
+          <div class="tool-item">
+            <span class="tool-icon">✅</span>
+            <span class="tool-name">Fact Check</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-icon">📊</span>
+            <span class="tool-name">Confidence Audit</span>
+          </div>
+        </div>
+        <div class="tool-group">
+          <div class="tool-group-label">EXPORT</div>
+          <div class="tool-item">
+            <span class="tool-icon">📄</span>
+            <span class="tool-name">Export Report</span>
+            <span class="tool-key">⌘E</span>
+          </div>
+          <div class="tool-item">
+            <span class="tool-icon">📚</span>
+            <span class="tool-name">BibTeX Export</span>
+          </div>
+        </div>
+      </div>
+    </div><!-- /panel-left -->
+
+    <!-- Chat Panel -->
+    <div class="panel panel-chat">
+      <div class="chat-bar">
+        <div class="context-pill"><span class="pill-dot"></span>8 papers</div>
+        <div class="context-pill"><span class="pill-dot"></span>HAVF active</div>
+        <div class="spacer"></div>
+        <div class="bar-btn">Expand</div>
+        <div class="bar-btn">Regen</div>
+        <div class="bar-btn">Copy</div>
+      </div>
+
+      <div class="messages" id="messages">
+
+        <!-- User message -->
+        <div class="message user">
+          <div class="message-header">
+            <span class="message-author">You</span>
+            <span class="message-time">10:23</span>
+          </div>
+          <div class="message-content">
+            What is masked language modeling and how does it differ from traditional language models?
+          </div>
+        </div>
+
+        <!-- Assistant message -->
+        <div class="message assistant">
+          <div class="message-header">
+            <span class="message-author">TraceLit</span>
+            <span class="message-time">10:23</span>
+          </div>
+          <div class="message-content">
+            <p>
+              <span class="cited-sentence"
+                data-paper="BERT: Pre-training of Deep Bidirectional Transformers"
+                data-authors="Devlin et al. 2018"
+                data-section="3. Pre-training BERT"
+                data-subsection="3.1 Masked LM"
+                data-page="4"
+                data-para="We mask 15% of all input tokens at random and train the model to predict the original vocabulary id of the masked word based only on its context. Unlike traditional left-to-right language model pre-training, the MLM objective enables the representation to fuse the left and right context."
+                data-context-before="BERT's pre-training uses two unsupervised tasks. The first is Masked Language Modeling (MLM), which we describe here."
+                data-context-after="Although this allows us to obtain a bidirectional pre-trained model, a downside is that we are creating a mismatch between pre-training and fine-tuning."
+                data-conf="94"
+                data-para-id="p1">Masked language modeling (MLM) is a pre-training technique where random tokens are masked in the input sequence, and the model learns to predict them based on bidirectional context<span class="citation" data-source-id="p1">¹</span>.</span>
+              <span class="cited-sentence"
+                data-paper="BERT: Pre-training of Deep Bidirectional Transformers"
+                data-authors="Devlin et al. 2018"
+                data-section="3. Pre-training BERT"
+                data-subsection="3.1 Masked LM"
+                data-page="4"
+                data-para="In contrast to denoising auto-encoders, we only predict the masked words rather than reconstructing the entire input. Although this allows us to obtain a bidirectional pre-trained model, a downside is that we are creating a mismatch between pre-training and fine-tuning, since the [MASK] token does not appear during fine-tuning."
+                data-context-before="We mask 15% of all input tokens at random and train the model to predict the original vocabulary id of the masked word based only on its context."
+                data-context-after="To train a deep bidirectional representation, we simply mask some percentage of the input tokens at random, and then predict those masked tokens."
+                data-conf="91"
+                data-para-id="p2"> Unlike traditional left-to-right language models that only see previous tokens, MLM enables the model to simultaneously utilize both left and right context<span class="citation" data-source-id="p2">²</span>.</span>
+            </p>
+            <p style="margin-top:10px">
+              <span class="cited-sentence"
+                data-paper="BERT: Pre-training of Deep Bidirectional Transformers"
+                data-authors="Devlin et al. 2018"
+                data-section="3. Pre-training BERT"
+                data-subsection="3.1 Masked LM"
+                data-page="4"
+                data-para="We mask 15% of all input tokens at random and train the model to predict the original vocabulary id of the masked word based only on its context. Unlike traditional left-to-right language model pre-training, the MLM objective enables the representation to fuse the left and right context, which allows us to pretrain a deep bidirectional Transformer."
+                data-context-before="BERT's pre-training uses two unsupervised tasks."
+                data-context-after="In contrast to denoising auto-encoders, we only predict the masked words rather than reconstructing the entire input."
+                data-conf="94"
+                data-para-id="p1">The key innovation is that 15% of tokens are randomly selected for masking, and the model must predict the original vocabulary id based solely on surrounding context<span class="citation" data-source-id="p1">¹</span>.</span>
+              <span class="cited-sentence"
+                data-paper="BERT: Pre-training of Deep Bidirectional Transformers"
+                data-authors="Devlin et al. 2018"
+                data-section="3. Pre-training BERT"
+                data-subsection="3.2 MLM Inspiration"
+                data-page="5"
+                data-para="The MLM approach was inspired by the Cloze task (Taylor, 1953). While it is straightforward to train deep bidirectional models with MLM, we note that we cannot simply mask the input and train the model to predict masked tokens, as this would allow the model to trivially predict every token by looking at its mask token. We address this by randomly replacing 10% of masked tokens with random tokens and 10% with unchanged tokens."
+                data-context-before="We mask 15% of all input tokens at random. The final hidden vectors corresponding to the mask tokens are fed into an output softmax over the vocabulary."
+                data-context-after="Second, since random replacement only occurs for 1.5% of all tokens (i.e., 10% of 15%), this does not seem to harm the model's language understanding capability."
+                data-conf="88"
+                data-para-id="p3"> This approach was inspired by the classic Cloze task, allowing BERT to learn deeper bidirectional representations than any prior approach<span class="citation" data-source-id="p3">³</span>.</span>
+            </p>
+            <div class="confidence-bar">
+              <div class="conf-badge"><span>✓</span><span>89% avg confidence</span></div>
+              <span>·</span>
+              <span>Sources: ¹·²·³ BERT — Devlin et al. 2018</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- User message 2 -->
+        <div class="message user">
+          <div class="message-header">
+            <span class="message-author">You</span>
+            <span class="message-time">10:25</span>
+          </div>
+          <div class="message-content">
+            How does the attention mechanism work in transformers?
+          </div>
+        </div>
+
+        <!-- Assistant message 2 -->
+        <div class="message assistant">
+          <div class="message-header">
+            <span class="message-author">TraceLit</span>
+            <span class="message-time">10:25</span>
+          </div>
+          <div class="message-content">
+            <p>
+              <span class="cited-sentence"
+                data-paper="Attention Is All You Need"
+                data-authors="Vaswani et al. 2017"
+                data-section="3. Model Architecture"
+                data-subsection="3.2 Attention"
+                data-page="3"
+                data-para="An attention function can be described as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output are all vectors. The output is computed as a weighted sum of the values, where the weight assigned to each value is computed by a compatibility function of the query with the corresponding key."
+                data-context-before="Following this, multi-head attention runs through an attention mechanism several times in parallel."
+                data-context-after="We call our particular attention Scaled Dot-Product Attention. The input consists of queries and keys of dimension d_k, and values of dimension d_v."
+                data-conf="96"
+                data-para-id="p4">The attention mechanism computes a weighted sum of values based on the compatibility between a query and a set of keys<span class="citation" data-source-id="p4">¹</span>.</span>
+              <span class="cited-sentence"
+                data-paper="Attention Is All You Need"
+                data-authors="Vaswani et al. 2017"
+                data-section="3. Model Architecture"
+                data-subsection="3.2 Scaled Dot-Product Attention"
+                data-page="4"
+                data-para="We compute the dot products of the query with all keys, divide each by √d_k, and apply a softmax function to obtain the weights on the values. In practice, we compute the attention function on a set of queries simultaneously, packed together into a matrix Q. The keys and values are also packed together into matrices K and V."
+                data-context-before="The output is computed as a weighted sum of the values, where the weight assigned to each value is computed by a compatibility function of the query."
+                data-context-after="Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions."
+                data-conf="92"
+                data-para-id="p5"> Each head performs scaled dot-product attention: queries are dotted with keys, scaled by √d_k, then a softmax produces the attention weights applied to the values<span class="citation" data-source-id="p5">²</span>.</span>
+            </p>
+            <div class="confidence-bar">
+              <div class="conf-badge"><span>✓</span><span>92% confidence</span></div>
+              <span>·</span>
+              <span>Sources: ¹·² Attention Is All You Need</span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /messages -->
+
+      <!-- Input -->
+      <div class="chat-input">
+        <div class="input-wrapper">
+          <div class="input-field">
+            <textarea placeholder="Ask a question across your papers..." rows="2"></textarea>
+            <button class="send-btn">Send →</button>
+          </div>
+          <div class="input-controls">
+            <button class="control-btn active">⚡ HAVF On</button>
+            <button class="control-btn">🎯 All Papers ▾</button>
+            <button class="control-btn">📎 Attach</button>
+          </div>
+        </div>
+      </div>
+    </div><!-- /panel-chat -->
+
+    <!-- Right Panel -->
+    <div class="panel panel-right">
+      <div class="tab-bar">
+        <div class="tab active">Papers</div>
+        <div class="tab">Task</div>
+        <div class="tab">Gaps</div>
+        <div class="tab">Export</div>
+      </div>
+      <div class="tab-content">
+        <div class="paper-card active">
+          <div class="paper-card-header">
+            <span class="paper-num">[1]</span>
+            <span class="paper-title">BERT: Pre-training of Deep Bidirectional Transformers</span>
+            <button class="pdf-btn" onclick="togglePDF()" title="Open PDF">📖</button>
+          </div>
+          <div class="paper-meta">Devlin et al. 2018 · ✓ Indexed</div>
+        </div>
+        <div class="paper-card">
+          <div class="paper-card-header">
+            <span class="paper-num">[2]</span>
+            <span class="paper-title">Attention Is All You Need</span>
+            <button class="pdf-btn" title="Open PDF">📖</button>
+          </div>
+          <div class="paper-meta">Vaswani et al. 2017 · ✓ Indexed</div>
+        </div>
+        <div class="paper-card">
+          <div class="paper-card-header">
+            <span class="paper-num">[3]</span>
+            <span class="paper-title">Language Models are Few-Shot Learners</span>
+            <button class="pdf-btn" title="Open PDF">📖</button>
+          </div>
+          <div class="paper-meta">Brown et al. 2020 · ✓ Indexed</div>
+        </div>
+        <div class="paper-card">
+          <div class="paper-card-header">
+            <span class="paper-num">[4]</span>
+            <span class="paper-title">LoRA: Low-Rank Adaptation</span>
+            <button class="pdf-btn" title="Open PDF">📖</button>
+          </div>
+          <div class="paper-meta">Hu et al. 2021 · ✓ Indexed</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PDF Side Panel -->
+    <div class="panel panel-pdf hidden" id="pdfPanel">
+      <div class="pdf-header">
+        <div class="pdf-title-info">
+          <div class="pdf-title">BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding</div>
+          <div class="pdf-meta">Devlin et al. 2018 · 16 pages</div>
+        </div>
+        <div class="pdf-controls">
+          <button class="pdf-control-btn" onclick="togglePDF()">📖</button>
+          <button class="pdf-control-btn" onclick="togglePDF()">×</button>
+        </div>
+      </div>
+      <div class="pdf-nav">
+        <span>Page 4 / 16</span>
+        <div style="display:flex;gap:6px">
+          <button class="pdf-control-btn">←</button>
+          <button class="pdf-control-btn">→</button>
+          <button class="pdf-control-btn">−</button>
+          <span style="color:var(--t2);padding:0 4px">100%</span>
+          <button class="pdf-control-btn">+</button>
+        </div>
+      </div>
+      <div class="pdf-content" id="pdfContent">
+        <div class="pdf-section">
+          <div class="section-title">3. Pre-training BERT</div>
+          <div class="section-subtitle">3.1 Masked LM</div>
+          <div class="pdf-paragraph">
+            BERT's pre-training uses two unsupervised tasks. The first is Masked Language Modeling (MLM), which we describe here.
+          </div>
+          <div class="pdf-paragraph" id="p1">
+            We mask 15% of all input tokens at random and train the model to predict the original vocabulary id of the masked word based only on its context. Unlike traditional left-to-right language model pre-training, the MLM objective enables the representation to fuse the left and right context, which allows us to pretrain a deep bidirectional Transformer.
+          </div>
+          <div class="pdf-paragraph" id="p2">
+            In contrast to denoising auto-encoders, we only predict the masked words rather than reconstructing the entire input. Although this allows us to obtain a bidirectional pre-trained model, a downside is that we are creating a mismatch between pre-training and fine-tuning, since the [MASK] token does not appear during fine-tuning.
+          </div>
+          <div class="section-subtitle">3.2 MLM Inspiration</div>
+          <div class="pdf-paragraph" id="p3">
+            The MLM approach was inspired by the Cloze task (Taylor, 1953). While it is straightforward to train deep bidirectional models with MLM, we note that we cannot simply mask the input and train the model to predict masked tokens, as this would allow the model to trivially predict every token by looking at its mask token.
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /workspace -->
+</div><!-- /app -->
+
+<!-- Peek Pane (sentence-level hover paper preview) -->
+<div class="peek-pane" id="peekPane">
+  <div class="peek-header">
+    <div class="peek-paper-tag" id="peekTag">PAPER [1] · PAGE 4</div>
+    <div class="peek-title" id="peekTitle">BERT: Pre-training of Deep Bidirectional Transformers</div>
+    <div class="peek-authors" id="peekAuthors">Devlin et al. 2018</div>
+    <div class="peek-section-path">
+      <strong id="peekSection">3. Pre-training BERT</strong>
+      <span class="peek-chevron">›</span>
+      <span id="peekSubsection">3.1 Masked LM</span>
+    </div>
+  </div>
+  <div class="peek-body" id="peekBody">
+    <!-- filled by JS -->
+  </div>
+  <div class="peek-footer">
+    <div class="peek-conf">
+      <div class="peek-conf-dot" id="peekConfDot"></div>
+      <span class="peek-conf-text" id="peekConfText">94% confidence</span>
+      <span class="peek-conf-label">· HAVF verified</span>
+    </div>
+    <button class="peek-jump-btn" id="peekJumpBtn">Open in PDF ↗</button>
+  </div>
+</div>
+
+<!-- Legacy small tooltip (for citation superscripts only) -->
+<div class="tooltip" id="tooltip">
+  <div class="tooltip-paper" id="ttPaper">¹ BERT Paper · §3.2 · p.4</div>
+  <div class="tooltip-preview" id="ttPreview">"We mask 15% of all tokens..."</div>
+  <div class="tooltip-conf" id="ttConf">Confidence: 94% (high)</div>
+  <div class="tooltip-hint">Click to jump in PDF →</div>
+</div>
+
+<script>
+// ── Utility ────────────────────────────────────────
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ── PDF Side Panel ─────────────────────────────────
+function togglePDF() {
+  document.getElementById('pdfPanel').classList.toggle('hidden');
+}
+
+function jumpToSource(paraId) {
+  const panel = document.getElementById('pdfPanel');
+  if (panel.classList.contains('hidden')) panel.classList.remove('hidden');
+  document.querySelectorAll('.pdf-paragraph').forEach(p => p.classList.remove('highlighted'));
+  const para = document.getElementById(paraId);
+  if (para) {
+    para.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    para.classList.add('highlighted');
+    setTimeout(() => para.classList.remove('highlighted'), 2200);
+  }
+}
+
+// ── Peek Pane Logic ────────────────────────────────
+const peekPane    = document.getElementById('peekPane');
+const peekBody    = document.getElementById('peekBody');
+const peekTag     = document.getElementById('peekTag');
+const peekTitle   = document.getElementById('peekTitle');
+const peekAuthors = document.getElementById('peekAuthors');
+const peekSection = document.getElementById('peekSection');
+const peekSub     = document.getElementById('peekSubsection');
+const peekConfText= document.getElementById('peekConfText');
+const peekConfDot = document.getElementById('peekConfDot');
+const peekJumpBtn = document.getElementById('peekJumpBtn');
+
+let peekHideTimer = null;
+let activeSentence = null;
+
+function showPeek(sentence, event) {
+  clearTimeout(peekHideTimer);
+  activeSentence = sentence;
+  sentence.classList.add('peek-active');
+
+  // Populate header
+  const paper     = sentence.dataset.paper     || '';
+  const authors   = sentence.dataset.authors   || '';
+  const section   = sentence.dataset.section   || '';
+  const sub       = sentence.dataset.subsection|| '';
+  const page      = sentence.dataset.page      || '';
+  const conf      = parseInt(sentence.dataset.conf) || 0;
+  const paraId    = sentence.dataset.paraId    || '';
+  const citedText = sentence.dataset.para      || '';
+  const ctxBefore = sentence.dataset.contextBefore || '';
+  const ctxAfter  = sentence.dataset.contextAfter  || '';
+
+  // Paper number from paper title (rough match)
+  const num = paper.includes('Attention') ? '2' : paper.includes('Language Models') ? '3' : paper.includes('LoRA') ? '4' : '1';
+  peekTag.textContent     = `PAPER [${num}] · PAGE ${page}`;
+  peekTitle.textContent   = paper;
+  peekAuthors.textContent = authors;
+  peekSection.textContent = section;
+  peekSub.textContent     = sub;
+
+  // Confidence colour
+  const confColor = conf >= 85 ? 'var(--hi)' : conf >= 65 ? 'var(--med)' : 'var(--low)';
+  const confLabel = conf >= 85 ? 'high' : conf >= 65 ? 'medium' : 'low';
+  peekConfText.textContent = `${conf}% confidence`;
+  peekConfText.style.color = confColor;
+  peekConfDot.style.background = confColor;
+  peekConfDot.style.boxShadow = `0 0 5px ${confColor}`;
+
+  // Jump button
+  peekJumpBtn.onclick = () => jumpToSource(paraId);
+
+  // Build body
+  peekBody.innerHTML = '';
+
+  if (ctxBefore) {
+    const el = document.createElement('div');
+    el.className = 'peek-para context';
+    el.textContent = ctxBefore;
+    peekBody.appendChild(el);
+  }
+
+  // Cited paragraph with HAVF label
+  const labelEl = document.createElement('div');
+  labelEl.className = 'peek-cited-label';
+  labelEl.innerHTML = `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gold);margin-right:4px"></span>CITED PASSAGE · §${sub} · p.${page}`;
+  peekBody.appendChild(labelEl);
+
+  const citedEl = document.createElement('div');
+  citedEl.className = 'peek-para cited';
+  // Highlight key phrase from the chat sentence text (first 40 chars of inner text)
+  const chatText = sentence.innerText.replace(/[¹²³⁴⁵]/g,'').trim().slice(0, 50);
+  const escaped = chatText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const highlightedPara = citedText.replace(
+    new RegExp(`(${escaped.split(' ').slice(0,5).join('.{0,10}')})`, 'i'),
+    '<span class="peek-highlight">$1</span>'
+  );
+  citedEl.innerHTML = highlightedPara || citedText;
+  peekBody.appendChild(citedEl);
+
+  if (ctxAfter) {
+    const el = document.createElement('div');
+    el.className = 'peek-para context';
+    el.textContent = ctxAfter;
+    peekBody.appendChild(el);
+  }
+
+  // Position the pane smartly
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const pw = 430, ph = Math.min(520, peekPane.offsetHeight || 400);
+  const rect = sentence.getBoundingClientRect();
+
+  // Try right of cursor first, then left
+  let left = event.clientX + 16;
+  if (left + pw > vw - 12) left = event.clientX - pw - 12;
+  left = clamp(left, 8, vw - pw - 8);
+
+  // Try below sentence, else above
+  let top = rect.bottom + 8;
+  if (top + ph > vh - 12) top = rect.top - ph - 8;
+  top = clamp(top, 8, vh - ph - 8);
+
+  peekPane.style.left = left + 'px';
+  peekPane.style.top  = top  + 'px';
+  peekPane.classList.add('visible');
+}
+
+function hidePeek(immediately) {
+  const delay = immediately ? 0 : 220;
+  peekHideTimer = setTimeout(() => {
+    peekPane.classList.remove('visible');
+    if (activeSentence) {
+      activeSentence.classList.remove('peek-active');
+      activeSentence = null;
+    }
+  }, delay);
+}
+
+// Attach hover on cited sentences
+document.querySelectorAll('.cited-sentence').forEach(s => {
+  s.addEventListener('mouseenter', e => showPeek(s, e));
+  s.addEventListener('mousemove',  e => {
+    // reposition as mouse moves (smooth tracking)
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const pw = 430, ph = peekPane.offsetHeight || 400;
+    let left = e.clientX + 16;
+    if (left + pw > vw - 12) left = e.clientX - pw - 12;
+    left = Math.max(8, Math.min(vw - pw - 8, left));
+    // keep vertical stable once shown
+    peekPane.style.left = left + 'px';
+  });
+  s.addEventListener('mouseleave', () => hidePeek(false));
+});
+
+// Keep peek visible while hovering over the pane itself
+peekPane.addEventListener('mouseenter', () => clearTimeout(peekHideTimer));
+peekPane.addEventListener('mouseleave', () => hidePeek(true));
+
+// ── Citation superscript → tooltip (small, quick info) ──
+const tooltip = document.getElementById('tooltip');
+document.querySelectorAll('.citation').forEach(cit => {
+  cit.addEventListener('click', e => {
+    e.stopPropagation();
+    const paraId = cit.dataset.sourceId;
+    if (paraId) jumpToSource(paraId);
+  });
+
+  cit.addEventListener('mouseenter', function(e) {
+    e.stopPropagation();
+    const sent = cit.closest('.cited-sentence');
+    if (!sent) return;
+    document.getElementById('ttPaper').textContent = `${cit.textContent} ${sent.dataset.paper} · §${sent.dataset.subsection} · p.${sent.dataset.page}`;
+    document.getElementById('ttPreview').textContent = '"' + (sent.dataset.para || '').slice(0, 55) + '…"';
+    document.getElementById('ttConf').textContent = `Confidence: ${sent.dataset.conf}% (${parseInt(sent.dataset.conf) >= 85 ? 'high' : 'medium'})`;
+    tooltip.classList.add('show');
+    const r = cit.getBoundingClientRect();
+    tooltip.style.left = r.left + 'px';
+    tooltip.style.top  = (r.bottom + 7) + 'px';
+  });
+  cit.addEventListener('mouseleave', () => tooltip.classList.remove('show'));
+});
+
+// ── Auto-scroll chat ──
+const messages = document.getElementById('messages');
+messages.scrollTop = messages.scrollHeight;
+</script>
+</body>
+</html>
