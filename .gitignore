@@ -15,10 +15,14 @@ dist/
 .env
 *.env.local
 
-# Data (don't commit uploads or DB)
-data/uploads/
-data/exports/
-data/logs/
+# Data (don't commit uploads, DB, or logs)
+data/
+**/data/uploads/
+**/data/exports/
+**/data/logs/
+**/data/*.db
+**/data/*.db-shm
+**/data/*.db-wal
 *.db
 *.sqlite
 

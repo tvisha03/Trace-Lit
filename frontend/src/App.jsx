@@ -1,11 +1,14 @@
+import MainLayout from './components/layout/MainLayout';
+import ChatInterface from './components/chat/ChatInterface';
+import ErrorBoundary from './components/common/ErrorBoundary';
+
 function App() {
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-gray-900">TraceLit</h1>
-        <p className="mt-2 text-gray-600">AI-Powered Research Paper Analysis</p>
-      </div>
-    </div>
+    <ErrorBoundary>
+      <MainLayout>
+        <ChatInterface />
+      </MainLayout>
+    </ErrorBoundary>
   )
 }
 
