@@ -69,6 +69,57 @@ export const sessionsApi = {
 // ---- Chat ----
 export const chatApi = {
   query: (data) => request('/chat/query', { method: 'POST', body: JSON.stringify(data) }),
+
+  /**
+   * Stream a cited response via SSE.
+   * SSE events: { type: 'chunk', text } | { type: 'done', metadata } | { type: 'error', message }
+   * Returns a cancel function.
+   */
+  queryStream: (data, { onChunk, onDone, onError } = {}) => {
+    const ctrl = new AbortController();
+
+    fetch(`${API_BASE}/chat/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
+          onError?.(new ApiError(res.status, err));
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'chunk') onChunk?.(event.text);
+              else if (event.type === 'done') onDone?.(event.metadata);
+              else if (event.type === 'error') onError?.(new Error(event.message));
+            } catch {
+              // ignore malformed SSE lines
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') onError?.(err);
+      });
+
+    return () => ctrl.abort();
+  },
 };
 
 // ---- Comparison ----
