@@ -16,7 +16,7 @@
 | 6 | **Processing too slow** | Low | Medium | LOW | Progressive availability, MPS acceleration | Reduce parallel papers, show "processing" UI |
 | 7 | **PDF extraction fails on certain papers** | Medium | Medium | MEDIUM | Detect scanned/malformed PDFs → warn user | Reject unsupported PDFs with helpful message |
 | 8 | **Running out of time** | Medium | High | MEDIUM | Strict Week 8 gate, priority triage | Stop at Phase 1 only, skip Phase 2 |
-| 9 | **ChromaDB data corruption** | Low | High | LOW | Persistent mode with regular backups | Re-process papers from stored PDFs |
+| 9 | **FAISS index corruption** | Low | Medium | LOW | Persistent index files with automatic rebuild on load failure | Re-embed papers from stored PDFs; FAISS index is fully reconstructable |
 | 10 | **MPS not available on test machine** | Low | Medium | LOW | CPU fallback path in embedding code | Slower but functional on CPU |
 
 ---
@@ -83,7 +83,7 @@ def _validate_citations(self, response, context_ids):
 ### Risk 5: RAM Overflow
 
 **Prevention Checklist**:
-- [ ] Docker `mem_limit` set on every container (backend: 3g, chromadb: 1g, frontend: 512m)
+- [ ] Docker `mem_limit` set on every container (backend: 3g, frontend: 512m)
 - [ ] Lazy model loading — don't load `SentenceTransformer` until first query
 - [ ] Max 3 papers parallel — enforced in `SmartPaperQueue`
 - [ ] Free PDF extraction buffers after chunking complete

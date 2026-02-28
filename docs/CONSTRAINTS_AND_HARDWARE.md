@@ -25,7 +25,7 @@
 | macOS + system services | ~2GB | Always reserved, cannot reclaim |
 | Embedding model (all-MiniLM-L6-v2) | ~200MB | Loaded on first query |
 | Cross-encoder model | ~200MB | Loaded on first HAVF verification |
-| ChromaDB | ~500MB | Persistent, grows with papers |
+| FAISS index (in-process) | ~50MB | Persistent files on disk, minimal RAM footprint |
 | FastAPI + application code | ~500MB | Includes Python runtime |
 | PDF processing (per paper) | ~200–400MB | Transient, freed after processing |
 | Frontend (browser/Nginx) | ~512MB | React app in browser |
@@ -59,7 +59,7 @@
 |------|---------------|
 | ML models (embedding + cross-encoder) | ~300MB |
 | Ollama model (llama3.2:3b) — optional | ~2GB |
-| ChromaDB data (persistent) | ~50MB per session of 5 papers |
+| FAISS index files (persistent) | ~5MB per session of 5 papers |
 | SQLite database | <10MB |
 | Uploaded PDFs (7 max per session) | ~5–50MB per paper, ~350MB max |
 | Docker images | ~2–3GB |
@@ -101,7 +101,7 @@
 | Conversation history in prompt | **5 turns** | Token budget management |
 | Max query length | **2000 characters** | Prevent prompt injection abuse |
 | Embedding dimensions | **384** (MiniLM) | Fixed by model choice |
-| ChromaDB collection per session | **1** | Simplicity, use metadata filtering |
+| FAISS collection per session | **1** | Single index with paper_id metadata filtering |
 
 ---
 
@@ -126,9 +126,6 @@ services:
   backend:
     mem_limit: 3g
     cpus: 2
-  chromadb:
-    mem_limit: 1g
-    cpus: 0.5
   frontend:
     mem_limit: 512m
     cpus: 0.5

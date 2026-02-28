@@ -43,7 +43,7 @@ class Paragraph(Base):
     text = Column(Text)
     page = Column(Integer)
     token_count = Column(Integer)
-    embedding_id = Column(String)                   # ChromaDB reference
+    embedding_id = Column(String)                   # FAISS doc ID (paper_id + paragraph_id)
     sentences = Column(Text)                        # JSON: [{sentence_id, text, start_char, end_char}]
 ```
 

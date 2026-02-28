@@ -16,7 +16,7 @@ Standard RAG Pipeline:
 
 TraceLit RAG Pipeline:
   PDF → Extract sections → Paragraph-level chunk with sentence tracking
-      → Context-enriched embed → ChromaDB store
+      → Context-enriched embed → FAISS store
       → Retrieve per-paper top-k → Citation-in-prompting
       → Generate with [P#] citations → HAVF verify per sentence
       → UI renders with click-to-sentence
@@ -197,46 +197,58 @@ class MPSAcceleratedEmbedder:
 
 ---
 
-## 6. Vector Store: ChromaDB
+## 6. Vector Store: FAISS
 
 ### Configuration
 
 ```python
-import chromadb
+import faiss
+import numpy as np
 
-client = chromadb.PersistentClient(path="./data/chroma")
-collection = client.get_or_create_collection(
-    name="tracelit_papers",
-    metadata={"hnsw:space": "cosine"}  # Cosine similarity
-)
+# 384-dimensional inner-product index (cosine similarity on L2-normalised vectors)
+index = faiss.IndexFlatIP(384)
+faiss.omp_set_num_threads(1)  # Required for MPS/OMP compatibility on M3
 ```
 
 ### What Gets Stored
 
 ```python
-collection.add(
-    ids=[chunk["paragraph_id"]],
-    documents=[chunk["enriched_text"]],  # Enriched text for search
-    metadatas=[{
-        "paper_id": chunk["paper_id"],
-        "paper_title": chunk["paper_title"],
-        "section": chunk["section"],
-        "page": chunk["page"],
-        "original_text": chunk["text"],     # For display
-        "sentences": json.dumps(chunk["sentences"])  # Sentence map
-    }],
-    embeddings=[embedding]  # Pre-computed MPS embedding
-)
+# L2-normalise for cosine similarity via inner product
+vec = np.array(embedding, copy=True, dtype=np.float32)
+vec /= np.linalg.norm(vec)
+vec = np.ascontiguousarray(vec.reshape(1, -1))
+index.add(vec)  # Adds vector at position len(metadata)
+
+metadata.append({
+    "paragraph_id": chunk["paragraph_id"],
+    "paper_id": chunk["paper_id"],
+    "paper_title": chunk["paper_title"],
+    "section": chunk["section"],
+    "page": chunk["page"],
+    "original_text": chunk["text"],           # For display
+    "enriched_text": chunk["enriched_text"],  # What was embedded
+    "sentences": chunk["sentences"],          # Sentence map for HAVF
+})
+
+# Persistence:
+#   faiss.write_index(index, f"{persist_dir}/faiss.index")
+#   pickle.dump(metadata, open(f"{persist_dir}/metadata.pkl", "wb"))
 ```
 
 ### Retrieval
 
 ```python
-results = collection.query(
-    query_embeddings=[query_embedding],
-    n_results=5,  # Top 5 per paper
-    where={"paper_id": {"$in": active_paper_ids}}  # Filter by active papers
-)
+# Normalise query embedding for cosine similarity
+q = np.ascontiguousarray(query_embedding.reshape(1, -1), dtype=np.float32)
+q /= np.linalg.norm(q)
+
+# Search full index then post-filter by active papers
+scores, idxs = index.search(q, k=50)
+results = [
+    {**metadata[i], "score": float(scores[0][j])}
+    for j, i in enumerate(idxs[0])
+    if i >= 0 and metadata[i]["paper_id"] in active_paper_ids
+][:top_k]
 ```
 
 **Retrieval strategy**: Top-k per paper (not global top-k) to ensure every active paper is represented in context.
@@ -292,7 +304,7 @@ After the LLM generates a response, HAVF verifies each sentence. See `HAVF_VERIF
 | Embedding target | Enriched text (with paper+section prefix) | 15–20% retrieval improvement |
 | Retrieval scope | Top-k **per paper** | Ensures all active papers contribute to context |
 | Sentence splitting | Regex-based | Lightweight, handles academic abbreviations |
-| Vector store | ChromaDB (persistent, cosine) | Metal-optimized, simple, fits M3 budget |
+| Vector store | FAISS with IndexFlatIP (cosine) | No external service, MPS-compatible, fits M3 budget |
 | Embedding model | all-MiniLM-L6-v2 | 23MB, fast on MPS, 200MB RAM |
 
 ---
@@ -979,7 +991,7 @@ class RetrievedParagraph:
     paper_title: str
     section: str
     text: str
-    score: float  # Similarity score from ChromaDB (higher = more relevant)
+    score: float  # Similarity score from FAISS inner product (higher = more relevant)
     token_estimate: int = 0
 
     def __post_init__(self):
@@ -991,7 +1003,7 @@ class ContextBudgetManager:
     Selects the best paragraphs within a token budget.
     
     Algorithm:
-    1. Retrieve top-k paragraphs per paper from ChromaDB
+    1. Retrieve top-k paragraphs per paper from FAISS
     2. Pool ALL retrieved paragraphs and rank globally by relevance score
     3. Greedily select highest-scored paragraphs until budget full
     4. Ensure fairness: at least min_per_paper paragraphs from each paper
@@ -1172,7 +1184,7 @@ class ContextBudgetManager:
 ### Example Walkthrough
 
 ```
-User queries 5 papers. ChromaDB returns 4 paragraphs per paper = 20 total.
+User queries 5 papers. FAISS returns 4 paragraphs per paper = 20 total.
 
 Step 1: Pool all 20 paragraphs, ranked by relevance:
   P3_paper1  (score: 0.92, 480 tokens)
@@ -1636,7 +1648,7 @@ In a system that depends on external APIs, network calls, and ML models, every c
 │  EmptyResponseError     │ LLM response      │ Retry → Switch  │
 │  AllProvidersFailedErr  │ System            │ User message    │
 │  EmbeddingError         │ MiniLM / MPS      │ CPU fallback    │
-│  ChromaDBError          │ Vector store      │ Log + user msg  │
+│  VectorStoreError        │ Vector store      │ Log + user msg  │
 │  PDFExtractionError     │ PyMuPDF / Docling │ Skip + notify   │
 │  MemoryError            │ System            │ GC + degrade    │
 └──────────────────────────────────────────────────────────────┘
@@ -2404,36 +2416,34 @@ class QueryRouter:
         match = re.search(r'paper\s+(\d+)', query.lower())
         return f"paper_{match.group(1)}" if match else None
 
-    def _format_results(self, chroma_results: Dict) -> List[Dict]:
-        """Convert ChromaDB query results to standard format."""
-        if not chroma_results or not chroma_results.get("ids"):
+    def _format_results(self, scores: list, indices: list, metadata: list) -> List[Dict]:
+        """Convert FAISS search results to standard format."""
+        if not indices:
             return []
         formatted = []
-        for i, doc_id in enumerate(chroma_results["ids"][0]):
-            meta = chroma_results["metadatas"][0][i] if chroma_results.get("metadatas") else {}
+        for j, i in enumerate(indices[0]):
+            if i < 0 or i >= len(metadata):
+                continue
+            meta = metadata[i]
             formatted.append({
-                "paragraph_id": doc_id,
-                "text": meta.get("original_text", chroma_results["documents"][0][i]),
+                "paragraph_id": meta.get("paragraph_id", ""),
+                "text": meta.get("original_text", ""),
                 "paper_id": meta.get("paper_id", ""),
                 "paper_title": meta.get("paper_title", ""),
                 "section": meta.get("section", ""),
                 "page": meta.get("page", 0),
-                "score": (
-                    chroma_results["distances"][0][i]
-                    if chroma_results.get("distances") else 0
-                ),
+                "score": float(scores[0][j]),
             })
         return formatted
 
-    def _format_get_results(self, chroma_results: Dict) -> List[Dict]:
-        """Convert ChromaDB get results (no distances) to standard format."""
-        if not chroma_results or not chroma_results.get("ids"):
+    def _format_get_results(self, results: List[Dict]) -> List[Dict]:
+        """Convert FAISS metadata lookup results to standard format."""
+        if not results:
             return []
         formatted = []
-        for i, doc_id in enumerate(chroma_results["ids"]):
-            meta = chroma_results["metadatas"][i] if chroma_results.get("metadatas") else {}
+        for meta in results:
             formatted.append({
-                "paragraph_id": doc_id,
+                "paragraph_id": meta.get("paragraph_id", ""),
                 "text": meta.get("original_text", ""),
                 "paper_id": meta.get("paper_id", ""),
                 "paper_title": meta.get("paper_title", ""),
@@ -2834,7 +2844,7 @@ if full_response and chunk.startswith(full_response):
 
 ### Problem
 
-The M3 MacBook has 10 CPU cores (4 performance + 6 efficiency) and 8GB unified memory. Processing a single academic PDF involves extraction (~10s), chunking (~2s), embedding (~15s), and ChromaDB insertion (~5s) — approximately **30–45 seconds per paper**. If a user uploads 5 papers and the system tries to process all 5 simultaneously, memory spikes to ~6GB (dangerous) and CPU thermal throttles. **Progressive processing means: start papers in parallel (max 3), and let the user query papers as they become available — not after all finish.**
+The M3 MacBook has 10 CPU cores (4 performance + 6 efficiency) and 8GB unified memory. Processing a single academic PDF involves extraction (~10s), chunking (~2s), embedding (~15s), and FAISS indexing (~1s) — approximately **28–40 seconds per paper**. If a user uploads 5 papers and the system tries to process all 5 simultaneously, memory spikes to ~6GB (dangerous) and CPU thermal throttles. **Progressive processing means: start papers in parallel (max 3), and let the user query papers as they become available — not after all finish.**
 
 ### Processing Timeline (5 Papers)
 
@@ -3009,7 +3019,7 @@ class SmartPaperQueue:
                 embeddings = self.embedder.encode_batch(texts, batch_size=64)
                 progress.progress_percent = 85
 
-                # Stage 4: ChromaDB Storage (~3-5s)
+                # Stage 4: FAISS Indexing (~1s)
                 progress.status = PaperStatus.STORING
                 progress.progress_percent = 90
                 await self._notify(notify, paper_id, progress)
@@ -3296,7 +3306,7 @@ Without metrics, you can't prove the system meets targets, identify bottlenecks,
 |-------|--------|-----------|---------------|
 | PDF extraction | <15s/paper | <30s | Timer around extractor |
 | Embedding generation | <30s/paper | <60s | Timer around encode_batch |
-| ChromaDB insertion | <5s/paper | <10s | Timer around collection.add |
+| FAISS indexing | <2s/paper | <5s | Timer around vector_store.add_paragraphs |
 | Query embedding | <10ms | <50ms | Timer around single encode |
 | Vector retrieval | <100ms | <200ms | Timer around collection.query |
 | LLM generation | <2s | <5s | Timer from request to last token |
@@ -3351,7 +3361,7 @@ class PerformanceMonitor:
     TARGETS = {
         "pdf_extraction": 15_000,
         "embedding_generation": 30_000,
-        "chromadb_insertion": 5_000,
+        "faiss_indexing": 2_000,
         "query_embedding": 10,
         "vector_retrieval": 100,
         "llm_generation": 2_000,
@@ -3529,7 +3539,7 @@ class PerformanceMonitor:
         recommendations = {
             "pdf_extraction": "Consider pre-processing PDFs or using PyMuPDF only (skip Docling)",
             "embedding_generation": "Verify MPS acceleration is active; reduce batch_size if OOM",
-            "vector_retrieval": "Rebuild ChromaDB index; reduce n_results; check disk I/O",
+            "vector_retrieval": "Rebuild FAISS index; reduce n_results; check disk I/O",
             "llm_generation": "Switch to Groq (faster) or reduce context tokens",
             "havf_verification": "Check cross-encoder loading; consider Level 1 only mode",
             "total_query": "Check component breakdown — bottleneck is likely LLM or retrieval",
@@ -3602,7 +3612,7 @@ perf.log_query_metrics({
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | `total_query` > 5s | LLM latency | Switch provider or reduce context |
-| `vector_retrieval` > 200ms | ChromaDB cold cache | Warm cache on startup |
+| `vector_retrieval` > 200ms | FAISS index not pre-loaded | Warm with dummy query on startup |
 | `havf_verification` > 500ms | Cross-encoder loading | Pre-load or use Level 1 only |
 | `embedding_generation` > 60s | MPS not active | Check `torch.backends.mps.is_available()` |
 | `pdf_extraction` > 30s | Docling on simple PDF | Force PyMuPDF for non-table PDFs |
@@ -3639,7 +3649,7 @@ The M3 MacBook Pro has 8GB **unified** memory shared between CPU, GPU, macOS, an
 │  │ ─── TraceLit Budget ──│── ~4.6 GB available ──────── │
 │  │  Backend (Python)      │  ~1.5 GB                     │
 │  │  Embedding model       │  ~0.2 GB                     │
-│  │  ChromaDB              │  ~0.8 GB                     │
+│  │  FAISS index           │  ~0.1 GB                     │
 │  │  Cross-encoder (lazy)  │  ~0.1 GB (loaded on demand)  │
 │  │  Buffer / headroom     │  ~0.5 GB                     │
 │  │  ─────────────────     │                              │
@@ -3940,48 +3950,49 @@ class MemoryMonitor:
         logger.warning("Aggressive memory cleanup complete")
 ```
 
-### ChromaDB Persistent Mode Setup
+### FAISS Persistent Setup
 
 ```python
-# backend/app/vectorstore/chroma_config.py
+# backend/app/embeddings/vector_store.py
 
-import chromadb
+import faiss
+import numpy as np
+import pickle
+from pathlib import Path
 
-def create_optimized_chromadb(data_dir: str = "./data/chroma"):
+def create_faiss_index(persist_dir: str = "./data/chroma") -> tuple:
     """
-    Create ChromaDB in persistent mode — CRITICAL for memory management.
-    
-    DO NOT use chromadb.Client() (in-memory) — it loads entire DB into RAM.
-    PersistentClient uses disk-backed storage with memory-mapped files,
-    keeping RAM usage bounded at ~800MB even with thousands of paragraphs.
+    Create or load a FAISS IndexFlatIP with pickle-persisted metadata.
+
+    Persistence layout:
+      {persist_dir}/faiss.index   — binary FAISS index
+      {persist_dir}/metadata.pkl  — list of metadata dicts (one per vector)
+
+    CRITICAL: faiss.omp_set_num_threads(1) MUST be called before any FAISS
+    operation when MPS (Metal) is also active. Without this, OMP threads can
+    access MPS-backed memory after it is freed → SIGSEGV on Apple Silicon.
     """
-    client = chromadb.PersistentClient(
-        path=data_dir,
-        settings=chromadb.Settings(
-            anonymized_telemetry=False,      # No phoning home
-            allow_reset=True,                # Allow DB reset for testing
-            is_persistent=True,              # Disk-backed storage
-        )
-    )
+    faiss.omp_set_num_threads(1)
 
-    collection = client.get_or_create_collection(
-        name="tracelit_papers",
-        metadata={
-            "hnsw:space": "cosine",          # Cosine similarity
-            "hnsw:construction_ef": 128,     # Build quality (default: 100)
-            "hnsw:search_ef": 64,            # Search quality (default: 10)
-            "hnsw:M": 16,                    # Connections per node (default: 16)
-        }
-    )
+    index_path = Path(persist_dir) / "faiss.index"
+    meta_path  = Path(persist_dir) / "metadata.pkl"
 
-    return client, collection
+    if index_path.exists():
+        index    = faiss.read_index(str(index_path))
+        metadata = pickle.load(open(meta_path, "rb"))
+    else:
+        Path(persist_dir).mkdir(parents=True, exist_ok=True)
+        index    = faiss.IndexFlatIP(384)  # 384-dim cosine via inner product
+        metadata = []
+
+    return index, metadata
 ```
 
 ### Configuration
 
 | Parameter | Value | Why |
 |-----------|-------|-----|
-| ChromaDB mode | Persistent | In-memory uses 2-3x more RAM |
+| FAISS index type | IndexFlatIP | Exact search, cosine via L2-normalised inner product |
 | Cross-encoder idle timeout | 5 min | Balances availability vs memory |
 | GC warning threshold | 70% | Early warning before problems |
 | GC critical threshold | 80% | Trigger cleanup before swap |
@@ -4005,9 +4016,9 @@ async def startup():
     rate_monitor = RateLimitMonitor()
     perf_monitor = PerformanceMonitor()
 
-    # 2. ChromaDB (persistent — bounded memory)
-    chroma_client, collection = create_optimized_chromadb()
-    logger.info("ChromaDB ready (persistent mode)")
+    # 2. FAISS vector store (file-backed, bounded memory)
+    vector_store = get_vector_store()
+    logger.info("FAISS vector store ready")
 
     # 3. Lazy model loader (nothing loaded yet!)
     model_loader = LazyModelLoader()
@@ -4036,7 +4047,7 @@ async def startup():
 
 **DO NOT** load the cross-encoder at startup — 89% of sentences resolve at HAVF Level 1 (embedding similarity only). The cross-encoder's ~90MB is wasted most of the time.
 
-**DO NOT** use ChromaDB's in-memory mode (`chromadb.Client()`) — it consumes 2-3x more RAM than persistent mode for the same data.
+**DO NOT** set `faiss.omp_set_num_threads` > 1 when MPS is active — OMP threads accessing MPS-backed memory cause SIGSEGV on Apple Silicon.
 
 ### Testing Strategy
 
@@ -4044,7 +4055,7 @@ async def startup():
 2. **Idle unload**: Load cross-encoder, wait 5+ minutes, verify it's been unloaded and memory freed
 3. **Memory monitoring**: Simulate high memory (mock psutil) → verify GC triggers
 4. **Startup sequence**: Measure RSS at each startup step → verify incremental loading
-5. **Persistent ChromaDB**: Compare in-memory vs persistent mode RSS with 1000 documents
+5. **FAISS thread safety**: Verify `omp_set_num_threads(1)` is set before any FAISS search with active MPS embedder
 
 ---
 
@@ -4314,7 +4325,7 @@ async def health_check():
 > These supplement Section 10's data pipeline pitfalls with operational/production pitfalls.
 
 1. **DO NOT** load all ML models at startup — lazy-load cross-encoder only when HAVF Level 2 is needed
-2. **DO NOT** use ChromaDB's in-memory mode — persistent mode uses 2-3x less RAM
+2. **DO NOT** set `faiss.omp_set_num_threads` > 1 with MPS active — causes SIGSEGV on Apple Silicon
 3. **DO NOT** retry rate-limited providers — switch immediately (retrying wastes 2+ seconds)
 4. **DO NOT** skip pre-flight rate limit checks — they prevent wasted API calls and 429 cascades
 5. **DO NOT** process more than 3 papers in parallel — M3's memory budget cannot handle it

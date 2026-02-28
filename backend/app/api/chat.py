@@ -2,6 +2,7 @@
 
 Query endpoint with cited responses using multi-provider LLM.
 Streams SSE for real-time responses, falls back to full response.
+HAVF verification runs on every response for sentence-level attribution.
 """
 
 import json
@@ -33,6 +34,12 @@ from app.schemas.api_schemas import (
     CitationSource,
     SentenceVerification,
 )
+from app.verification.havf import (
+    get_havf,
+    parse_response_into_sentences,
+    build_cited_paragraphs_map,
+)
+from app.embeddings.vector_store import get_vector_store
 
 router = APIRouter()
 
@@ -44,30 +51,53 @@ router = APIRouter()
 def _get_context_paragraphs(
     db: Session,
     paper_ids: List[str],
+    query: str = "",
+    top_k: int = 5,
 ) -> List[Dict]:
-    """Retrieve paragraphs from active papers for LLM context.
+    """Retrieve relevant paragraphs using FAISS vector retrieval.
 
-    In Week 3+, this will use ChromaDB vector retrieval. For now,
-    returns all paragraphs from the specified papers (up to a limit).
+    Uses MPS-accelerated embeddings to find the most relevant paragraphs
+    for the query across active papers. Falls back to DB retrieval if
+    FAISS is unavailable.
 
     Args:
         db: Database session.
         paper_ids: List of paper UUIDs to retrieve from.
+        query: User query for semantic similarity search.
+        top_k: Number of results per paper.
 
     Returns:
-        List of paragraph dicts with metadata.
+        List of paragraph dicts with metadata and sentences.
     """
     if not paper_ids:
         return []
 
+    # Try ChromaDB vector retrieval first
+    if query:
+        try:
+            vector_store = get_vector_store()
+            results = vector_store.query(
+                query_text=query,
+                paper_ids=paper_ids,
+                top_k=top_k,
+            )
+            if results:
+                logger.debug(
+                    "Vector retrieval returned {} paragraphs for query",
+                    len(results),
+                )
+                return results
+        except Exception as e:
+            logger.warning("FAISS retrieval failed, falling back to DB: {}", e)
+
+    # Fallback: DB retrieval (no semantic ranking)
     paragraphs = (
         db.query(Paragraph)
         .filter(Paragraph.paper_id.in_(paper_ids))
-        .limit(50)  # Safety cap — will be replaced by top-k retrieval
+        .limit(50)
         .all()
     )
 
-    # Enrich with paper metadata
     paper_map = {}
     for paper_id in paper_ids:
         paper = db.query(Paper).filter(Paper.id == paper_id).first()
@@ -77,14 +107,23 @@ def _get_context_paragraphs(
     context = []
     for para in paragraphs:
         paper = paper_map.get(para.paper_id)
+
+        # Parse sentences
+        sentences = []
+        if para.sentences:
+            try:
+                sentences = json.loads(para.sentences)
+            except (json.JSONDecodeError, TypeError):
+                sentences = []
+
         context.append({
             "paragraph_id": para.id,
             "text": para.text or "",
             "paper_id": para.paper_id,
             "paper_title": paper.title if paper else "Unknown",
-            "section": "",  # Will come from section join in future
+            "section": "",
             "page": para.page or 0,
-            "sentences": para.sentences,  # JSON string
+            "sentences": sentences,
         })
 
     return context
@@ -94,10 +133,70 @@ def _parse_response_sentences(
     response_text: str,
     context_paragraphs: List[Dict],
 ) -> List[SentenceVerification]:
-    """Parse LLM response into verified sentence objects.
+    """Parse LLM response into verified sentence objects using HAVF.
 
-    For Week 2, this does basic citation extraction only.
-    HAVF verification (embedding + cross-encoder) comes in Week 3.
+    Runs the Hybrid Attribution Verification Framework (HAVF) to verify
+    each sentence against its cited source paragraphs with embedding
+    similarity (Level 1) and cross-encoder reranking (Level 2).
+
+    Args:
+        response_text: Full LLM response.
+        context_paragraphs: Context used for this query.
+
+    Returns:
+        List of SentenceVerification objects with confidence scores.
+    """
+    import asyncio
+
+    # Build paragraph lookup (handles paper-prefixed IDs)
+    para_map = build_cited_paragraphs_map(context_paragraphs)
+
+    # Parse response into sentences with citations
+    parsed_sentences = parse_response_into_sentences(response_text)
+
+    if not parsed_sentences:
+        return []
+
+    # Run HAVF verification
+    havf = get_havf()
+
+    try:
+        # Use asyncio to run the async HAVF method
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're already in an async context — create a task inline
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                havf_results = loop.run_in_executor(
+                    pool,
+                    lambda: asyncio.run(
+                        havf.verify_response(parsed_sentences, para_map)
+                    ),
+                )
+                # This won't work inside an async route; use await instead
+                # Fall through to the await-based path below
+                raise RuntimeError("Use await path")
+        else:
+            havf_results = asyncio.run(
+                havf.verify_response(parsed_sentences, para_map)
+            )
+    except RuntimeError:
+        # We'll handle this in the async route directly
+        havf_results = None
+
+    if havf_results is None:
+        # Return placeholder results — the async route will call HAVF directly
+        return _build_placeholder_verifications(parsed_sentences, para_map)
+
+    # Convert HAVF results to SentenceVerification objects
+    return _havf_results_to_verifications(havf_results, para_map)
+
+
+async def _run_havf_verification(
+    response_text: str,
+    context_paragraphs: List[Dict],
+) -> List[SentenceVerification]:
+    """Async HAVF verification — called from async route handlers.
 
     Args:
         response_text: Full LLM response.
@@ -106,33 +205,84 @@ def _parse_response_sentences(
     Returns:
         List of SentenceVerification objects.
     """
-    # Build paragraph lookup
-    para_map: Dict[str, Dict] = {}
-    for p in context_paragraphs:
-        para_map[p["paragraph_id"]] = p
+    para_map = build_cited_paragraphs_map(context_paragraphs)
+    parsed_sentences = parse_response_into_sentences(response_text)
 
-    # Split response into sentences
-    pattern = r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<![A-Z]\.)(?<=\.|\?|!)\s+"
-    raw_sentences = re.split(pattern, response_text)
-    sentences = [s.strip() for s in raw_sentences if s.strip()]
+    if not parsed_sentences:
+        return []
 
+    havf = get_havf()
+
+    try:
+        havf_results = await havf.verify_response(parsed_sentences, para_map)
+    except Exception as exc:
+        logger.error("HAVF verification failed: {}", exc, exc_info=True)
+        # Graceful degradation: return placeholder results
+        return _build_placeholder_verifications(parsed_sentences, para_map)
+
+    return _havf_results_to_verifications(havf_results, para_map)
+
+
+def _havf_results_to_verifications(
+    havf_results: List[Dict],
+    para_map: Dict[str, Dict],
+) -> List[SentenceVerification]:
+    """Convert raw HAVF results to SentenceVerification Pydantic models."""
     results = []
-    citation_pattern = re.compile(r"\[P(\d+)\]")
+    for hr in havf_results:
+        pid = hr.get("paragraph_id", "")
+        sid = hr.get("sentence_id", "")
+        para = para_map.get(pid, {})
 
-    for sent_text in sentences:
-        # Extract citations from this sentence
-        matches = citation_pattern.findall(sent_text)
-        cited_ids = [f"P{m}" for m in matches]
+        sources = []
+        if pid and para:
+            sources.append(
+                CitationSource(
+                    paragraph_id=pid,
+                    sentence_id=sid or f"{pid}_S0",
+                    paper_id=para.get("paper_id", ""),
+                    paper_title=para.get("paper_title", ""),
+                    section=para.get("section", ""),
+                    page=para.get("page", 0),
+                    matched_text=hr.get("matched_text", "")[:300],
+                )
+            )
 
-        # Build citation sources
+        # Extract citations from the sentence text
+        citation_pattern = re.compile(r"\[P(\d+)\]")
+        sent_text = hr.get("text", "")
+        cited_ids = [f"P{m}" for m in citation_pattern.findall(sent_text)]
+
+        results.append(
+            SentenceVerification(
+                text=sent_text,
+                citations=cited_ids,
+                confidence=hr.get("confidence", 0.0),
+                level=hr.get("level", "low"),
+                method=hr.get("method", "unknown"),
+                sources=sources,
+            )
+        )
+
+    return results
+
+
+def _build_placeholder_verifications(
+    parsed_sentences: List[Dict],
+    para_map: Dict[str, Dict],
+) -> List[SentenceVerification]:
+    """Build placeholder verifications when HAVF is unavailable (graceful degradation)."""
+    results = []
+    for sent in parsed_sentences:
+        cited_ids = sent.get("citations", [])
         sources = []
         for pid in cited_ids:
-            para = para_map.get(pid)
+            para = para_map.get(pid, {})
             if para:
                 sources.append(
                     CitationSource(
                         paragraph_id=pid,
-                        sentence_id=f"{pid}_S0",  # Placeholder — HAVF will refine
+                        sentence_id=f"{pid}_S0",
                         paper_id=para.get("paper_id", ""),
                         paper_title=para.get("paper_title", ""),
                         section=para.get("section", ""),
@@ -141,9 +291,8 @@ def _parse_response_sentences(
                     )
                 )
 
-        # Determine confidence level (placeholder — HAVF replaces this in Week 3)
         if cited_ids and all(pid in para_map for pid in cited_ids):
-            confidence = 0.7  # Moderate — citation exists but unverified
+            confidence = 0.7
             level = "medium"
             method = "citation_present"
         elif cited_ids:
@@ -157,7 +306,7 @@ def _parse_response_sentences(
 
         results.append(
             SentenceVerification(
-                text=sent_text,
+                text=sent.get("text", ""),
                 citations=cited_ids,
                 confidence=confidence,
                 level=level,
@@ -165,7 +314,6 @@ def _parse_response_sentences(
                 sources=sources,
             )
         )
-
     return results
 
 
@@ -245,8 +393,10 @@ async def chat_query(
         if paper and paper.status != "ready":
             raise PaperNotReadyError(paper_id=paper_id)
 
-    # Get context paragraphs
-    context_paragraphs = _get_context_paragraphs(db, active_paper_ids or [])
+    # Get context paragraphs via vector retrieval
+    context_paragraphs = _get_context_paragraphs(
+        db, active_paper_ids or [], query=request.query
+    )
 
     if not context_paragraphs:
         # No papers/paragraphs — still allow the query but warn
@@ -277,8 +427,8 @@ async def chat_query(
     provider = result["provider"]
     warning = result.get("warning")
 
-    # Parse sentences and validate citations
-    verified_sentences = _parse_response_sentences(
+    # Run HAVF verification (sentence-level attribution)
+    verified_sentences = await _run_havf_verification(
         response_text, context_paragraphs
     )
 
@@ -349,7 +499,9 @@ async def chat_query_stream(
         except (json.JSONDecodeError, TypeError):
             active_paper_ids = []
 
-    context_paragraphs = _get_context_paragraphs(db, active_paper_ids or [])
+    context_paragraphs = _get_context_paragraphs(
+        db, active_paper_ids or [], query=request.query
+    )
 
     _save_message(db, request.session_id, "user", request.query)
 
@@ -375,16 +527,56 @@ async def chat_query_stream(
             state = llm.get_session_state(request.session_id)
             provider = state.last_provider or "unknown"
 
+            # Run HAVF verification on complete response
+            havf_results = await _run_havf_verification(
+                full_text, context_paragraphs
+            )
+
+            # Calculate overall confidence
+            if havf_results:
+                overall_conf = sum(s.confidence for s in havf_results) / len(havf_results)
+            else:
+                overall_conf = 0.0
+
+            # Serialize HAVF results for SSE
+            havf_data = [
+                {
+                    "text": s.text,
+                    "citations": s.citations,
+                    "confidence": s.confidence,
+                    "level": s.level,
+                    "method": s.method,
+                    "sources": [
+                        {
+                            "paragraph_id": src.paragraph_id,
+                            "sentence_id": src.sentence_id,
+                            "paper_id": src.paper_id,
+                            "paper_title": src.paper_title,
+                            "section": src.section,
+                            "page": src.page,
+                            "matched_text": src.matched_text,
+                        }
+                        for src in s.sources
+                    ],
+                }
+                for s in havf_results
+            ]
+
             # Save complete response
             message_id = _save_message(
                 db,
                 request.session_id,
                 "assistant",
                 full_text,
-                metadata={"provider": provider, "query_type": query_type},
+                metadata={
+                    "provider": provider,
+                    "query_type": query_type,
+                    "overall_confidence": round(overall_conf, 3),
+                    "sentence_count": len(havf_results),
+                },
             )
 
-            yield f"data: {json.dumps({'type': 'done', 'metadata': {'message_id': message_id, 'provider': provider}})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'metadata': {'message_id': message_id, 'provider': provider, 'overall_confidence': round(overall_conf, 3), 'sentences': havf_data}})}\n\n"
 
         except AllProvidersFailedError as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e.message)})}\n\n"

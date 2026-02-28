@@ -250,7 +250,7 @@ git add . && git commit -m "Initial commit"
 | **Run backend during dev** | Docker always vs. local Python (faster iteration) | **Local Python for dev**, Docker for integration testing |
 | **Run frontend during dev** | Docker always vs. `npm run dev` locally | **`npm run dev` locally** — Vite HMR is instant |
 | **When to use Docker Compose** | Always vs. integration testing only | **Integration testing + final demo** — use local dev for speed |
-| **ChromaDB during dev** | Docker container vs. local persistent mode | **Docker container** — keeps data isolated and easy to reset |
+| **ChromaDB during dev** | N/A | **Not applicable — replaced by FAISS (in-process, no container needed)** |
 
 ### 6.3 LLM Provider Strategy
 
@@ -265,7 +265,7 @@ git add . && git commit -m "Initial commit"
 | Decision | What to Decide | Default |
 |----------|---------------|---------|
 | **Session default name** | Auto-generated name for new sessions | `"Untitled Session"` |
-| **ChromaDB collection naming** | One collection per session or per paper | **One collection per session** with metadata filtering |
+| **Vector store naming** | One per session vs. one shared | **One shared FAISS index** filtered by `paper_id` metadata |
 | **Upload size limit** | Max PDF file size | **50MB** |
 | **Max papers per session** | Hard limit | **7** |
 | **Conversation history in prompt** | How many past turns to include | **5 turns** |
@@ -321,7 +321,7 @@ Pre-pull Docker images to avoid slow builds on Day 1:
 docker pull python:3.11-slim
 docker pull node:20-alpine
 docker pull nginx:alpine
-docker pull chromadb/chroma:0.4.18
+# No ChromaDB image needed — FAISS runs in-process inside the backend container
 ```
 
 > Total download: ~1.5GB. Do this on a good internet connection.
@@ -341,7 +341,7 @@ source /tmp/tracelit-test/bin/activate
 pip install fastapi uvicorn pydantic
 pip install pymupdf4llm pymupdf
 pip install sentence-transformers torch
-pip install chromadb
+pip install faiss-cpu
 pip install sqlalchemy alembic
 pip install google-generativeai groq
 pip install weasyprint        # ← Most likely to fail (needs system deps from Section 3.2)
@@ -355,9 +355,8 @@ deactivate
 rm -rf /tmp/tracelit-test
 ```
 
-> **If WeasyPrint fails**: Go back to Section 3.2 and install system dependencies.  
 > **If torch fails**: Ensure you're using native ARM Python, not Rosetta.  
-> **If chromadb fails**: Try `pip install chromadb --no-binary :all:` or update pip.
+> **If faiss-cpu fails**: Try `pip install faiss-cpu --no-binary :all:` or update pip.
 
 ---
 
@@ -475,7 +474,7 @@ Run through this checklist the day before you start Phase 1:
 - [ ] MPS (Metal) verified working with PyTorch
 
 ### Pre-Downloaded Assets
-- [ ] Docker base images pulled (`python:3.11-slim`, `node:20-alpine`, `nginx:alpine`, `chromadb/chroma:0.4.18`)
+- [ ] Docker base images pulled (`python:3.11-slim`, `node:20-alpine`, `nginx:alpine`)
 - [ ] Test PDF papers downloaded (minimum 3)
 - [ ] ML models pre-downloaded (`all-MiniLM-L6-v2`, `ms-marco-MiniLM-L-6-v2`)
 

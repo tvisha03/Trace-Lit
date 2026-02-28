@@ -3,9 +3,15 @@
 Configures middleware, exception handlers, startup events, and router registration.
 """
 
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# --- Runtime stability on Apple Silicon (FAISS/OpenMP + PyTorch MPS) ---
+# Must be set before any native library is imported.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import psutil
 from fastapi import FastAPI, Request
@@ -158,14 +164,39 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
 async def health_check() -> HealthResponse:
     """System health check with memory and service status."""
     mem = psutil.virtual_memory()
+
+    # Check vector store status
+    vector_status = "not_initialized"
+    try:
+        from app.embeddings.vector_store import get_vector_store
+        store = get_vector_store()
+        doc_count = store.count()
+        vector_status = f"ready ({doc_count} docs)"
+    except Exception:
+        vector_status = "error"
+
+    # Check model status
+    embedding_loaded = False
+    cross_encoder_loaded = False
+    try:
+        from app.embeddings.mps_embedder import get_embedder
+        embedding_loaded = get_embedder().is_loaded()
+    except Exception:
+        pass
+    try:
+        from app.verification.havf import get_havf
+        cross_encoder_loaded = get_havf()._cross_encoder is not None
+    except Exception:
+        pass
+
     return HealthResponse(
         status="healthy",
         version="1.0.0",
         memory_used_gb=round(mem.used / (1024**3), 2),
-        chromadb="not_connected",  # Updated once ChromaDB is wired
+        chromadb=vector_status,
         models_loaded={
-            "embedding": False,
-            "cross_encoder": False,
+            "embedding": embedding_loaded,
+            "cross_encoder": cross_encoder_loaded,
         },
     )
 

@@ -242,13 +242,13 @@ HAVF Approach:
 │  • Sentence-aware chunking (with boundary tracking)          │
 │  • Context enrichment ([Paper][Section] prefix)              │
 │  • MPS-accelerated embeddings (M3 GPU)                       │
-│  • ChromaDB with sentence mapping                            │
+│  • FAISS with sentence mapping                               │
 └─────────────────────────────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                  PERSISTENCE LAYER                           │
 │  • SQLite: Metadata, sessions, sentence boundaries           │
-│  • ChromaDB: Vector embeddings (persistent, cosine)          │
+│  • FAISS: Vector embeddings (persistent, cosine)             │
 │  • File System: PDFs, images, extracted content              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -259,12 +259,12 @@ HAVF Approach:
 User uploads PDFs
   → Save to filesystem
   → Return 202 Accepted immediately
-  → Background: Extract (PyMuPDF4LLM) → Sentence-aware chunk → Embed (MPS) → Index (ChromaDB)
+  → Background: Extract (PyMuPDF4LLM) → Sentence-aware chunk → Embed (MPS) → Index (FAISS)
   → WebSocket: Real-time per-paper progress
   → Paper ready → User can query it immediately
 
 User asks a question
-  → Embed query → Retrieve top-k per paper (ChromaDB)
+  → Embed query → Retrieve top-k per paper (FAISS)
   → Assemble context with citation IDs
   → LLM generates response with [P#_S#] citations (Gemini → Groq → Ollama fallback)
   → HAVF verifies each sentence: Level 1 (embedding) → Level 2 (cross-encoder if uncertain)
@@ -343,7 +343,7 @@ async def upload_papers(
 **User Story**: *"As a researcher, I want to ask questions across multiple papers and get cited responses so I can quickly find relevant information."*
 
 **Key Implementation Details**:
-- Query embedding + ChromaDB similarity search (top-k per paper)
+- Query embedding + FAISS similarity search (top-k per paper)
 - Context-enriched retrieval with paper title and section prefix
 - Citation-in-prompting: LLM instructed to cite every sentence with [P#] format
 - SSE streaming for real-time response delivery
@@ -947,13 +947,13 @@ class MPSAcceleratedEmbedder:
             return self.model.encode(texts, device=self.device, batch_size=batch_size)
 ```
 
-### **ChromaDB Configuration**
+### **FAISS Vector Store Configuration**
 
-- Persistent mode (data survives restarts)
-- Cosine similarity (`hnsw:space: cosine`)
-- Context-enriched text stored as documents (not original text)
+- Persistent mode (index + metadata.pkl survive restarts)
+- Cosine similarity via `IndexFlatIP` on L2-normalised vectors
+- Context-enriched text stored alongside vector metadata
 - Rich metadata: section, page, paper_title, authors, year
-- Metal-optimized on M3
+- `faiss.omp_set_num_threads(1)` for MPS compatibility on M3
 
 ---
 
@@ -998,7 +998,7 @@ class SmartPaperQueue:
 | Extraction (PyMuPDF4LLM) | 10–15s | 0–25% |
 | Sentence-aware chunking | 2–5s | 25–40% |
 | Embedding (MPS) | 15–25s | 40–90% |
-| Indexing (ChromaDB) | 3–8s | 90–100% |
+| Indexing (FAISS) | 1–2s | 90–100% |
 
 ### **WebSocket Progress Protocol**
 
@@ -1070,7 +1070,7 @@ class LocalOllamaClient:
 | Docling | PDF extraction (Phase 2, optional) |
 | Sentence-Transformers | Embedding model (MPS-accelerated) |
 | CrossEncoder | HAVF Level 2 reranking |
-| ChromaDB | Persistent vector store |
+| FAISS (faiss-cpu) | Persistent vector store |
 | SQLite + SQLAlchemy | Metadata, sessions, sentence boundaries |
 | Alembic | Database migrations |
 | WeasyPrint | PDF export |
@@ -1093,7 +1093,7 @@ class LocalOllamaClient:
 - **MPS acceleration** for embedding generation (2.7x faster than CPU)
 - **Parallel processing**: 3 papers simultaneously (4 performance + 6 efficiency cores)
 - **Memory budget**: <6GB peak (2GB reserved for system)
-- **Metal-optimized** ChromaDB
+- **Persistent FAISS index** (cosine similarity, file-backed)
 - **Lazy model loading** to minimize idle memory
 - **Batch processing** for embeddings (batch_size=64)
 
@@ -1132,7 +1132,7 @@ class Paragraph(Base):
     text = Column(Text)
     page = Column(Integer)
     token_count = Column(Integer)
-    embedding_id = Column(String)  # Reference to ChromaDB
+    embedding_id = Column(String)  # Reference to FAISS
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -1417,25 +1417,12 @@ services:
     volumes: [./data:/app/data]
     mem_limit: 3g
     cpus: 2
-    depends_on: [chromadb]
-
-  chromadb:
-    image: chromadb/chroma:0.4.18
-    ports: ["8001:8000"]
-    volumes: [chroma_data:/chroma/chroma]
-    mem_limit: 1g
-    environment:
-      - IS_PERSISTENT=TRUE
-      - ANONYMIZED_TELEMETRY=FALSE
 
   frontend:
     build: ./frontend
     ports: ["3000:80"]
     mem_limit: 512m
     depends_on: [backend]
-
-volumes:
-  chroma_data:
 ```
 
 ## **15.2 Environment Variables**
@@ -1525,7 +1512,7 @@ t=115s  All 5 papers ready (~2 minutes total) ✅
 |-----------|-----------|
 | Embedding model (all-MiniLM-L6-v2) | ~200MB |
 | Cross-encoder model | ~200MB |
-| ChromaDB | ~500MB |
+| FAISS index | ~50MB |
 | FastAPI + application | ~500MB |
 | PDF processing (per paper) | ~200–400MB |
 | System overhead | ~2GB |

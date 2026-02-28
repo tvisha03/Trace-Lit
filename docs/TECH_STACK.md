@@ -49,7 +49,7 @@ State Management:
 | **Docling** | Latest | PDF extraction (Phase 2) | AI-powered, better tables — optional, heavier |
 | **Sentence-Transformers** | Latest | Embedding model | MPS-accelerated, all-MiniLM-L6-v2 |
 | **CrossEncoder** | Latest | HAVF Level 2 reranking | ms-marco-MiniLM-L-6-v2 for selective reranking |
-| **ChromaDB** | 0.4+ | Vector store | Persistent, cosine similarity, Metal-optimized |
+| **FAISS** | 1.7+ | Vector store | IndexFlatIP on L2-normalised vectors = cosine similarity; no server needed; single-threaded mode for MPS safety |
 | **SQLite** | stdlib | Relational database | Zero-config, file-based, embedded — perfect for local app |
 | **SQLAlchemy** | 2.0+ | ORM | Async support, declarative models |
 | **Alembic** | Latest | DB migrations | Schema versioning for SQLite |
@@ -110,10 +110,11 @@ ollama                 # Ollama (local)
 | Container | Allocation |
 |-----------|-----------|
 | backend | 3GB (embeddings + cross-encoder + FastAPI + processing) |
-| chromadb | 1GB |
 | frontend | 512MB |
 | System overhead | ~2GB |
-| **Total peak** | **~4–6GB** (within 8GB budget) |
+| **Total peak** | **~3.5–5.5GB** (within 8GB budget) |
+
+> **Note**: FAISS runs in-process inside the backend container (no separate service needed), saving ~1GB vs the previous ChromaDB container.
 
 ---
 
@@ -125,7 +126,7 @@ ollama                 # Ollama (local)
 | **Parallel processing** | 3 papers concurrently (4P + 6E cores) | ~2 min for 5 papers |
 | **Lazy model loading** | Load embedding/cross-encoder on first use | Lower idle memory |
 | **Batch embedding** | `batch_size=64` | Fewer MPS kernel launches |
-| **Metal-optimized ChromaDB** | Persistent mode, cosine distance | Native M3 performance |
+| **FAISS single-threaded mode** | `faiss.omp_set_num_threads(1)` prevents OMP threads racing with MPS buffers | Stable on M3 |
 | **Memory monitoring** | Alert if >6GB usage | Prevent OOM crashes |
 
 ---
@@ -163,7 +164,7 @@ torch>=2.0.0
 numpy>=1.24.0
 
 # Vector Store
-chromadb>=0.4.0
+faiss-cpu>=1.7.0
 
 # Database
 sqlalchemy>=2.0.0

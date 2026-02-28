@@ -14,7 +14,7 @@
 **Implementation**:
 - `POST /api/papers/upload` — accepts up to 7 PDF files
 - Returns `202 Accepted` immediately with `paper_ids[]` and WebSocket URL
-- Background processing: Extract (PyMuPDF4LLM) → Sentence-aware chunk → Embed (MPS) → Index (ChromaDB)
+- Background processing: Extract (PyMuPDF4LLM) → Sentence-aware chunk → Embed (MPS) → Index (FAISS)
 - Smart queue: 2–3 papers processed in parallel, rest queued
 - WebSocket pushes per-paper stage progress (extraction 0–25%, chunking 25–40%, embedding 40–90%, indexing 90–100%)
 - Paper becomes queryable immediately upon completion — progressive availability
@@ -46,7 +46,7 @@
 **User Story**: *"As a researcher, I want to ask questions across multiple papers and get cited responses."*
 
 **Implementation**:
-- Query text → embed with `all-MiniLM-L6-v2` → ChromaDB similarity search (top-k per active paper)
+- Query text → embed with `all-MiniLM-L6-v2` → FAISS similarity search (top-k per active paper)
 - Context assembled with `[P#]` paragraph IDs, paper title, section name
 - Citation-in-prompting: system prompt instructs LLM to cite every sentence with `[P#]`
 - SSE streaming response delivery

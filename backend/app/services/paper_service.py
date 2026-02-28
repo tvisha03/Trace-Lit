@@ -1,7 +1,7 @@
 """TraceLit — Paper Service (Business Logic).
 
 Thin-router pattern: all business logic lives here, not in the API router.
-Handles: upload → validate → save file → extract → chunk → store in DB.
+Handles: upload → validate → save file → extract → chunk → embed → store in DB + FAISS.
 """
 
 import json
@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.config import settings
 from app.chunking.sentence_aware_chunker import SentenceAwareChunker
+from app.embeddings.vector_store import get_vector_store
 from app.exceptions import (
     ExtractionError,
     FileTooLargeError,
@@ -197,6 +198,23 @@ async def _process_single_paper(
         )
         db.add(paragraph)
 
+    # Step 6: Embed and store in FAISS for vector retrieval
+    try:
+        vector_store = get_vector_store()
+        stored_count = vector_store.add_paragraphs(paper_id, chunks)
+        logger.info(
+            "Embedded {} paragraphs for paper {} in FAISS",
+            stored_count,
+            paper_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "FAISS embedding failed for paper {}: {}. "
+            "Paper will be queryable via DB fallback.",
+            paper_id,
+            exc,
+        )
+
     # Mark paper as ready
     paper.status = "ready"
     db.flush()
@@ -337,6 +355,13 @@ async def delete_paper(paper_id: str, db: DBSession) -> None:
             logger.info("Deleted file: {}", paper.file_path)
         except OSError as exc:
             logger.warning("Failed to delete file {}: {}", paper.file_path, exc)
+
+    # Delete vectors from FAISS
+    try:
+        vector_store = get_vector_store()
+        vector_store.delete_paper(paper_id)
+    except Exception as exc:
+        logger.warning("Failed to delete paper {} from FAISS: {}", paper_id, exc)
 
     # Cascade delete handles sections + paragraphs
     db.delete(paper)

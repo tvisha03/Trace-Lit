@@ -27,23 +27,11 @@ services:
       - ./data:/app/data
     mem_limit: 3g
     cpus: 2
-    depends_on: [chromadb]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-
-  chromadb:
-    image: chromadb/chroma:0.4.18
-    ports: ["8001:8000"]
-    volumes:
-      - chroma_data:/chroma/chroma
-    mem_limit: 1g
-    cpus: 0.5
-    environment:
-      - IS_PERSISTENT=TRUE
-      - ANONYMIZED_TELEMETRY=FALSE
 
   frontend:
     build: ./frontend
@@ -52,8 +40,7 @@ services:
     cpus: 0.5
     depends_on: [backend]
 
-volumes:
-  chroma_data:
+volumes: {}  # FAISS index persists inside ./data — no external volumes needed
 ```
 
 ---
@@ -70,7 +57,6 @@ docker-compose up --build
 # Frontend:     http://localhost:3000
 # Backend API:  http://localhost:8000
 # API Docs:     http://localhost:8000/docs (Swagger UI)
-# ChromaDB:     http://localhost:8001
 ```
 
 ---
@@ -177,7 +163,7 @@ The `memory_watchdog` above provides basic threshold alerts. The full memory man
 - **`LazyModelLoader`**: Loads `SentenceTransformer` and `CrossEncoder` on first use, not at startup — saving ~1.2GB until needed
 - **On-demand unloading**: Models unused for >10 minutes are automatically unloaded and reloaded when next needed
 
-This is critical for the 8GB M3 MacBook constraint where Docker containers, ChromaDB, and ML models compete for limited unified memory.
+This is critical for the 8GB M3 MacBook constraint where ML models compete for limited unified memory. FAISS runs in-process inside the backend container — no additional container overhead.
 
 > **📖 Full implementation**: See `RAG_AND_CHUNKING_STRATEGY.md` → **Section 20: Memory Management for M3** for the complete `LazyModelLoader` and `MemoryMonitor` classes with threshold-based tiered responses and automatic model lifecycle management.
 
@@ -192,7 +178,7 @@ async def health_check():
         "status": "healthy",
         "version": "1.0.0",
         "memory_used_gb": psutil.virtual_memory().used / (1024**3),
-        "chromadb": "connected" if check_chromadb() else "disconnected",
+        "vector_store": "ready" if check_vector_store() else "not_initialized",
         "models_loaded": {
             "embedding": embedding_model is not None,
             "cross_encoder": cross_encoder is not None
