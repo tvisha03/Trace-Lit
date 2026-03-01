@@ -1,14 +1,12 @@
 """TraceLit — FastAPI Application Entry Point.
 
-Configures middleware, exception handlers, startup events, and router registration.
+Configures middleware, exception handlers, and router registration.
+Startup / shutdown logic lives in app.lifespan.
 """
 
 import os
-import sys
-from contextlib import asynccontextmanager
-from pathlib import Path
 
-# --- Runtime stability on Apple Silicon (FAISS/OpenMP + PyTorch MPS) ---
+# Runtime stability on Apple Silicon (FAISS/OpenMP + PyTorch MPS).
 # Must be set before any native library is imported.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -20,64 +18,9 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 
 from app.config import settings
-from app.exceptions import TraceLitError
-from app.schemas.api_schemas import HealthResponse
-
-
-# ============================================================
-# Logging Configuration
-# ============================================================
-
-def _configure_logging() -> None:
-    """Set up loguru with console + rotating file handlers."""
-    logger.remove()  # Remove default handler
-
-    logger.add(
-        sys.stdout,
-        level=settings.log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-               "<level>{level: <8}</level> | "
-               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-               "<level>{message}</level>",
-    )
-
-    # Ensure log directory exists
-    Path(settings.log_file).parent.mkdir(parents=True, exist_ok=True)
-
-    logger.add(
-        settings.log_file,
-        level="DEBUG",
-        rotation="10 MB",
-        retention="5 days",
-        compression="zip",
-        format="{time} | {level} | {name}:{function}:{line} | {message}",
-    )
-
-
-# ============================================================
-# Lifespan (Startup / Shutdown)
-# ============================================================
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application startup and shutdown events."""
-    # --- Startup ---
-    _configure_logging()
-    logger.info("TraceLit backend starting up...")
-
-    settings.ensure_directories()
-    logger.info("Data directories verified")
-
-    from app.models.database import init_db
-    init_db()
-    logger.info("Database initialized")
-
-    logger.info("TraceLit backend ready")
-
-    yield
-
-    # --- Shutdown ---
-    logger.info("TraceLit backend shutting down...")
+from app.lifespan import lifespan
+from shared.constants import STATUS_CODE_MAP
+from shared.errors import TraceLitError
 
 
 # ============================================================
@@ -109,23 +52,11 @@ app.add_middleware(
 # Global Exception Handlers
 # ============================================================
 
-_STATUS_CODE_MAP = {
-    "RATE_LIMIT": 429,
-    "ALL_PROVIDERS_FAILED": 503,
-    "INVALID_CITATION": 422,
-    "EXTRACTION_FAILED": 500,
-    "PAPER_NOT_READY": 409,
-    "PAPER_LIMIT_EXCEEDED": 400,
-    "FILE_TOO_LARGE": 413,
-    "INVALID_FILE": 400,
-}
-
-
 @app.exception_handler(TraceLitError)
 async def tracelit_error_handler(request: Request, exc: TraceLitError) -> JSONResponse:
     """Handle all custom TraceLit exceptions with structured JSON responses."""
     logger.warning(f"TraceLit error: {exc.code} — {exc.message}")
-    status_code = _STATUS_CODE_MAP.get(exc.code, 500)
+    status_code = STATUS_CODE_MAP.get(exc.code, 500)
     return JSONResponse(
         status_code=status_code,
         content={
@@ -160,31 +91,40 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
 # Health Check
 # ============================================================
 
+from pydantic import BaseModel
+from typing import Dict, Optional
+
+
+class HealthResponse(BaseModel):
+    status: str = "healthy"
+    version: str = "1.0.0"
+    memory_used_gb: float = 0.0
+    faiss: str = "not_initialized"
+    models_loaded: Dict[str, bool] = {}
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """System health check with memory and service status."""
     mem = psutil.virtual_memory()
 
-    # Check vector store status
-    vector_status = "not_initialized"
+    faiss_status = "not_initialized"
     try:
-        from app.embeddings.vector_store import get_vector_store
-        store = get_vector_store()
-        doc_count = store.count()
-        vector_status = f"ready ({doc_count} docs)"
+        from infrastructure.vector_store.faiss_store import get_vector_store
+        doc_count = get_vector_store().count()
+        faiss_status = f"ready ({doc_count} docs)"
     except Exception:
-        vector_status = "error"
+        faiss_status = "error"
 
-    # Check model status
     embedding_loaded = False
     cross_encoder_loaded = False
     try:
-        from app.embeddings.mps_embedder import get_embedder
+        from infrastructure.vector_store.faiss_store import get_embedder
         embedding_loaded = get_embedder().is_loaded()
     except Exception:
         pass
     try:
-        from app.verification.havf import get_havf
+        from domain.verification.havf import get_havf
         cross_encoder_loaded = get_havf()._cross_encoder is not None
     except Exception:
         pass
@@ -193,7 +133,7 @@ async def health_check() -> HealthResponse:
         status="healthy",
         version="1.0.0",
         memory_used_gb=round(mem.used / (1024**3), 2),
-        chromadb=vector_status,
+        faiss=faiss_status,
         models_loaded={
             "embedding": embedding_loaded,
             "cross_encoder": cross_encoder_loaded,
@@ -205,14 +145,20 @@ async def health_check() -> HealthResponse:
 # Router Registration
 # ============================================================
 
-from app.api.papers import router as papers_router
-from app.api.sessions import router as sessions_router
-from app.api.chat import router as chat_router
-from app.api.compare import router as compare_router
-from app.api.export import router as export_router
+from api.v1.router import router as v1_router
 
-app.include_router(papers_router, prefix="/api", tags=["Papers"])
-app.include_router(sessions_router, prefix="/api", tags=["Sessions"])
-app.include_router(chat_router, prefix="/api", tags=["Chat"])
-app.include_router(compare_router, prefix="/api", tags=["Comparison"])
-app.include_router(export_router, prefix="/api", tags=["Export"])
+app.include_router(v1_router, prefix="/api/v1")
+
+# ─── Legacy unversioned prefix (keeps existing frontend working) ────────────
+from api.v1.papers.router import router as papers_router
+from api.v1.sessions.router import router as sessions_router
+from api.v1.chat.router import router as chat_router
+from api.v1.comparison.router import router as compare_router
+from api.v1.export.router import router as export_router
+
+app.include_router(papers_router,  prefix="/api", tags=["Papers (legacy)"])
+app.include_router(sessions_router, prefix="/api", tags=["Sessions (legacy)"])
+app.include_router(chat_router,    prefix="/api", tags=["Chat (legacy)"])
+app.include_router(compare_router, prefix="/api", tags=["Comparison (legacy)"])
+app.include_router(export_router,  prefix="/api", tags=["Export (legacy)"])
+

@@ -1,0 +1,29 @@
+# TraceLit Backend — Development Dependencies
+#
+# These are NOT required for production. Install with:
+#   pip install -r requirements-dev.txt
+#
+# Production requirements:
+#   pip install -r requirements.txt
+
+# === Testing ===
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+httpx>=0.25.0          # async test client for FastAPI
+anyio>=4.0.0
+
+# === Linting & Formatting ===
+ruff>=0.1.0            # fast linter + formatter
+mypy>=1.7.0            # static type checking
+
+# === Type Stubs ===
+types-requests
+
+# === Debug / Dev Utilities ===
+pre-commit>=3.5.0
+
+# === Documentation ===
+# (optional, uncomment if generating docs locally)
+# mkdocs>=1.5.0
+# mkdocs-material>=9.0.0

@@ -7,8 +7,9 @@ aiofiles
 httpx
 
 # PDF Extraction
-pymupdf4llm
-pymupdf
+pymupdf4llm>=0.0.5
+pymupdf-layout>=1.27.1
+pymupdf>=1.23.0
 
 # ML / Embeddings
 sentence-transformers
@@ -22,9 +23,9 @@ sqlalchemy
 alembic
 
 # LLM Providers
-google-generativeai
-groq
-ollama
+google-genai>=1.0.0
+groq>=0.4.0
+ollama>=0.1.0
 
 # Export
 weasyprint

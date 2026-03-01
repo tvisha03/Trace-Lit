@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     groq_api_key: str = ""
 
+    # === LLM Models ===
+    gemini_model: str = "gemini-2.0-flash"
+    groq_model: str = "llama-3.3-70b-versatile"
+
     # === Database ===
     database_url: str = "sqlite:///./data/tracelit.db"
 
@@ -44,12 +48,15 @@ class Settings(BaseSettings):
     upload_dir: str = "./data/uploads"
     export_dir: str = "./data/exports"
 
-    # === ChromaDB ===
-    chroma_persist_dir: str = "./data/chroma"
+    # === FAISS / Vector Store ===
+    faiss_index_dir: str = "./data/faiss_indexes"
+
+    # === (Legacy alias — chroma_persist_dir now points at faiss_indexes) ===
+    chroma_persist_dir: str = "./data/faiss_indexes"
     chroma_collection_name: str = "tracelit_papers"
 
     model_config = {
-        "env_file": ".env",
+        "env_file": [".env", "../.env"],  # check backend/.env then project root/.env
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
@@ -60,7 +67,7 @@ class Settings(BaseSettings):
             self.upload_dir,
             self.export_dir,
             Path(self.log_file).parent,
-            self.chroma_persist_dir,
+            self.faiss_index_dir,
         ]:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
 
