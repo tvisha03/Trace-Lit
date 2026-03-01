@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "trace-lit-collection-001",
     "name": "TraceLit API",
-    "description": "Intelligent Academic Literature Assistant with Sentence-Level Verified Attribution.\n\nBase URL: {{base_url}}{{api_prefix}}\n\n## Quick Start\n1. Import this collection and the TraceLit_Environment.\n2. Set `base_url` to your server (default: http://localhost:8000).\n3. Create a session — the response `id` auto-populates `{{session_id}}`.\n4. Upload PDFs, then chat, compare, analyse, and export.",
+    "description": "Intelligent Academic Literature Assistant with Sentence-Level Verified Attribution.\n\nBase URL: {{base_url}}{{api_prefix}}\n\n## Quick Start\n1. Import this collection and the TraceLit_Environment.\n2. Set `base_url` to your server (default: http://localhost:8000).\n3. Create a session — the response `id` auto-populates `{{session_id}}`.\n4. Upload PDFs, then chat, compare, analyse, and export.\n\n## Real-Time Progress (WebSocket)\n1. Call **Get WebSocket URL** (Sessions section) to get the ws:// URL\n2. Connect using a WebSocket client (JavaScript, Socket.io, native WebSocket, etc.)\n3. Receive real-time progress: paper_progress, paper_completed, paper_failed",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -148,6 +148,20 @@
               "path": ["sessions", "{{session_id}}"]
             },
             "description": "Delete a session and all associated data (papers, chunks, vectors, exports)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get WebSocket URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/ws-url",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "ws-url"]
+            },
+            "description": "Get the WebSocket URL for real-time paper processing progress updates.\n\nResponse includes:\n- `websocket_url`: Full WebSocket URL (ws:// or wss://)\n- `session_id`: Session ID\n\nUse the `websocket_url` to connect a WebSocket client for real-time progress events:\n- {\"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.5}\n- {\"type\": \"paper_completed\", \"paper_id\": \"...\"}\n- {\"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"...\"}"
           },
           "response": []
         }
@@ -588,7 +602,7 @@
               "host": ["{{ws_base_url}}{{api_prefix}}"],
               "path": ["ws", "{{session_id}}"]
             },
-            "description": "WebSocket endpoint for real-time paper processing progress.\n\nConnect via ws://localhost:8000/api/v1/ws/{session_id}\n\nMessages received:\n- {\"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.5}\n- {\"type\": \"paper_completed\", \"paper_id\": \"...\"}\n- {\"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"...\"}\n\nSend \"ping\" to receive \"pong\" heartbeat."
+            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**IMPORTANT: Use the 'Get WebSocket URL' endpoint in Sessions section to obtain the correct ws:// URL before connecting.**\n\nMessages received on successful connection:\n- {\"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.5}\n- {\"type\": \"paper_completed\", \"paper_id\": \"...\"}\n- {\"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"...\"}\n\nSend heartbeat:\n- Send 'ping' to receive 'pong' heartbeat acknowledgment\n\n**To Connect:**\n1. Call GET /sessions/{session_id}/ws-url to get the WebSocket URL\n2. Use a WebSocket client (not HTTP) to connect to the returned URL\n3. Listen for progress messages in real-time"
           },
           "response": []
         }

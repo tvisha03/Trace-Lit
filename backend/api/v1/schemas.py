@@ -26,6 +26,10 @@ class SessionResponse(BaseModel):
 class SessionListResponse(BaseModel):
     sessions: list[SessionResponse]
 
+class WebSocketURLResponse(BaseModel):
+    websocket_url: str
+    session_id: str
+
 
 # ─── Paper ─────────────────────────────────────────────────────────────
 class PaperResponse(BaseModel):

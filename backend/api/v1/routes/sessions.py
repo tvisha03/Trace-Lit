@@ -2,7 +2,7 @@
 Session management routes.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.v1.schemas import (
@@ -10,6 +10,7 @@ from api.v1.schemas import (
     SessionRename,
     SessionResponse,
     SessionListResponse,
+    WebSocketURLResponse,
 )
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.storage.file_storage import FileStorage
@@ -55,6 +56,25 @@ async def rename_session(
     """Rename a session."""
     result = await session_service.update_session_title(db, session_id, body.title)
     return result
+
+
+@router.get("/{session_id}/ws-url", response_model=WebSocketURLResponse)
+async def get_websocket_url(
+    session_id: str,
+    request: Request,
+):
+    """Get the WebSocket URL for real-time progress updates on this session."""
+    # Construct the WebSocket URL using the client's base URL
+    client_host = request.url.hostname or "localhost"
+    client_port = request.url.port or 8000
+    scheme = "wss" if request.url.scheme == "https" else "ws"
+
+    ws_url = f"{scheme}://{client_host}:{client_port}/api/v1/ws/{session_id}"
+
+    return WebSocketURLResponse(
+        websocket_url=ws_url,
+        session_id=session_id,
+    )
 
 
 @router.delete("/{session_id}", status_code=204)
