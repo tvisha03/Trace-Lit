@@ -16,7 +16,7 @@ import sys
 
 def test_embedder():
     """Test MPS-accelerated embedder."""
-    from app.embeddings.mps_embedder import get_embedder
+    from infrastructure.vector_store.embedder import get_embedder
 
     embedder = get_embedder()  # use singleton — avoid two MPS models in memory
     print(f"Embedder device: {embedder.device}")
@@ -45,7 +45,7 @@ def test_embedder():
 
 def test_havf_high_confidence():
     """Test HAVF returns HIGH confidence for semantically matching sentences."""
-    from app.verification.havf import HAVFVerifier
+    from domain.verification.havf import HAVFVerifier
 
     verifier = HAVFVerifier()
 
@@ -73,7 +73,7 @@ def test_havf_high_confidence():
 
 def test_havf_low_confidence():
     """Test HAVF returns LOW confidence for unrelated sentences."""
-    from app.verification.havf import HAVFVerifier
+    from domain.verification.havf import HAVFVerifier
 
     verifier = HAVFVerifier()
 
@@ -98,7 +98,7 @@ def test_havf_low_confidence():
 
 def test_havf_sentence_id_returned():
     """Test HAVF returns the correct sentence_id mapping."""
-    from app.verification.havf import HAVFVerifier
+    from domain.verification.havf import HAVFVerifier
 
     verifier = HAVFVerifier()
 
@@ -127,7 +127,7 @@ def test_havf_sentence_id_returned():
 
 def test_havf_batch_verification():
     """Test HAVF verifies multiple sentences in batch."""
-    from app.verification.havf import HAVFVerifier
+    from domain.verification.havf import HAVFVerifier
 
     verifier = HAVFVerifier()
 
@@ -191,7 +191,7 @@ def test_havf_batch_verification():
 
 def test_response_parsing():
     """Test parsing LLM response into sentences with citations."""
-    from app.verification.havf import parse_response_into_sentences
+    from domain.verification.havf import parse_response_into_sentences
 
     response = (
         "BERT uses masked language modeling [P1]. "
@@ -215,7 +215,7 @@ def test_response_parsing():
 
 def test_paragraph_map_builder():
     """Test building paragraph map with paper-prefixed IDs."""
-    from app.verification.havf import build_cited_paragraphs_map
+    from domain.verification.havf import build_cited_paragraphs_map
 
     context = [
         {"paragraph_id": "abc123_P5", "text": "Some text", "paper_id": "abc123", "sentences": []},
@@ -236,7 +236,7 @@ def test_paragraph_map_builder():
 def test_vector_store():
     """Test FAISS vector store operations."""
     import tempfile
-    from app.embeddings.vector_store import VectorStore
+    from infrastructure.vector_store.faiss_store import VectorStore
 
     # Use a temp directory to avoid polluting the real index
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -306,7 +306,7 @@ def test_vector_store():
 
 def test_cross_encoder_only_for_uncertain():
     """Verify cross-encoder is lazy-loaded (not loaded until needed)."""
-    from app.verification.havf import HAVFVerifier
+    from domain.verification.havf import HAVFVerifier
 
     verifier = HAVFVerifier()
 
@@ -339,16 +339,17 @@ def test_cross_encoder_only_for_uncertain():
 
 def test_imports():
     """Verify all Week 3 imports work."""
-    from app.embeddings.mps_embedder import MPSAcceleratedEmbedder, get_embedder
-    from app.embeddings.vector_store import VectorStore, get_vector_store
-    from app.verification.havf import (
+    from infrastructure.vector_store.embedder import MPSAcceleratedEmbedder, get_embedder
+    from infrastructure.vector_store.faiss_store import VectorStore, get_vector_store
+    from domain.verification.havf import (
         HAVFVerifier,
         get_havf,
         parse_response_into_sentences,
         build_cited_paragraphs_map,
     )
-    from app.verification import HAVFVerifier as HAVFVerifier2
-    from app.embeddings import MPSAcceleratedEmbedder as Embedder2, VectorStore as VS2
+    from domain.verification.havf import HAVFVerifier as HAVFVerifier2
+    from infrastructure.vector_store.embedder import MPSAcceleratedEmbedder as Embedder2
+    from infrastructure.vector_store.faiss_store import VectorStore as VS2
 
     print("✓ All Week 3 imports OK")
 

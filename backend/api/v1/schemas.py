@@ -175,27 +175,6 @@ class SessionSchema(BaseModel):
 
 
 # ============================================================
-# Response Models — Comparison
-# ============================================================
-
-class ContributionSchema(BaseModel):
-    """Comparison table row for a single paper (Phase 2 stub)."""
-
-    paper_id: str
-    paper_title: str = ""
-    problem: Optional[str] = None
-    problem_source: Optional[str] = None
-    method: Optional[str] = None
-    method_source: Optional[str] = None
-    dataset: Optional[str] = None
-    dataset_source: Optional[str] = None
-    metrics: Optional[str] = None
-    metrics_source: Optional[str] = None
-    results: Optional[str] = None
-    results_source: Optional[str] = None
-
-
-# ============================================================
 # Response Models — Generic
 # ============================================================
 
@@ -207,13 +186,3 @@ class ErrorResponse(BaseModel):
         description="Error details with code, message, details",
     )
     status: str = "error"
-
-
-class HealthResponse(BaseModel):
-    """Health check response."""
-
-    status: str = "healthy"
-    version: str = "1.0.0"
-    memory_used_gb: float = 0.0
-    vector_store: str = "unknown"
-    models_loaded: Dict[str, Any] = Field(default_factory=dict)

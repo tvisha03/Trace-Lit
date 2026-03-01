@@ -1,15 +1,17 @@
 """Quick verification script for Week 2 LLM module."""
 
 # === Import tests ===
-from app.llm.prompts import (
+from domain.generation.prompts import (
     assemble_prompt, sanitize_user_input, validate_citations,
     extract_citations, format_context_block, trim_context_to_budget,
 )
-from app.llm.providers import GeminiClient, GroqClient, OllamaClient, BaseLLMProvider
-from app.llm.multi_provider import (
-    RobustMultiProviderLLM, get_llm, classify_query_type, SessionStateManager,
-)
-from app.llm import get_llm as get_llm2
+from infrastructure.llm.base import BaseLLMProvider
+from infrastructure.llm.gemini_provider import GeminiClient
+from infrastructure.llm.groq_provider import GroqClient
+from infrastructure.llm.ollama_provider import OllamaClient
+from infrastructure.llm.fallback_chain import RobustMultiProviderLLM, get_llm, SessionStateManager
+from domain.generation.chat_engine import classify_query_type
+from infrastructure.llm.fallback_chain import get_llm as get_llm2
 
 print("All LLM module imports OK")
 
@@ -57,8 +59,8 @@ assert len(sm.get_history()) == 6  # 3 turns * 2
 print(f"SessionStateManager OK: {len(sm.get_history())} messages (capped at 6)")
 
 # === Test API endpoint imports ===
-from app.api.sessions import router as sessions_router
-from app.api.chat import router as chat_router
+from api.v1.sessions.router import router as sessions_router
+from api.v1.chat.router import router as chat_router
 print("Sessions + Chat router imports OK")
 
 print()

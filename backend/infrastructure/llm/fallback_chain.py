@@ -13,36 +13,8 @@ from app.config import settings
 from domain.generation.prompts import assemble_prompt, sanitize_user_input, validate_citations, remove_invalid_citations
 from infrastructure.llm.base import BaseLLMProvider
 from infrastructure.llm.factory import build_provider_chain
+from infrastructure.llm.session_state import SessionStateManager
 from shared.errors import AllProvidersFailedError, ProviderError, RateLimitError
-
-
-# ============================================================
-# Session State Manager
-# ============================================================
-
-class SessionStateManager:
-    """Manages conversation context for a session."""
-
-    def __init__(self, max_turns: int = 5):
-        self.max_turns = max_turns
-        self.conversation_history: List[Dict] = []
-        self.active_paper_ids: List[str] = []
-        self.last_provider: Optional[str] = None
-        self.last_query_type: Optional[str] = None
-
-    def add_turn(self, role: str, content: str) -> None:
-        self.conversation_history.append({"role": role, "content": content})
-        max_messages = self.max_turns * 2
-        if len(self.conversation_history) > max_messages:
-            self.conversation_history = self.conversation_history[-max_messages:]
-
-    def get_history(self) -> List[Dict]:
-        return list(self.conversation_history)
-
-    def clear(self) -> None:
-        self.conversation_history = []
-        self.last_provider = None
-        self.last_query_type = None
 
 
 # ============================================================
