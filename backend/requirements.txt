@@ -1,0 +1,37 @@
+# ─── Core Framework ─────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# ─── Async ──────────────────────────────────────────────────────────
+sqlalchemy[asyncio]
+aiosqlite
+
+# ─── PDF Extraction ────────────────────────────────────────────────
+pymupdf4llm
+pymupdf
+
+# ─── Vector Store & Embeddings ─────────────────────────────────────
+faiss-cpu
+sentence-transformers
+numpy
+
+# ─── LLM Providers ────────────────────────────────────────────────
+google-generativeai
+groq
+httpx
+
+# ─── Analysis ──────────────────────────────────────────────────────
+keybert
+scikit-learn
+
+# ─── Export ────────────────────────────────────────────────────────
+weasyprint
+jinja2
+openpyxl
+
+# ─── Utilities ─────────────────────────────────────────────────────
+python-multipart
+python-dotenv
+websockets

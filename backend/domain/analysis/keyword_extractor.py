@@ -1,0 +1,63 @@
+"""
+Keyword extractor — uses KeyBERT for unsupervised keyword extraction from papers.
+"""
+
+from shared.logger import get_logger
+from shared.utils.time_utils import timer
+
+logger = get_logger(__name__)
+
+# Lazy-loaded to conserve memory
+_kw_model = None
+
+
+def _get_kw_model():
+    """Load KeyBERT model on first use."""
+    global _kw_model
+    if _kw_model is None:
+        with timer("Load KeyBERT model"):
+            from keybert import KeyBERT
+            _kw_model = KeyBERT(model="all-MiniLM-L6-v2")
+    return _kw_model
+
+
+def extract_keywords(
+    text: str,
+    top_n: int = 10,
+    keyphrase_ngram_range: tuple[int, int] = (1, 3),
+    use_mmr: bool = True,
+    diversity: float = 0.5,
+) -> list[dict]:
+    """
+    Extract keywords from text using KeyBERT with MMR diversity.
+
+    Returns list of ``{"keyword": str, "score": float}``.
+    """
+    if not text or len(text.strip()) < 50:
+        return []
+
+    kw_model = _get_kw_model()
+
+    keywords = kw_model.extract_keywords(
+        text,
+        keyphrase_ngram_range=keyphrase_ngram_range,
+        stop_words="english",
+        top_n=top_n,
+        use_mmr=use_mmr,
+        diversity=diversity,
+    )
+
+    results = [{"keyword": kw, "score": round(score, 4)} for kw, score in keywords]
+    logger.info(f"Extracted {len(results)} keywords")
+    return results
+
+
+def extract_keywords_per_paper(
+    paper_texts: dict[str, str],
+    top_n: int = 10,
+) -> dict[str, list[dict]]:
+    """Extract keywords for multiple papers. Returns ``{paper_id: [keywords]}``."""
+    return {
+        pid: extract_keywords(text, top_n=top_n)
+        for pid, text in paper_texts.items()
+    }

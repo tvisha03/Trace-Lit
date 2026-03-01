@@ -35,9 +35,7 @@ docker-compose.override.yml
 # OS
 .DS_Store
 Thumbs.db
-
-# ML Models (too large for git)
-models/
+data/
 
 # Test papers (copyrighted PDFs)
 test_papers/

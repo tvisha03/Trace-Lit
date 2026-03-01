@@ -1,0 +1,89 @@
+import uuid
+from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from domain.export.pdf_exporter import export_chat_to_pdf, export_comparison_to_pdf
+from domain.export.excel_exporter import export_citations_to_excel
+from infrastructure.db.crud.message_crud import get_messages_by_session
+from infrastructure.db.crud.session_crud import get_session
+from infrastructure.storage.file_storage import FileStorage
+from shared.enums import ExportFormat
+from shared.errors import NotFoundError
+from shared.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+async def export_chat(
+    session_id: str,
+    export_format: ExportFormat,
+    db: AsyncSession,
+    file_storage: FileStorage,
+) -> Path:
+    """
+    Export a chat session to PDF or Excel.
+    Returns the path to the generated file.
+    """
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
+
+    messages_db = await get_messages_by_session(db, session_id)
+    messages = [
+        {
+            "role": m.role.value if hasattr(m.role, "value") else m.role,
+            "content": m.content,
+            "havf_results": m.havf_results or [],
+        }
+        for m in messages_db
+    ]
+
+    filename = f"chat_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
+
+    if export_format == ExportFormat.PDF:
+        output_path = file_storage.get_export_path(session_id, f"{filename}.pdf")
+        return export_chat_to_pdf(
+            session_title=session.title or "Chat Export",
+            messages=messages,
+            output_path=output_path,
+        )
+    elif export_format == ExportFormat.EXCEL:
+        output_path = file_storage.get_export_path(session_id, f"{filename}.xlsx")
+        return export_citations_to_excel(
+            citations=_flatten_citations(messages),
+            output_path=output_path,
+        )
+    else:
+        raise ValueError(f"Unsupported export format: {format}")
+
+
+async def export_comparison(
+    session_id: str,
+    comparison_content: str,
+    paper_titles: list[str],
+    export_format: ExportFormat,
+    file_storage: FileStorage,
+) -> Path:
+    """Export a comparison result to PDF or Excel."""
+    filename = f"comparison_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
+
+    if export_format == ExportFormat.PDF:
+        output_path = file_storage.get_export_path(session_id, f"{filename}.pdf")
+        return export_comparison_to_pdf(
+            title="Paper Comparison",
+            comparison_content=comparison_content,
+            paper_titles=paper_titles,
+            output_path=output_path,
+        )
+    else:
+        raise ValueError(f"Unsupported export format for comparison: {format}")
+
+
+def _flatten_citations(messages: list[dict]) -> list[dict]:
+    """Extract all HAVF citation results from messages into a flat list."""
+    citations = []
+    for msg in messages:
+        for result in msg.get("havf_results", []):
+            citations.append(result)
+    return citations
