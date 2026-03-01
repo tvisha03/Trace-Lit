@@ -85,124 +85,7 @@ Output per sentence:
 
 ---
 
-## 4. Implementation
-
-### Models Used
-
-| Model | Purpose | Size | Device | Latency |
-|-------|---------|------|--------|---------|
-| `all-MiniLM-L6-v2` | Level 1 embedding similarity | 23MB | MPS (M3 GPU) | <10ms per sentence |
-| `cross-encoder/ms-marco-MiniLM-L-6-v2` | Level 2 reranking | ~80MB | CPU | <50ms per sentence |
-
-### Core Verifier Class
-
-```python
-# backend/app/verification/havf.py
-
-from sentence_transformers import SentenceTransformer, CrossEncoder
-import numpy as np
-
-class HAVFVerifier:
-    HIGH_THRESHOLD = 0.85
-    MEDIUM_THRESHOLD = 0.65
-    RERANK_THRESHOLD = 0.75
-
-    def __init__(self):
-        self.embed_model = SentenceTransformer('all-MiniLM-L6-v2')
-        self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-
-    async def verify_response(self, response_sentences, cited_paragraphs):
-        """
-        Verify all sentences in a response.
-
-        Args:
-            response_sentences: List of {"text": str, "citations": List[str]}
-            cited_paragraphs: Dict mapping paragraph_id → paragraph data with sentences[]
-
-        Returns:
-            List of SentenceVerification results
-        """
-        results = []
-
-        # LEVEL 1: Batch encode all response sentences
-        response_texts = [s['text'] for s in response_sentences]
-        response_embeds = self.embed_model.encode(response_texts, device='mps')
-
-        needs_rerank = []  # Collect uncertain for batch Level 2
-
-        for idx, sentence in enumerate(response_sentences):
-            for citation_id in sentence['citations']:
-                paragraph = cited_paragraphs.get(citation_id)
-                if not paragraph:
-                    results.append(self._low_confidence(sentence, citation_id, "missing_paragraph"))
-                    continue
-
-                # Compare against each sentence in the cited paragraph
-                para_sentences = paragraph['sentences']
-                para_texts = [ps['text'] for ps in para_sentences]
-                para_embeds = self.embed_model.encode(para_texts, device='mps')
-
-                similarities = np.dot(response_embeds[idx], para_embeds.T)
-                best_idx = np.argmax(similarities)
-                best_sim = similarities[best_idx]
-
-                if best_sim >= self.HIGH_THRESHOLD:
-                    results.append({
-                        "sentence_text": sentence['text'],
-                        "paragraph_id": citation_id,
-                        "sentence_id": para_sentences[best_idx]['sentence_id'],
-                        "matched_text": para_sentences[best_idx]['text'],
-                        "confidence": float(best_sim),
-                        "level": "high",
-                        "method": "embedding_similarity"
-                    })
-                elif best_sim >= self.MEDIUM_THRESHOLD:
-                    needs_rerank.append((idx, sentence, citation_id, paragraph, best_idx, best_sim))
-                else:
-                    results.append({
-                        "sentence_text": sentence['text'],
-                        "paragraph_id": citation_id,
-                        "sentence_id": para_sentences[best_idx]['sentence_id'],
-                        "matched_text": para_sentences[best_idx]['text'],
-                        "confidence": float(best_sim),
-                        "level": "low",
-                        "method": "embedding_similarity"
-                    })
-
-        # LEVEL 2: Batch cross-encoder for uncertain sentences
-        if needs_rerank:
-            pairs = []
-            for _, sentence, _, paragraph, _, _ in needs_rerank:
-                for ps in paragraph['sentences']:
-                    pairs.append([sentence['text'], ps['text']])
-
-            rerank_scores = self.cross_encoder.predict(pairs, batch_size=16)
-
-            # Map scores back to sentences
-            pair_idx = 0
-            for _, sentence, citation_id, paragraph, _, _ in needs_rerank:
-                n_sents = len(paragraph['sentences'])
-                scores = rerank_scores[pair_idx:pair_idx + n_sents]
-                best_rerank_idx = np.argmax(scores)
-                best_score = scores[best_rerank_idx]
-                pair_idx += n_sents
-
-                results.append({
-                    "sentence_text": sentence['text'],
-                    "paragraph_id": citation_id,
-                    "sentence_id": paragraph['sentences'][best_rerank_idx]['sentence_id'],
-                    "matched_text": paragraph['sentences'][best_rerank_idx]['text'],
-                    "confidence": float(best_score),
-                    "level": "medium" if best_score >= self.RERANK_THRESHOLD else "low",
-                    "method": "cross_encoder_rerank"
-                })
-
-        return results
-```
-
----
-
-## 5. Performance Benchmarks
+## 4. Performance Benchmarks
 
 | Metric | Target | Expected |
 |--------|--------|----------|
@@ -217,39 +100,13 @@ class HAVFVerifier:
 
 ---
 
-## 6. Integration Points
+## 5. Integration Points
 
 ### With RAG Pipeline
 
 HAVF runs **after** the LLM generates a response. It receives:
 - The parsed response sentences (with their `[P#]` citations)
 - The original retrieved paragraphs (with their `sentences[]` arrays)
-
-### With Frontend
-
-HAVF output is sent to the frontend as part of the chat response:
-
-```json
-{
-  "sentences": [
-    {
-      "text": "BERT uses masked language modeling",
-      "paragraph_id": "P5",
-      "sentence_id": "P5_S2",
-      "confidence": 0.94,
-      "level": "high"
-    },
-    {
-      "text": "This improved GLUE benchmarks significantly",
-      "paragraph_id": "P12",
-      "sentence_id": "P12_S0",
-      "confidence": 0.72,
-      "level": "medium"
-    }
-  ],
-  "overall_confidence": 0.83
-}
-```
 
 ### UI Rendering
 
@@ -260,7 +117,7 @@ HAVF output is sent to the frontend as part of the chat response:
 
 ---
 
-## 7. Edge Cases
+## 6. Edge Cases
 
 | Case | Handling |
 |------|----------|
@@ -272,35 +129,3 @@ HAVF output is sent to the frontend as part of the chat response:
 
 ---
 
-## 8. Testing HAVF
-
-```python
-# Run daily during development
-
-def test_havf_high_confidence():
-    result = havf.verify_single(
-        generated="BERT uses masked language modeling",
-        source_sentences=["We use masked language modeling (MLM) as the pre-training objective"]
-    )
-    assert result['confidence'] >= 0.85
-    assert result['level'] == 'high'
-
-def test_havf_low_confidence():
-    result = havf.verify_single(
-        generated="The model achieves state-of-the-art results",
-        source_sentences=["We train the model on ImageNet dataset"]
-    )
-    assert result['confidence'] < 0.65
-    assert result['level'] == 'low'
-
-def test_havf_sentence_id_returned():
-    result = havf.verify_single(
-        generated="Attention mechanisms allow focusing on relevant parts",
-        source_sentences=[
-            "The encoder maps an input sequence",           # P0_S0
-            "Attention lets the model focus on relevant positions",  # P0_S1
-            "The decoder then generates output tokens"      # P0_S2
-        ]
-    )
-    assert result['sentence_id'] == 'P0_S1'  # Should match second sentence
-```

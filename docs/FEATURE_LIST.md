@@ -208,21 +208,3 @@
 | Advanced Analytics Dashboard | Recharts + aggregated metrics | 3–4 days | Research insights |
 
 ---
-
-## Feature Priority Matrix
-
-| Priority | Feature | Phase | Cut If Behind? |
-|----------|---------|-------|---------------|
-| 🔴 P0 | Sentence-aware chunking | 1 | NEVER |
-| 🔴 P0 | Multi-provider LLM + error handling | 1 | NEVER |
-| 🔴 P0 | HAVF verification | 1 | NEVER |
-| 🔴 P0 | Chat interface + citations | 1 | NEVER |
-| 🔴 P0 | Source viewer + sentence highlighting | 1 | NEVER |
-| 🟡 P1 | Comparison table | 1 | If 1 week behind |
-| 🟡 P1 | Export (PDF/Excel) | 1 | If 1 week behind |
-| 🟡 P1 | Progressive processing + WebSocket | 1 | If 1 week behind |
-| 🟢 P2 | Keyword extraction | 2 | Yes |
-| 🟢 P2 | Literature review generator | 2 | Yes |
-| 🟢 P2 | Research gap finder | 2 | Yes |
-| 🟢 P2 | On-demand summaries | 2 | Yes |
-| 🟢 P2 | Local Ollama toggle | 2 | Yes |
