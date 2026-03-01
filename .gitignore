@@ -37,8 +37,9 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 
-# ML Models (too large for git)
-models/
+# ML Models (too large for git) — only ignore top-level models/ dir, not app/models/ package
+/models/
+backend/models/
 
 # Test papers (copyrighted PDFs)
 test_papers/
