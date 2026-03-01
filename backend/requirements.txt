@@ -1,43 +1,43 @@
 # Web Framework
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
 python-multipart
 aiofiles
-httpx>=0.25.0
+httpx
 
 # PDF Extraction
-pymupdf4llm>=0.0.5
-pymupdf>=1.23.0
+pymupdf4llm
+pymupdf
 
 # ML / Embeddings
-sentence-transformers>=2.2.0
-torch>=2.0.0
-numpy>=1.24.0
+sentence-transformers
+torch
+numpy
 
 # Vector Store
-faiss-cpu>=1.7.0
+faiss-cpu
 
 # Database
-sqlalchemy>=2.0.0
-alembic>=1.12.0
+sqlalchemy
+alembic
 
 # LLM Providers
-google-generativeai>=0.3.0
-groq>=0.4.0
-ollama>=0.1.0
+google-generativeai
+groq
+ollama
 
 # Export
-weasyprint>=60.0
-openpyxl>=3.1.0
-python-docx>=0.8.11
-jinja2>=3.1.0
+weasyprint
+openpyxl
+python-docx
+jinja2
 
 # Phase 2
-keybert>=0.8.0
-scikit-learn>=1.3.0
+keybert
+scikit-learn
 
 # Utilities
-python-dotenv>=1.0.0
-loguru>=0.7.0
+python-dotenv
+loguru
