@@ -1,11 +1,12 @@
 """
 Gemini 2.0 Flash provider — primary LLM (250K TPM, highest quality).
+Uses the current google-genai SDK (google.genai).
 """
 
-import asyncio
 from typing import AsyncGenerator
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from infrastructure.llm.base import BaseLLMProvider
 from shared.enums import LLMProvider
@@ -15,6 +16,8 @@ from app.config import get_settings
 
 logger = get_logger(__name__)
 
+_MODEL = "gemini-2.0-flash"
+
 
 class GeminiProvider(BaseLLMProvider):
     provider = LLMProvider.GEMINI
@@ -23,12 +26,13 @@ class GeminiProvider(BaseLLMProvider):
         settings = get_settings()
         self._api_key = settings.GEMINI_API_KEY
         self._timeout = settings.LLM_TIMEOUT
-        self._configured = False
+        self._client: genai.Client | None = None
 
-    def _ensure_configured(self) -> None:
-        if not self._configured and self._api_key:
-            genai.configure(api_key=self._api_key)
-            self._configured = True
+    def _get_client(self) -> genai.Client:
+        """Lazily create the genai client on first use."""
+        if self._client is None:
+            self._client = genai.Client(api_key=self._api_key)
+        return self._client
 
     async def generate(
         self,
@@ -37,28 +41,27 @@ class GeminiProvider(BaseLLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> str:
-        self._ensure_configured()
-        model = genai.GenerativeModel(
-            "gemini-2.0-flash",
+        client = self._get_client()
+        config = types.GenerateContentConfig(
             system_instruction=system_prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            ),
+            temperature=temperature,
+            max_output_tokens=max_tokens,
         )
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(model.generate_content, user_prompt),
-                timeout=self._timeout,
+            response = await client.aio.models.generate_content(
+                model=_MODEL,
+                contents=user_prompt,
+                config=config,
             )
-        except asyncio.TimeoutError:
-            raise ProviderTimeoutError("gemini", self._timeout)
         except Exception as exc:
-            if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+            exc_str = str(exc)
+            if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
                 raise RateLimitError("gemini")
+            if "timeout" in exc_str.lower() or "deadline" in exc_str.lower():
+                raise ProviderTimeoutError("gemini", self._timeout)
             raise
 
-        text = response.text.strip() if response.text else ""
+        text = (response.text or "").strip()
         if not text:
             raise EmptyResponseError("gemini")
         return text
@@ -70,20 +73,18 @@ class GeminiProvider(BaseLLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> AsyncGenerator[str, None]:
-        self._ensure_configured()
-        model = genai.GenerativeModel(
-            "gemini-2.0-flash",
+        client = self._get_client()
+        config = types.GenerateContentConfig(
             system_instruction=system_prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            ),
+            temperature=temperature,
+            max_output_tokens=max_tokens,
         )
         try:
-            response = await asyncio.to_thread(
-                model.generate_content, user_prompt, stream=True
-            )
-            for chunk in response:
+            async for chunk in client.aio.models.generate_content_stream(
+                model=_MODEL,
+                contents=user_prompt,
+                config=config,
+            ):
                 if chunk.text:
                     yield chunk.text
         except Exception as exc:

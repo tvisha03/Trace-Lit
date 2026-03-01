@@ -1,0 +1,598 @@
+{
+  "info": {
+    "_postman_id": "trace-lit-collection-001",
+    "name": "TraceLit API",
+    "description": "Intelligent Academic Literature Assistant with Sentence-Level Verified Attribution.\n\nBase URL: {{base_url}}{{api_prefix}}\n\n## Quick Start\n1. Import this collection and the TraceLit_Environment.\n2. Set `base_url` to your server (default: http://localhost:8000).\n3. Create a session — the response `id` auto-populates `{{session_id}}`.\n4. Upload PDFs, then chat, compare, analyse, and export.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "{{base_url}}"
+    },
+    {
+      "key": "api_prefix",
+      "value": "{{api_prefix}}"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/health",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["health"]
+            },
+            "description": "Returns service health status and active LLM provider availability."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "Create Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.environment.set('session_id', jsonData.id);",
+                  "    console.log('session_id set to: ' + jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"My Research Session\",\n  \"description\": \"Exploring NLP papers on transformer architectures\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions"]
+            },
+            "description": "Create a new research session. Both `title` and `description` are optional."
+          },
+          "response": []
+        },
+        {
+          "name": "List Sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions"]
+            },
+            "description": "List all sessions ordered by most recently updated."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
+            },
+            "description": "Get session details by ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Rename Session",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Session Title\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
+            },
+            "description": "Rename a session. `title` is required (1–200 chars)."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
+            },
+            "description": "Delete a session and all associated data (papers, chunks, vectors, exports)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Papers",
+      "item": [
+        {
+          "name": "Upload Papers (PDF)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.paper_ids && jsonData.paper_ids.length > 0) {",
+                  "        pm.environment.set('paper_id', jsonData.paper_ids[0]);",
+                  "        console.log('paper_id set to: ' + jsonData.paper_ids[0]);",
+                  "        if (jsonData.paper_ids.length > 1) {",
+                  "            pm.environment.set('second_paper_id', jsonData.paper_ids[1]);",
+                  "            console.log('second_paper_id set to: ' + jsonData.paper_ids[1]);",
+                  "        }",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": "",
+                  "description": "Select 1–7 PDF files to upload"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers"]
+            },
+            "description": "Upload 1–7 PDF files to a session. Files are validated (type, size ≤ 50 MB) then queued for async processing."
+          },
+          "response": []
+        },
+        {
+          "name": "List Papers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers"]
+            },
+            "description": "List all papers in a session with their processing status."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Paper",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers", "{{paper_id}}"]
+            },
+            "description": "Get a single paper's details including metadata, status, and processing progress."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Paper",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers", "{{paper_id}}"]
+            },
+            "description": "Delete a paper and its associated chunks/vectors."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Send Message (Sync)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the main contributions of the uploaded papers?\",\n  \"stream\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat"]
+            },
+            "description": "Send a query and receive a verified response. Uses RAG retrieval + HAVF verification pipeline. Set `stream: false` for a synchronous JSON response."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Message (Stream / SSE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Summarize the key findings across all papers.\",\n  \"stream\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat"]
+            },
+            "description": "Send a query with streaming enabled (`stream: true`). Returns Server-Sent Events (SSE). Note: Postman has limited SSE support — you may see the raw event text."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Chat History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat/messages",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat", "messages"]
+            },
+            "description": "Get all messages in a session's chat history (user queries + assistant responses with HAVF verification results)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Comparison",
+      "item": [
+        {
+          "name": "Compare Papers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paper_ids\": [\n    \"{{paper_id}}\",\n    \"{{second_paper_id}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/compare",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "compare"]
+            },
+            "description": "Compare 2–7 papers side-by-side. Returns a structured comparison of their methodologies, findings, and contributions."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Paper Contributions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/compare/contributions/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "compare",
+                "contributions",
+                "{{paper_id}}"
+              ]
+            },
+            "description": "Extract structured contributions (objectives, methods, findings, etc.) from a single paper."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Export",
+      "item": [
+        {
+          "name": "Export Session (PDF)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.environment.set('export_filename', jsonData.filename);",
+                  "    console.log('export_filename set to: ' + jsonData.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export a chat session to PDF format. Returns a download URL."
+          },
+          "response": []
+        },
+        {
+          "name": "Export Session (Excel)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.environment.set('export_filename', jsonData.filename);",
+                  "    console.log('export_filename set to: ' + jsonData.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"excel\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export a chat session to Excel (.xlsx) format. Returns a download URL."
+          },
+          "response": []
+        },
+        {
+          "name": "Download Exported File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export/download/{{export_filename}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "export",
+                "download",
+                "{{export_filename}}"
+              ]
+            },
+            "description": "Download a previously exported file by filename. Responds with the binary file (PDF or Excel)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Analysis",
+      "item": [
+        {
+          "name": "Get Paper Keywords",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/keywords/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "analysis",
+                "keywords",
+                "{{paper_id}}"
+              ]
+            },
+            "description": "Extract keywords with relevance scores from a single paper."
+          },
+          "response": []
+        },
+        {
+          "name": "Gap Analysis",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/gaps",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "analysis", "gaps"]
+            },
+            "description": "Run gap analysis across all papers in the session. Returns identified themes and underexplored areas."
+          },
+          "response": []
+        },
+        {
+          "name": "Literature Review",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/review",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "analysis", "review"]
+            },
+            "description": "Generate a mini literature review from all papers in the session using LLM."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Verification",
+      "item": [
+        {
+          "name": "Verify Text Against Papers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Transformer models have significantly improved NLP tasks by using self-attention mechanisms. BERT introduced bidirectional pre-training for language understanding.\",\n  \"paper_ids\": [\n    \"{{paper_id}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/verify",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["verify"]
+            },
+            "description": "Verify arbitrary text (e.g., your own notes or claims) against indexed papers. Returns per-sentence HAVF verification results with confidence scores."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "WebSocket",
+      "item": [
+        {
+          "name": "Paper Processing Progress (WS)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ws_base_url}}{{api_prefix}}/ws/{{session_id}}",
+              "host": ["{{ws_base_url}}{{api_prefix}}"],
+              "path": ["ws", "{{session_id}}"]
+            },
+            "description": "WebSocket endpoint for real-time paper processing progress.\n\nConnect via ws://localhost:8000/api/v1/ws/{session_id}\n\nMessages received:\n- {\"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.5}\n- {\"type\": \"paper_completed\", \"paper_id\": \"...\"}\n- {\"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"...\"}\n\nSend \"ping\" to receive \"pong\" heartbeat."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

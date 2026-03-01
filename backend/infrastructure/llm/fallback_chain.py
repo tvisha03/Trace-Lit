@@ -46,6 +46,11 @@ class FallbackChain:
             order = [LLMProvider.GEMINI, LLMProvider.GROQ, LLMProvider.OLLAMA]
         return [create_provider(p) for p in order]
 
+    @property
+    def providers(self) -> list[BaseLLMProvider]:
+        """Read-only access to the provider chain."""
+        return self._providers
+
     async def generate(
         self,
         system_prompt: str,

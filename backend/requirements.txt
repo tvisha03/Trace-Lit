@@ -18,7 +18,7 @@ sentence-transformers
 numpy
 
 # ─── LLM Providers ────────────────────────────────────────────────
-google-generativeai
+google-genai
 groq
 httpx
 
