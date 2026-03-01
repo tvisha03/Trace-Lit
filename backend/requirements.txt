@@ -27,7 +27,7 @@ keybert
 scikit-learn
 
 # ─── Export ────────────────────────────────────────────────────────
-weasyprint
+fpdf2
 jinja2
 openpyxl
 

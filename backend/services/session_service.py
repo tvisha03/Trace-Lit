@@ -1,5 +1,3 @@
-import uuid
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.crud.session_crud import (
@@ -26,10 +24,8 @@ async def create_new_session(
     description: str | None = None,
 ) -> dict:
     """Create a new research session. Returns session data dict."""
-    session_id = str(uuid.uuid4())
     session = await create_session(
         db,
-        session_id=session_id,
         title=title or "New Session",
         description=description,
     )
@@ -74,7 +70,13 @@ async def update_session_title(db: AsyncSession, session_id: str, new_title: str
     session = await rename_session(db, session_id, new_title)
     if not session:
         raise NotFoundError("Session", session_id)
-    return {"id": str(session.id), "title": session.title}
+    return {
+        "id": str(session.id),
+        "title": session.title,
+        "description": session.description,
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+    }
 
 
 async def delete_full_session(

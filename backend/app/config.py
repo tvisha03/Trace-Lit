@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # ── LLM providers ─────────────────────────────────────────────────────
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
     USE_LOCAL_LLM: bool = False
     OLLAMA_MODEL: str = "llama3.2:3b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"

@@ -31,7 +31,7 @@ class FileStorage:
         dest_dir = self._uploads / session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / filename
-        dest.write_bytes(file.read())
+        dest.write_bytes(file if isinstance(file, bytes) else file.read())
         logger.info(f"Saved upload: {dest}")
         return dest
 

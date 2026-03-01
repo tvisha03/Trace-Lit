@@ -2,7 +2,7 @@
 CRUD operations for the Session model.
 """
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.session import Session
@@ -25,15 +25,20 @@ async def list_sessions(db: AsyncSession) -> list[Session]:
     return list(result.scalars().all())
 
 
-async def rename_session(db: AsyncSession, session_id: str, title: str) -> None:
-    await db.execute(
-        update(Session).where(Session.id == session_id).values(title=title)
-    )
+async def rename_session(db: AsyncSession, session_id: str, title: str) -> Session | None:
+    session_obj = await get_session(db, session_id)
+    if not session_obj:
+        return None
+    session_obj.title = title
     await db.flush()
+    await db.refresh(session_obj)
+    return session_obj
 
 
-async def delete_session(db: AsyncSession, session_id: str) -> None:
+async def delete_session(db: AsyncSession, session_id: str) -> bool:
     session_obj = await get_session(db, session_id)
     if session_obj:
         await db.delete(session_obj)
         await db.flush()
+        return True
+    return False

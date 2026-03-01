@@ -1,5 +1,6 @@
 """
-Groq provider — fast fallback (Llama 3.1 70B, 30K TPM).
+Groq provider — fast, configurable model (defaults to mixtral-8x7b-32768).
+Model can be overridden via GROQ_MODEL environment variable.
 """
 
 import asyncio
@@ -22,6 +23,7 @@ class GroqProvider(BaseLLMProvider):
     def __init__(self) -> None:
         settings = get_settings()
         self._api_key = settings.GROQ_API_KEY
+        self._model = settings.GROQ_MODEL
         self._timeout = settings.LLM_TIMEOUT
         self._client: AsyncGroq | None = None
 
@@ -41,7 +43,7 @@ class GroqProvider(BaseLLMProvider):
         try:
             response = await asyncio.wait_for(
                 client.chat.completions.create(
-                    model="llama-3.1-70b-versatile",
+                    model=self._model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -74,7 +76,7 @@ class GroqProvider(BaseLLMProvider):
         try:
             stream = await asyncio.wait_for(
                 client.chat.completions.create(
-                    model="llama-3.1-70b-versatile",
+                    model=self._model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},

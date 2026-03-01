@@ -1,5 +1,3 @@
-import uuid
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.generation.chat_engine import generate_response, ChatResponse
@@ -56,7 +54,6 @@ async def chat(
     paper_ids, history = await _prepare_chat_context(session_id, db)
     await create_message(
         db,
-        message_id=str(uuid.uuid4()),
         session_id=session_id,
         role=MessageRole.USER,
         content=query,
@@ -71,7 +68,6 @@ async def chat(
     )
     await create_message(
         db,
-        message_id=str(uuid.uuid4()),
         session_id=session_id,
         role=MessageRole.ASSISTANT,
         content=response.content,
@@ -99,7 +95,6 @@ async def chat_stream(
     # Save user message
     await create_message(
         db,
-        message_id=str(uuid.uuid4()),
         session_id=session_id,
         role=MessageRole.USER,
         content=query,

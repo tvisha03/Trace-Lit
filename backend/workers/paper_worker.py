@@ -28,12 +28,17 @@ async def paper_job_processor(job: PaperJob):
                     progress=progress,
                 )
 
-        await process_paper(
-            paper_id=job.paper_id,
-            db=db,
-            faiss_store=faiss_store,
-            progress_callback=progress_callback,
-        )
+        try:
+            await process_paper(
+                paper_id=job.paper_id,
+                db=db,
+                faiss_store=faiss_store,
+                progress_callback=progress_callback,
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 def create_paper_queue() -> SmartPaperQueue:

@@ -17,6 +17,9 @@ from infrastructure.llm.fallback_chain import FallbackChain
 from workers.paper_worker import create_paper_queue, set_ws_manager
 from workers.export_worker import shutdown_export_pool
 from api.v1.routes.websocket import ws_manager
+from infrastructure.db.crud.paper_crud import get_stuck_papers, update_paper_status
+from infrastructure.db.database import async_session_factory
+from shared.enums import PaperStatus
 
 logger = get_logger(__name__)
 
@@ -45,6 +48,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     set_ws_manager(ws_manager)
     await paper_queue.start()
     app.state.paper_queue = paper_queue
+
+    # Re-queue any papers stuck in non-terminal states (e.g. from a crashed run)
+    async with async_session_factory() as db:
+        stuck = await get_stuck_papers(db)
+        if stuck:
+            logger.info(f"Re-queueing {len(stuck)} stuck paper(s) from previous run")
+            for paper in stuck:
+                await update_paper_status(db, str(paper.id), PaperStatus.QUEUED, progress=0.0)
+                await paper_queue.enqueue(str(paper.id), str(paper.session_id))
+            await db.commit()
 
     logger.info("TraceLit backend ready ✓")
 

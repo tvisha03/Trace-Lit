@@ -44,6 +44,15 @@ async def update_paper_status(
     await db.flush()
 
 
+async def get_stuck_papers(db: AsyncSession) -> list[Paper]:
+    """Return papers stuck in a non-terminal state (e.g. after a server crash)."""
+    terminal = {PaperStatus.COMPLETED, PaperStatus.FAILED}
+    stuck_statuses = [s for s in PaperStatus if s not in terminal]
+    stmt = select(Paper).where(Paper.status.in_(stuck_statuses))
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def delete_paper(db: AsyncSession, paper_id: str) -> None:
     paper = await get_paper(db, paper_id)
     if paper:

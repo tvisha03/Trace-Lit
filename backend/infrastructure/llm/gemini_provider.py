@@ -16,7 +16,7 @@ from app.config import get_settings
 
 logger = get_logger(__name__)
 
-_MODEL = "gemini-2.0-flash"
+_MODEL = "gemini-2.5-flash"
 
 
 class GeminiProvider(BaseLLMProvider):

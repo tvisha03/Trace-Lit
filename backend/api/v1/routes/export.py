@@ -42,7 +42,7 @@ async def download_export(
 ):
     """Download an exported file."""
     file_storage = FileStorage()
-    file_path = file_storage.get_export_path(session_id, filename)
+    file_path = file_storage.get_export_path(filename, session_id)
 
     if not file_path.exists():
         from shared.errors import NotFoundError

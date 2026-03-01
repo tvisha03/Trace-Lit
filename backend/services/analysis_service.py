@@ -8,7 +8,7 @@ from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
 from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.llm.fallback_chain import FallbackChain
 from shared.enums import PaperStatus
-from shared.errors import NotFoundError
+from shared.errors import NotFoundError, InsufficientDataError
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -39,7 +39,7 @@ async def get_session_gap_analysis(
     """
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if len(papers) < 2:
-        raise ValueError("Gap analysis requires at least 2 completed papers")
+        raise InsufficientDataError("Gap analysis requires at least 2 completed papers")
 
     # Gather text per paper
     paper_texts: dict[str, str] = {}

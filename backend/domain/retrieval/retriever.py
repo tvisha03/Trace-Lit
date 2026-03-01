@@ -42,10 +42,11 @@ async def retrieve(
     if not results:
         return []
 
-    composite_to_score = {cid: score for cid, score in results}
+    composite_to_score = {f"{r['paper_id']}::{r['paragraph_id']}": r['score'] for r in results}
     para_by_paper: dict[str, list[str]] = {}
-    for cid, _ in results:
-        pid, para_id = cid.split("::", 1)
+    for r in results:
+        pid = r['paper_id']
+        para_id = r['paragraph_id']
         para_by_paper.setdefault(pid, []).append(para_id)
 
     retrieved = []

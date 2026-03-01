@@ -42,14 +42,14 @@ async def export_chat(
     filename = f"chat_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
 
     if export_format == ExportFormat.PDF:
-        output_path = file_storage.get_export_path(session_id, f"{filename}.pdf")
+        output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
         return export_chat_to_pdf(
             session_title=session.title or "Chat Export",
             messages=messages,
             output_path=output_path,
         )
     elif export_format == ExportFormat.EXCEL:
-        output_path = file_storage.get_export_path(session_id, f"{filename}.xlsx")
+        output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
         return export_citations_to_excel(
             citations=_flatten_citations(messages),
             output_path=output_path,
@@ -69,7 +69,7 @@ async def export_comparison(
     filename = f"comparison_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
 
     if export_format == ExportFormat.PDF:
-        output_path = file_storage.get_export_path(session_id, f"{filename}.pdf")
+        output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
         return export_comparison_to_pdf(
             title="Paper Comparison",
             comparison_content=comparison_content,

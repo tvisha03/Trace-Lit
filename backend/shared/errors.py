@@ -99,6 +99,28 @@ class FileValidationError(TraceLitError):
         super().__init__(message=detail, status_code=400)
 
 
+# ── Analysis / Insufficient data ──────────────────────────────────────────────
+
+class InsufficientDataError(TraceLitError):
+    """Operation requires more data than currently available (e.g., gap analysis needs ≥2 papers)."""
+
+    def __init__(self, detail: str):
+        super().__init__(message=detail, status_code=400)
+
+
+# ── PDF Export errors ──────────────────────────────────────────────────────
+
+class PDFExportError(TraceLitError):
+    """PDF export failed — usually due to missing system dependencies (e.g., GTK+)."""
+
+    def __init__(self, detail: str = "PDF export unavailable"):
+        super().__init__(
+            message=f"PDF export is currently unavailable: {detail}. "
+                   f"Please contact system administrator or try exporting to a different format.",
+            status_code=503,
+        )
+
+
 # ── Session / Not-found ───────────────────────────────────────────────────
 
 class NotFoundError(TraceLitError):

@@ -27,16 +27,14 @@ async def register_paper(
     file_size_mb: float,
 ) -> str:
     """Create a paper record in QUEUED status. Returns the paper ID."""
-    paper_id = str(uuid.uuid4())
-    await create_paper(
+    paper = await create_paper(
         db,
-        paper_id=paper_id,
         session_id=session_id,
         filename=filename,
         file_path=file_path,
         file_size_mb=file_size_mb,
     )
-    return paper_id
+    return str(paper.id)
 
 
 async def process_paper(
