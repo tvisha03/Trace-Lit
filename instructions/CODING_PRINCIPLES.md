@@ -1,305 +1,352 @@
-# TraceLit — Coding Principles & Standards
+# Coding Principles & Best Practices Guide
 
-> These principles govern ALL code written for TraceLit.  
-> Every function, class, and module must follow these rules.  
-> LLM agents generating code for this project MUST adhere to these standards.
+## Core Programming Principles
+
+### SOLID Principles (Object-Oriented Design)
+
+**S - Single Responsibility Principle**
+
+- Each class or function should have one, and only one, reason to change
+- A function should do one thing and do it well
+- Keeps code focused, testable, and maintainable
+
+**O - Open/Closed Principle**
+
+- Software entities should be open for extension but closed for modification
+- Design systems that can be extended without changing existing code
+- Use inheritance, interfaces, and composition
+
+**L - Liskov Substitution Principle**
+
+- Objects of a superclass should be replaceable with objects of its subclasses without breaking the application
+- Derived classes must be substitutable for their base classes
+
+**I - Interface Segregation Principle**
+
+- Clients should not be forced to depend on interfaces they don't use
+- Create specific, focused interfaces rather than large, general-purpose ones
+
+**D - Dependency Inversion Principle**
+
+- High-level modules should not depend on low-level modules; both should depend on abstractions
+- Depend on abstractions, not on concrete implementations
+
+### DRY - Don't Repeat Yourself
+
+- Avoid code duplication by extracting common logic into reusable functions, classes, or modules
+- Reduces maintenance burden and prevents inconsistencies
+- When you find yourself copying and pasting code, it's time to refactor
+
+### KISS - Keep It Simple, Stupid
+
+- Simplicity should be a key goal in design
+- Avoid unnecessary complexity
+- Write straightforward code that's easy to understand
+- Don't over-engineer solutions
+
+### YAGNI - You Aren't Gonna Need It
+
+- Don't implement functionality until it's actually needed
+- Avoid building features for hypothetical future requirements
+- Focus on current requirements; tomorrow's needs might be different
+- Prevents bloated, complicated codebases
+
+### Separation of Concerns (SoC)
+
+- Partition applications into distinct sections, each addressing a separate concern
+- Examples: MVC pattern (Model-View-Controller), business logic vs UI
+- Each section can be developed, tested, and maintained independently
+- Promotes modularity and reusability
+
+### Law of Demeter (Principle of Least Knowledge)
+
+- A unit should have limited knowledge about other units
+- Only talk to immediate friends, not strangers
+- Reduces coupling between components
+- Each unit should only communicate with closely related units
+
+## Clean Code Practices
+
+### Naming Conventions
+
+- **Use meaningful and descriptive names** that reveal intent
+- Avoid single-letter variables except for loop counters
+- Bad: `data`, `handleStuff`, `x1`, `temp`
+- Good: `fetchUserProfile`, `calculateTotalPrice`, `userEmailAddress`
+- Use consistent naming styles (camelCase, PascalCase, snake_case) per language conventions
+
+### Function Design
+
+- **Keep functions small and focused** - ideally one screen of code
+- Each function should have a single, clear purpose
+- Limit parameters to 3-4 maximum; use objects for more complex inputs
+- Functions should be side-effect free when possible
+- Use descriptive function names that indicate what they do
+
+### Code Structure
+
+- **Write as few lines as possible** without sacrificing clarity
+- Use appropriate indentation and formatting
+- Group related code blocks together
+- Maintain consistent style throughout the project
+- Follow language-specific style guides (PEP 8 for Python, Airbnb for JavaScript, etc.)
+
+### Comments and Documentation
+
+- **Write self-documenting code** with clear names and structure
+- Add comments only where necessary - explain "why", not "what"
+- Document complex logic and business decisions
+- Keep comments updated with code changes
+- Avoid obvious comments that add no value
+- Use docstrings for functions and classes to explain purpose, parameters, and return values
+
+### Code Readability
+
+- Readable code is easy to follow and understand
+- Optimize for human comprehension first, then performance
+- Use whitespace effectively to separate logical sections
+- Avoid deeply nested code - flatten when possible
+- Keep line lengths reasonable (typically 80-120 characters)
+
+### Constants and Magic Numbers
+
+- **Use named constants** instead of hard-coded values
+- Example: Use `TEN_PERCENT_DISCOUNT = 0.1` instead of `0.1` throughout code
+- Makes code more maintainable and self-explanatory
+- Centralize configuration values
+
+## Testing & Quality Assurance
+
+### Test-Driven Development (TDD)
+
+- Write tests before implementing features
+- Creates a safety net that verifies code correctness
+- Guides development process and design
+- Results in more resilient, maintainable code
+- Catches bugs early in the development cycle
+
+### Types of Testing
+
+- **Unit Testing**: Test individual functions or modules in isolation
+- **Integration Testing**: Verify how different components work together
+- **System Testing**: Evaluate the complete application
+- **Automated Testing**: Use tools like Jest, JUnit, Selenium for continuous feedback
+
+### Continuous Testing
+
+- Plan test cases before coding starts
+- Develop tests while designing and coding
+- Debug and test each module as it's completed
+- Don't wait until the end to start testing
+- Automate tests to run on every code change
+
+### Error Handling
+
+- Handle expected errors gracefully without crashes
+- Add error handling blocks for edge cases
+- Validate inputs and handle unexpected data
+- Provide meaningful error messages
+- Log errors for debugging and monitoring
+
+## Security Best Practices
+
+### Input Validation
+
+- Sanitize all user inputs to prevent SQL injection and XSS attacks
+- Never trust data from external sources
+- Validate data types, formats, and ranges
+- Use parameterized queries for database operations
+
+### Data Protection
+
+- Use HTTPS for all data transmissions
+- Store sensitive data securely using encryption or hashing
+- Never store passwords in plain text
+- Implement proper authentication and authorization mechanisms
+
+### Dependency Management
+
+- Keep all dependencies updated to patch known vulnerabilities
+- Regularly audit dependencies for security issues
+- Remove unused dependencies
+- Use tools like npm audit or Snyk for vulnerability scanning
+
+### Principle of Least Privilege
+
+- Grant only the minimum permissions necessary
+- Implement role-based access control
+- Separate admin functions from user functions
+
+## Code Organization & Architecture
+
+### Modular Design
+
+- Break applications into smaller, focused modules
+- Each module should have a clear, single purpose
+- Design with scalability and reuse in mind
+- Create loosely coupled, highly cohesive components
+
+### Abstraction
+
+- Extract core logic and hide complexity
+- Make code flexible and generic
+- Maintain moderate abstraction levels - avoid over-engineering
+- Use interfaces to define contracts between components
+
+### Design Patterns
+
+- Use established patterns for common problems (Factory, Observer, Singleton, etc.)
+- Don't overuse or misuse patterns
+- Every pattern has appropriate scenarios
+- Patterns should simplify, not complicate
+
+### State Management
+
+- Avoid global variables when possible
+- Use localized state and parameter passing
+- Make functions pure (no side effects) when feasible
+- Prefer immutability for shared data
+
+## Version Control Best Practices
+
+### Commit Practices
+
+- Make frequent, small commits with focused changes
+- Write clear, descriptive commit messages
+- Each commit should represent a logical unit of work
+- Don't commit broken code to main branches
+
+### Branching Strategy
+
+- Use feature branches for new development
+- Keep main/master branch stable and deployable
+- Implement code review processes before merging
+- Use pull requests for team collaboration
+
+### Code Reviews
+
+- Review code regularly to catch issues early
+- Provide constructive feedback
+- Learn from others' code and approaches
+- Maintain code quality standards across the team
+
+## Documentation Standards
+
+### Code Documentation
+
+- Write clear README files with installation and usage instructions
+- Maintain API documentation (use Swagger, Postman, etc.)
+- Document setup requirements and dependencies
+- Include examples of common use cases
+- Update documentation as code evolves
+
+### Project Documentation
+
+- Document architecture decisions and rationale
+- Keep a changelog of significant changes
+- Document known issues and limitations
+- Provide troubleshooting guides
+
+## Performance & Scalability
+
+### Optimization Principles
+
+- Don't optimize prematurely - profile first
+- Focus on algorithmic efficiency for critical paths
+- Consider time and space complexity
+- Measure before and after optimization
+
+### Scalability Considerations
+
+- Design systems that can grow with demand
+- Consider horizontal and vertical scaling options
+- Plan for increased load and data volume
+- Use caching strategically
+- Optimize database queries and indexes
+
+### Resource Management
+
+- Release resources properly (close files, connections)
+- Avoid memory leaks
+- Use appropriate data structures for the task
+- Consider lazy loading for large datasets
+
+## Continuous Improvement
+
+### Refactoring
+
+- Continuously refactor to reduce technical debt
+- Improve code structure without changing behavior
+- Address code smells early
+- Make small, incremental improvements
+- Refactor when you touch code, not as a separate project
+
+### Learning and Growth
+
+- Stay updated with new technologies and practices
+- Learn from code reviews and peer feedback
+- Study open source projects
+- Participate in developer communities (GitHub, Stack Overflow)
+- Practice coding regularly
+
+### Agile Practices
+
+- Daily stand-ups for team alignment
+- Work in short sprints with deliverable increments
+- Sprint reviews for stakeholder feedback
+- Retrospectives to improve processes
+- Use user stories to capture requirements
+
+## Code Quality Checklist
+
+Before committing code, verify:
+
+- [ ] Code follows established style guidelines
+- [ ] Functions are small and focused
+- [ ] Names are clear and descriptive
+- [ ] No code duplication (DRY principle applied)
+- [ ] Error handling is implemented
+- [ ] Tests are written and passing
+- [ ] Security best practices followed
+- [ ] Code is properly documented
+- [ ] No hardcoded values - constants used
+- [ ] Code is reviewed (if team environment)
+
+## Deployment Best Practices
+
+### Keep It Simple
+
+- Minimize installation complexity
+- Include only necessary files and directories
+- Remove unused resources and old versions
+
+### Multi-Stage Strategy
+
+- Use development, staging, and production environments
+- Test thoroughly before production deployment
+- Implement rollback procedures
+- Use automated deployment pipelines
+
+### Configuration Management
+
+- Use environment variables for configuration
+- Never commit secrets or credentials to version control
+- Maintain separate configs for different environments
+- Document all configuration options
 
 ---
 
-## 1. Language & Runtime
+## Final Thoughts
 
-- **Backend**: Python 3.11+ with type hints on all function signatures
-- **Frontend**: React 18 with JSX, ES2022+ features, functional components only
-- **No class components** in React — use hooks exclusively
-- **Async-first** on backend — all I/O operations must be `async`
+Writing quality code is about more than just making it work. It's about creating software that is:
 
----
+- **Maintainable**: Easy to modify and extend
+- **Readable**: Clear to understand for future developers
+- **Robust**: Handles errors and edge cases gracefully
+- **Secure**: Protected against common vulnerabilities
+- **Testable**: Can be verified automatically
+- **Scalable**: Can grow with demand
 
-## 2. Python Coding Standards
+By following these principles consistently, you'll write better code, reduce bugs, improve collaboration, and build applications that stand the test of time. Remember: good code is code that humans can understand, not just machines.
 
-### 2.1 Type Hints (Mandatory)
-
-Every function must have complete type annotations:
-
-```python
-# ✅ CORRECT
-async def process_paper(
-    pdf_path: str,
-    paper_id: str,
-    websocket: Optional[WebSocket] = None
-) -> Dict[str, Any]:
-    ...
-
-# ❌ WRONG — missing type hints
-async def process_paper(pdf_path, paper_id, websocket=None):
-    ...
-```
-
-### 2.2 Docstrings (Mandatory for Public Functions)
-
-Use Google-style docstrings:
-
-```python
-async def verify_citation(
-    self,
-    generated_sentence: str,
-    cited_paragraph: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Verify a generated sentence against its cited paragraph.
-
-    Uses HAVF 2-level verification: embedding similarity first,
-    cross-encoder reranking for uncertain cases.
-
-    Args:
-        generated_sentence: The LLM-generated text to verify.
-        cited_paragraph: Paragraph data with 'sentences' list.
-
-    Returns:
-        Dict with keys: paragraph_id, sentence_id, confidence, level, method.
-
-    Raises:
-        ValueError: If cited_paragraph has no sentences.
-    """
-```
-
-### 2.3 Error Handling
-
-**Rule**: Never let exceptions propagate unhandled. Always catch, log, and return structured errors.
-
-```python
-# ✅ CORRECT
-try:
-    response = await provider.generate(prompt)
-except RateLimitError as e:
-    logger.warning(f"Rate limited by {provider.name}: {e}")
-    raise  # Let the multi-provider handle it
-except Exception as e:
-    logger.error(f"Unexpected error from {provider.name}: {e}", exc_info=True)
-    raise ProviderError(provider=provider.name, original_error=e)
-
-# ❌ WRONG — bare except, no logging
-try:
-    response = await provider.generate(prompt)
-except:
-    pass
-```
-
-### 2.4 Logging
-
-Use `loguru` for all logging. Never use `print()` for anything other than CLI scripts.
-
-```python
-from loguru import logger
-
-logger.info(f"Processing paper {paper_id}")
-logger.warning(f"Rate limit approaching for {provider}")
-logger.error(f"Extraction failed for {pdf_path}", exc_info=True)
-logger.debug(f"Chunk {chunk_id} has {len(sentences)} sentences")
-```
-
-### 2.5 Naming Conventions
-
-| Element | Convention | Example |
-|---------|-----------|---------|
-| Files | `snake_case.py` | `sentence_aware_chunker.py` |
-| Classes | `PascalCase` | `HAVFVerifier` |
-| Functions | `snake_case` | `verify_citation` |
-| Constants | `UPPER_SNAKE` | `HIGH_CONFIDENCE_THRESHOLD` |
-| Private methods | `_leading_underscore` | `_split_sentences` |
-| Variables | `snake_case` | `best_similarity` |
-
-### 2.6 Import Order
-
-```python
-# 1. Standard library
-import asyncio
-import json
-import re
-from typing import Dict, List, Optional, Tuple
-
-# 2. Third-party
-import numpy as np
-from fastapi import APIRouter, HTTPException
-from sentence_transformers import SentenceTransformer
-from loguru import logger
-
-# 3. Local application
-from app.config import settings
-from app.models.schemas import Paper, Paragraph
-from app.verification.havf import HAVFVerifier
-```
-
-### 2.7 Configuration
-
-All configuration via environment variables + Pydantic `BaseSettings`:
-
-```python
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    gemini_api_key: str
-    groq_api_key: str
-    database_url: str = "sqlite:///./data/tracelit.db"
-    embedding_model: str = "all-MiniLM-L6-v2"
-    high_confidence_threshold: float = 0.85
-    max_papers: int = 7
-    max_concurrent_papers: int = 3
-
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-```
-
-**Rule**: Never hardcode API keys, thresholds, or paths. Always use `settings.xyz`.
-
----
-
-## 3. JavaScript/React Coding Standards
-
-### 3.1 Component Structure
-
-```jsx
-// 1. Imports
-import { useState, useEffect } from 'react';
-import { useChatStore } from '../stores/chatStore';
-
-// 2. Component (functional only, named export)
-export const CitedSentence = ({ sentence, showCitations, onCitationClick }) => {
-  // 3. Hooks first
-  const [isHovered, setIsHovered] = useState(false);
-  const { activeSource } = useChatStore();
-
-  // 4. Effects
-  useEffect(() => { ... }, [dependency]);
-
-  // 5. Handlers
-  const handleClick = (citation) => { ... };
-
-  // 6. Render helpers (if complex)
-  const renderConfidence = () => { ... };
-
-  // 7. Return JSX
-  return (
-    <span className="...">
-      {sentence.text}
-    </span>
-  );
-};
-```
-
-### 3.2 State Management
-
-- **Zustand** for global client state (chat messages, active papers, UI state)
-- **TanStack Query** for server state (API data, caching, refetch)
-- **Local `useState`** for component-specific UI state only
-
-```javascript
-// ✅ CORRECT — Zustand for shared state
-const useChatStore = create((set) => ({
-  messages: [],
-  addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
-}));
-
-// ✅ CORRECT — TanStack Query for API data
-const { data: papers } = useQuery({
-  queryKey: ['papers'],
-  queryFn: () => api.get('/api/papers')
-});
-
-// ✅ CORRECT — useState for local UI
-const [isTooltipOpen, setIsTooltipOpen] = useState(false);
-```
-
-### 3.3 Naming Conventions
-
-| Element | Convention | Example |
-|---------|-----------|---------|
-| Components | `PascalCase.jsx` | `CitedSentence.jsx` |
-| Hooks | `camelCase` with `use` prefix | `useChat.js` |
-| Stores | `camelCase` with `Store` suffix | `chatStore.js` |
-| Utilities | `camelCase.js` | `helpers.js` |
-| Constants | `UPPER_SNAKE` | `MAX_PAPERS` |
-| CSS classes | Tailwind utilities | `className="text-sm font-medium"` |
-
-### 3.4 Tailwind CSS Rules
-
-- Use Tailwind utility classes exclusively — no custom CSS except for animations
-- Design system tokens in `tailwind.config.js` (colors, spacing, fonts)
-- Responsive: mobile-last (desktop-first since it's a local desktop app)
-- Dark mode: not required for MVP
-
----
-
-## 4. API Design Standards
-
-### 4.1 Response Format
-
-All API responses follow a consistent structure:
-
-```python
-# Success
-{"data": {...}, "status": "success"}
-
-# Error
-{
-    "error": {
-        "code": "RATE_LIMIT",
-        "message": "Rate limit exceeded. Try again in 60 seconds.",
-        "details": {"provider": "gemini", "retry_after": 60}
-    },
-    "status": "error"
-}
-```
-
-### 4.2 HTTP Status Codes
-
-| Code | Usage |
-|------|-------|
-| `200` | Successful GET/PATCH |
-| `201` | Successful POST (created) |
-| `202` | Accepted (async processing started) |
-| `204` | Successful DELETE (no content) |
-| `400` | Bad request (validation error) |
-| `404` | Resource not found |
-| `429` | Rate limited |
-| `500` | Internal server error |
-
-### 4.3 Endpoint Naming
-
-- RESTful: `/api/{resource}/{id}/{sub-resource}`
-- Plural nouns: `/api/papers`, not `/api/paper`
-- Actions as sub-resources: `/api/compare/{id}/generate`
-
----
-
-## 5. Git Conventions
-
-### 5.1 Commit Messages
-
-Format: `type(scope): description`
-
-```
-feat(chunker): implement sentence-aware chunking with boundary tracking
-fix(havf): handle edge case when paragraph has single sentence
-refactor(llm): extract provider clients into separate modules
-docs(readme): add quick start guide
-test(havf): add high/medium/low confidence test cases
-style(frontend): apply Tailwind to citation tooltip
-chore(docker): add memory limits to compose config
-```
-
-### 5.2 Branch Strategy
-
-- `main`: Stable, demoable code only
-- `dev`: Integration branch
-- `feat/xxx`: Feature branches
-- `fix/xxx`: Bug fix branches
-
----
-
-## 6. File Size Limits
-
-- **No file > 300 lines** — split into modules if approaching limit
-- **No function > 50 lines** — extract helper functions
-- **No component > 200 lines** — split into sub-components
+*"Any fool can write code that a computer can understand. Good programmers write code that humans can understand."* - Martin Fowler
