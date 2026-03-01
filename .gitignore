@@ -16,7 +16,6 @@ dist/
 *.env.local
 
 # Data (don't commit uploads, DB, or logs)
-data/
 **/data/uploads/
 **/data/exports/
 **/data/logs/
