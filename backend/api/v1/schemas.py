@@ -129,7 +129,7 @@ class ContributionResponse(BaseModel):
     contributions: dict
 
 class ExportRequest(BaseModel):
-    format: str = Field(..., pattern="^(pdf|excel)$")
+    format: str = Field(..., pattern="^(pdf|excel|bibtex)$")
 
 class ComparisonExportRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)

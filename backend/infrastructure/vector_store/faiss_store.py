@@ -95,9 +95,11 @@ class FAISSStore:
 
         with self._lock:
             scores, indices = self._index.search(query, total_k)
-            # Snapshot the id_map while the lock is held so that a concurrent
-            # remove_paper call cannot mutate the list between the FAISS search
-            # and the index-based lookups in _filter_search_results.
+            # The id_map snapshot MUST be taken inside the lock.  Taking it
+            # outside would open a window where a concurrent add_vectors() or
+            # remove_paper() call mutates self._id_map after the FAISS search
+            # returns its indices, causing index-to-id mismatches for newly
+            # added or removed vectors.  The lock serialises both operations.
             id_map_snapshot = list(self._id_map)
 
         return self._filter_search_results(scores[0], indices[0], paper_ids, top_k_per_paper, id_map_snapshot)

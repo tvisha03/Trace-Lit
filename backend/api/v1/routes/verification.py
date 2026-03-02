@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.v1.schemas import VerifyRequest, VerifyResponse, VerificationItem
 from app.dependencies import get_db, get_faiss_store
+from infrastructure.db.crud.paper_crud import get_paper
+from infrastructure.db.crud.session_crud import get_session
 from services.verification_service import verify_text_against_papers
 
 router = APIRouter()
@@ -43,15 +45,34 @@ def _enforce_rate_limit(request: Request) -> None:
     _rate_limit_calls[client_ip].append(now)
 
 
-@router.post("", response_model=VerifyResponse)
+@router.post("/{session_id}", response_model=VerifyResponse)
 async def verify_text(
     request: Request,
+    session_id: str,
     body: VerifyRequest,
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
     # Enforce rate limit before kicking off the expensive HAVF pipeline.
     _enforce_rate_limit(request)
+
+    # Validate the session exists so we return a structured 404 rather than
+    # an opaque downstream error if the session_id is wrong.
+    session = await get_session(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    # Verify every requested paper belongs to this session.  This prevents
+    # one user from verifying content against another session's papers.
+    for paper_id in body.paper_ids:
+        paper = await get_paper(db, paper_id)
+        if not paper or str(paper.session_id) != session_id:
+            # Intentionally opaque — do not confirm whether the paper exists
+            # outside this session to avoid cross-session enumeration.
+            raise HTTPException(
+                status_code=404,
+                detail="One or more paper IDs were not found in this session.",
+            )
 
     results = await verify_text_against_papers(
         text=body.text,

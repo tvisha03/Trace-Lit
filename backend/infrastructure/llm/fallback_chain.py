@@ -118,6 +118,12 @@ class FallbackChain:
         temperature: float,
         max_tokens: int,
     ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
+        # Both current provider implementations use truly-async HTTP clients
+        # (Groq → AsyncGroq, Gemini → google.genai Client.aio) so iterating the
+        # async generator returned by generate_streaming() does not block the
+        # event loop.  Any new provider added in future MUST also use a
+        # non-blocking HTTP client (e.g. httpx.AsyncClient, aiohttp) and NOT
+        # synchronous libraries such as requests or httplib.
         full_text = ""
         try:
             stream = provider.generate_streaming(
@@ -152,15 +158,33 @@ class FallbackChain:
         max_tokens: int = 2048,
         estimated_tokens: int = 8_500,
     ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
+        errors: list[str] = []
+
         for provider in self._providers:
             if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
                 logger.info(f"Skipping {provider.provider.value} stream — over rate budget")
+                errors.append(f"{provider.provider.value}: rate_budget_exceeded")
                 continue
 
+            yielded_at_least_one = False
             async for item in self._stream_from_provider(
                 provider, system_prompt, user_prompt, temperature, max_tokens
             ):
+                yielded_at_least_one = True
                 yield item
-            return
 
+            if yielded_at_least_one:
+                # Provider produced at least one token — streaming succeeded.
+                # Stop iterating the provider list.
+                return
+
+            # _stream_from_provider yielded nothing: the provider raised an
+            # exception internally (rate-limit, timeout, unexpected error) and
+            # swallowed it silently.  Fall through to the next provider.
+            logger.warning(
+                f"{provider.provider.value} stream yielded no tokens — trying next provider"
+            )
+            errors.append(f"{provider.provider.value}: stream_yielded_nothing")
+
+        logger.error(f"All providers failed for streaming: {errors}")
         raise AllProvidersFailedError()

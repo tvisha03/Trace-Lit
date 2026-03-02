@@ -1,4 +1,5 @@
 
+import asyncio
 from dataclasses import dataclass
 
 from domain.verification.embedding_verifier import verify_claims_embedding
@@ -55,13 +56,21 @@ async def verify_response(
                 for c in claims
             ]
 
-        level1_results = verify_claims_embedding(claims, source_sentences)
+        # SentenceTransformer.encode() and CrossEncoder inference are blocking
+        # CPU operations (100–500 ms each).  Running them in a thread pool via
+        # asyncio.to_thread() keeps the event loop free during verification so
+        # concurrent chat requests are not starved.
+        level1_results = await asyncio.to_thread(
+            verify_claims_embedding, claims, source_sentences
+        )
 
         uncertain = [r for r in level1_results if r.get("needs_reranking")]
         resolved = [r for r in level1_results if not r.get("needs_reranking")]
 
         if uncertain:
-            reranked = rerank_claims(uncertain, source_sentences=source_sentences)
+            reranked = await asyncio.to_thread(
+                rerank_claims, uncertain, source_sentences=source_sentences
+            )
             resolved.extend(reranked)
 
         result_map = {r["claim"]: r for r in resolved}

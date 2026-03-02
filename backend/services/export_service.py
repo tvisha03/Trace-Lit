@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.export.pdf_exporter import export_chat_to_pdf, export_comparison_to_pdf
 from domain.export.excel_exporter import export_citations_to_excel, export_comparison_to_excel
+from domain.export.bibtex_exporter import export_papers_to_bibtex
 from infrastructure.db.crud.message_crud import get_messages_by_session
+from infrastructure.db.crud.paper_crud import get_papers_by_session
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
 from shared.enums import ExportFormat
@@ -49,6 +51,24 @@ async def export_chat(
             citations=_flatten_citations(messages),
             output_path=output_path,
         )
+    elif export_format == ExportFormat.BIBTEX:
+        # BibTeX export serialises paper metadata (authors, title, year,
+        # abstract) for all papers in the session so researchers can cite them
+        # directly from their reference managers.
+        papers_db = await get_papers_by_session(db, session_id)
+        paper_dicts = [
+            {
+                "id": p.id,
+                "title": p.title,
+                "authors": p.authors,
+                "year": p.year,
+                "abstract": p.abstract,
+                "filename": p.filename,
+            }
+            for p in papers_db
+        ]
+        output_path = file_storage.get_export_path(f"{filename}.bib", session_id)
+        return export_papers_to_bibtex(papers=paper_dicts, output_path=output_path)
     else:
         raise ValueError(f"Unsupported export format: {export_format.value}")
 

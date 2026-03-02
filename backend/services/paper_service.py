@@ -104,7 +104,8 @@ async def process_paper(
 
         with timer(f"Index {paper.filename}"):
             await index_chunks(chunks, paper_id, faiss_store)
-            faiss_store.save()  # Persist FAISS index to disk
+            # index_chunks handles FAISS persistence internally (with rollback
+            # on failure), so no additional save call is required here.
 
         await update_paper_status(db, paper_id, PaperStatus.COMPLETED, progress=1.0)
         if progress_callback:
@@ -121,8 +122,29 @@ async def process_paper(
         if progress_callback:
             await progress_callback(-1.0)
 
+        # Clean up the uploaded file when processing fails mid-way so orphaned
+        # files do not accumulate in the uploads directory.
+        try:
+            paper = await get_paper(db, paper_id)
+            if paper and paper.file_path:
+                from pathlib import Path as _Path
+                _file = _Path(paper.file_path)
+                if _file.exists():
+                    _file.unlink()
+                    logger.info(f"Cleaned up orphaned upload after failure: {_file}")
+        except Exception as cleanup_exc:
+            logger.warning(f"Could not clean up upload for paper {paper_id}: {cleanup_exc}")
+
 async def get_session_papers(db: AsyncSession, session_id: str, status: PaperStatus | None = None):
     return await get_papers_by_session(db, session_id, status=status)
+
+
+async def mark_paper_failed(db: AsyncSession, paper_id: str, reason: str) -> None:
+    """Mark a paper FAILED immediately — called when queue enqueue fails so the
+    paper does not sit indefinitely in REGISTERED state without ever processing."""
+    await update_paper_status(
+        db, paper_id, PaperStatus.FAILED, error_message=reason[:500]
+    )
 
 async def delete_paper(
     paper_id: str,

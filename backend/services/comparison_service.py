@@ -8,8 +8,14 @@ from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.llm.fallback_chain import FallbackChain
 from shared.errors import NotFoundError
 from shared.logger import get_logger
+from shared.utils.text_utils import estimate_tokens
 
 logger = get_logger(__name__)
+
+# Token budget per paper for comparison context.  Using a token-based limit
+# (rather than a fixed chunk count) ensures we include as much relevant content
+# as the prompt window allows regardless of individual chunk sizes.
+_COMPARISON_TOKEN_BUDGET_PER_PAPER = 3_000
 
 async def compare_papers(
     paper_ids: list[str],
@@ -27,7 +33,22 @@ async def compare_papers(
         paper_titles.append(paper.title or paper.filename)
         chunks = await get_chunks_by_paper(db, pid)
 
-        context = build_context_block(chunks[:20])
+        # Select chunks up to the token budget rather than using a fixed count.
+        # This captures more content from papers with small chunks while still
+        # preventing oversized prompts when chunks are large.
+        selected: list = []
+        cumulative_tokens = 0
+        for chunk in chunks:
+            chunk_text = chunk.text if hasattr(chunk, "text") else str(chunk)
+            chunk_tokens = estimate_tokens(chunk_text)
+            if cumulative_tokens + chunk_tokens > _COMPARISON_TOKEN_BUDGET_PER_PAPER:
+                break
+            selected.append(chunk)
+            cumulative_tokens += chunk_tokens
+
+        # Fall back to the first 20 chunks if budget estimation yields nothing
+        # (e.g. empty paper) to keep the rest of the pipeline functional.
+        context = build_context_block(selected or chunks[:20])
         paper_contexts[pid] = context
 
     response_text, provider = await generate_comparison(

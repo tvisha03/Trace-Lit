@@ -1,12 +1,12 @@
 
-from fastapi import APIRouter, Depends, UploadFile, File, Request
+from fastapi import APIRouter, Depends, UploadFile, File, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.v1.schemas import PaperResponse, PaperListResponse, PaperUploadResponse
 from api.v1.routes.websocket import ws_manager
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.storage.file_storage import FileStorage
-from services.paper_service import register_paper, get_session_papers, delete_paper
+from services.paper_service import register_paper, get_session_papers, delete_paper, mark_paper_failed
 from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB
 from shared.errors import FileValidationError
 from shared.utils.file_utils import get_file_size_mb
@@ -52,7 +52,21 @@ async def upload_papers(
         paper_ids.append(paper_id)
 
         paper_queue = request.app.state.paper_queue
-        await paper_queue.enqueue(paper_id, session_id)
+        try:
+            await paper_queue.enqueue(paper_id, session_id)
+        except Exception as enqueue_exc:
+            # Paper was successfully registered in DB but failed to enter the
+            # processing queue.  Mark it FAILED immediately so it is not left
+            # stranded in REGISTERED state with no worker ever picking it up.
+            logger.error(f"Failed to enqueue paper {paper_id}: {enqueue_exc}")
+            await mark_paper_failed(
+                db, paper_id, reason=f"Processing queue unavailable: {enqueue_exc}"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Processing queue unavailable for '{upload_file.filename}'. "
+                       "Please try again later.",
+            )
 
     return PaperUploadResponse(
         paper_ids=paper_ids,

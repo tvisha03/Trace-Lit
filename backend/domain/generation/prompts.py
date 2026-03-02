@@ -79,13 +79,18 @@ def build_context_block(chunks: list) -> str:
 
 
 def build_history_block(messages: list, max_turns: int = 4) -> str:
+    from enum import Enum
+
     if not messages:
         return "(No conversation history)"
 
     recent = messages[-max_turns * 2:]
     lines = []
     for msg in recent:
-        role = msg.role.value if hasattr(msg.role, "value") else msg.role
+        # Use isinstance(Enum) rather than hasattr(..., "value") to avoid
+        # double-access on str-based enums where hasattr returns True but the
+        # value is already the string (e.g. MessageRole(str, Enum)).
+        role = msg.role.value if isinstance(msg.role, Enum) else msg.role
         lines.append(f"{role}: {msg.content}")
 
     return "\n".join(lines)

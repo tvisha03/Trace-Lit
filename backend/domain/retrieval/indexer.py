@@ -49,7 +49,22 @@ async def index_chunks(
 
     vectors = encode_texts(texts)
     faiss_store.add_vectors(vectors, ids)
-    faiss_store.save()
+    try:
+        faiss_store.save()
+    except Exception as save_exc:
+        # save() failed: disk index is still the pre-existing snapshot while
+        # the in-memory index already contains the new vectors.  Roll back the
+        # in-memory state so both sides remain consistent.  The caller will
+        # catch the re-raised exception and mark the paper as FAILED.
+        logger.error(
+            f"FAISS save failed for {paper_id}: {save_exc} "
+            "\u2014 rolling back in-memory index to maintain consistency"
+        )
+        try:
+            faiss_store.remove_paper(paper_id)
+        except Exception as rb_exc:
+            logger.error(f"FAISS rollback also failed for {paper_id}: {rb_exc}")
+        raise
 
     logger.info(f"Indexed {len(chunks)} chunks for paper {paper_id}")
     return len(chunks)

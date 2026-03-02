@@ -7,6 +7,24 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Maximum query length accepted by the classifier.  Truncating here prevents
+# pathologically-large inputs from inflating pattern-match costs or bypassing
+# classification by burying keywords deep in noisy content.
+_MAX_QUERY_CHARS = 5_000
+
+
+def _sanitize_query(query: str) -> str:
+    """Strip control characters and cap length before pattern matching.
+
+    User queries pass through the classifier before being forwarded to the
+    LLM.  Sanitising at this layer prevents malformed input from influencing
+    retrieval behaviour through classifier side-effects.
+    """
+    # Remove null bytes and non-printable control characters while keeping
+    # standard whitespace (\n, \r, \t) that appear legitimately in queries.
+    sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", query)
+    return sanitized[:_MAX_QUERY_CHARS]
+
 _COMPARISON_PATTERNS = re.compile(
     r"\b(compar|differ|similar|contrast|versus|vs\.?|between|distinguish|relate)\b",
     re.IGNORECASE,
@@ -105,6 +123,9 @@ def classify_query(
     history: list | None = None,
     paper_count: int = 1,
 ) -> QueryClassification:
+    # Sanitize before any pattern matching so control characters and
+    # oversized payloads cannot influence classification outcomes.
+    query = _sanitize_query(query)
     query_lower = query.lower().strip()
 
     scores = _compute_scores(query, query_lower, history, paper_count)

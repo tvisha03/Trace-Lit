@@ -1,4 +1,5 @@
 
+import time
 from dataclasses import dataclass
 
 from domain.generation.prompts import (
@@ -16,6 +17,7 @@ from infrastructure.llm.fallback_chain import FallbackChain
 from infrastructure.vector_store.faiss_store import FAISSStore
 from shared.enums import LLMProvider, QueryType
 from shared.logger import get_logger
+from shared.utils.text_utils import estimate_tokens
 from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
@@ -56,7 +58,6 @@ async def generate_response(
     llm: FallbackChain,
     db_session,
 ) -> ChatResponse:
-    import time
     start = time.perf_counter()
 
     classification = classify_query(
@@ -89,7 +90,6 @@ async def generate_response(
     havf_results = await verify_response(response_text, chunks)
 
     latency_ms = (time.perf_counter() - start) * 1000
-    from shared.utils.text_utils import estimate_tokens
 
     return ChatResponse(
         content=response_text,
@@ -129,9 +129,6 @@ async def _handle_metadata_query(
     db_session,
     start_time: float,
 ) -> ChatResponse:
-    import time
-    from shared.utils.text_utils import estimate_tokens
-
     meta_context = await _gather_paper_metadata(paper_ids, db_session)
 
     user_prompt = CHAT_PROMPT_TEMPLATE.format(

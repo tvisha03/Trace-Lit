@@ -100,6 +100,8 @@ async def download_export(
     media_type = (
         "application/pdf"
         if filename.endswith(".pdf")
+        else "text/x-bibtex"
+        if filename.endswith(".bib")
         else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 

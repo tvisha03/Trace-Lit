@@ -151,6 +151,22 @@ async def stream_chat_response(
         # inside the fallback chain) so the done event always names a provider.
         resolved_provider = provider or "unknown"
 
+        # Validate that the LLM produced at least one [P#] citation before
+        # running HAVF.  Without citation targets every sentence defaults to
+        # LOW confidence — technically correct, but the caller deserves an
+        # explicit warning so the frontend can surface it to the user.
+        from shared.utils.text_utils import extract_paragraph_ids
+        citations_found = extract_paragraph_ids(full_text)
+        if not citations_found:
+            logger.warning(
+                f"LLM response for session {session_id} contains no [P#] citations. "
+                "HAVF will have no citation targets — confidence scores may be unreliable."
+            )
+            yield sse_event(
+                "warning",
+                json.dumps({"detail": "Response contains no citations. Confidence scores may be unreliable."}),
+            )
+
         havf_data = await _emit_havf_results(full_text, chunks)
         yield sse_event("havf", json.dumps(havf_data))
         yield sse_event("done", json.dumps({"provider": resolved_provider, "full_text": full_text}))

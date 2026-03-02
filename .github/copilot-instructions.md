@@ -120,7 +120,7 @@ Refer to `/instructions/COMMENTING_PRINCIPLES.md` for detailed examples of good 
 
 **Critical Pattern**: LLM must be restricted to provided context only. Ensure retrieval logic pulls only from uploaded papers, never allowing implicit access to training data.
 
-📖 **Full Details**: See `/instructions/HALLUCINATION_PREVENTION.md`
+📖 **Full Details**: See `/docs/HALLUCINATION_PREVENTION.md`
 
 ---
 
@@ -451,7 +451,6 @@ For production readiness:
 
 - `/instructions/CODING_PRINCIPLES.md` — SOLID, DRY, KISS, YAGNI
 - `/instructions/COMMENTING_PRINCIPLES.md` — Why, not what rule
-- `/instructions/HALLUCINATION_PREVENTION.md` — 5-layer defense strategy
 - `/instructions/SECURITY_PRINCIPLES.md` — Input validation, least privilege, fail securely
 
 ### Architecture & Design Docs
@@ -461,6 +460,7 @@ For production readiness:
 - `/docs/RAG_AND_CHUNKING_STRATEGY.md` — Sentence-aware chunking, PDF extraction, context assembly
 - `/docs/HAVF_VERIFICATION_PIPELINE.md` — 2-stage verification algorithm, confidence levels
 - `/docs/UI_UX_DESIGN_AND_WIREFRAMES.md` — Design system, colors, typography, component library
+- `/docs/HALLUCINATION_PREVENTION.md` — 5-layer defense strategy
 
 ### Code References
 
