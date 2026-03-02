@@ -20,6 +20,7 @@ class Chunk:
 def create_chunks(
     sections: list,
     paper_title: str | None = None,
+    paper_id: str | None = None,
 ) -> list[Chunk]:
     chunks: list[Chunk] = []
     paragraph_idx = 0
@@ -35,11 +36,13 @@ def create_chunks(
             token_count = estimate_tokens(para_text)
 
             if token_count > CHUNK_MAX_TOKENS:
-                sub_chunks = _split_large_paragraph(para_text, section.title, paper_title, paragraph_idx)
+                sub_chunks = _split_large_paragraph(
+                    para_text, section.title, paper_title, paragraph_idx, paper_id
+                )
                 chunks.extend(sub_chunks)
                 paragraph_idx += len(sub_chunks)
             else:
-                chunk = _build_chunk(para_text, section.title, paper_title, paragraph_idx)
+                chunk = _build_chunk(para_text, section.title, paper_title, paragraph_idx, paper_id)
                 chunks.append(chunk)
                 paragraph_idx += 1
 
@@ -54,8 +57,16 @@ def _build_chunk(
     section_title: str,
     paper_title: str | None,
     paragraph_idx: int,
+    paper_id: str | None = None,
 ) -> Chunk:
-    paragraph_id = f"P{paragraph_idx}"
+    # Include a short paper_id prefix so paragraph IDs are globally unique
+    # across papers (HI-004 fix).  Without this, two different papers would
+    # both produce "P5", making FAISS composite keys the only disambiguation
+    # mechanism and causing display/UI confusion.
+    if paper_id:
+        paragraph_id = f"{paper_id[:8]}_P{paragraph_idx}"
+    else:
+        paragraph_id = f"P{paragraph_idx}"
     sentences = split_into_sentences(text)
     sentence_map = {}
     offset = 0
@@ -97,6 +108,7 @@ def _split_large_paragraph(
     section_title: str,
     paper_title: str | None,
     start_idx: int,
+    paper_id: str | None = None,
 ) -> list[Chunk]:
     sentences = split_into_sentences(text)
     chunks: list[Chunk] = []
@@ -109,7 +121,7 @@ def _split_large_paragraph(
 
         if current_tokens + s_tokens > CHUNK_TARGET_TOKENS and current_sentences:
             combined = " ".join(current_sentences)
-            chunk = _build_chunk(combined, section_title, paper_title, start_idx + idx_offset)
+            chunk = _build_chunk(combined, section_title, paper_title, start_idx + idx_offset, paper_id)
             chunks.append(chunk)
             idx_offset += 1
             current_sentences = []
@@ -120,7 +132,7 @@ def _split_large_paragraph(
 
     if current_sentences:
         combined = " ".join(current_sentences)
-        chunk = _build_chunk(combined, section_title, paper_title, start_idx + idx_offset)
+        chunk = _build_chunk(combined, section_title, paper_title, start_idx + idx_offset, paper_id)
         chunks.append(chunk)
 
     return chunks

@@ -76,7 +76,7 @@ async def process_paper(
             await progress_callback(0.4)
 
         with timer(f"Chunk {paper.filename}"):
-            chunks = create_chunks(sections, paper_title=metadata.title)
+            chunks = create_chunks(sections, paper_title=metadata.title, paper_id=paper_id)
 
         chunk_records = [
             {

@@ -28,6 +28,8 @@ COMPARISON_PROMPT_TEMPLATE = """You are comparing multiple academic papers.
 Paper contexts:
 {paper_contexts}
 
+User question: {question}
+
 Compare these papers on the following dimensions:
 1. Research problem and motivation
 2. Methodology and approach
@@ -35,11 +37,14 @@ Compare these papers on the following dimensions:
 4. Datasets used
 5. Limitations acknowledged
 
+If the user question focuses on a specific aspect, prioritise that dimension.
 For every comparison point, cite BOTH papers using [P#].
 Format your response as a structured comparison."""
 
 SUMMARY_PROMPT_TEMPLATE = """Context from the paper:
 {context}
+
+User question: {question}
 
 Provide a concise summary of this paper covering:
 1. **Problem**: What problem does this paper address? [P#]
@@ -47,6 +52,7 @@ Provide a concise summary of this paper covering:
 3. **Key Findings**: What are the main results? [P#]
 4. **Contributions**: What is novel about this work? [P#]
 
+If the user question requests a specific focus, address it directly.
 Cite every point with [P#].
 """
 

@@ -43,8 +43,10 @@ async def get_stuck_papers(db: AsyncSession) -> list[Paper]:
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
-async def delete_paper(db: AsyncSession, paper_id: str) -> None:
+async def delete_paper(db: AsyncSession, paper_id: str) -> bool:
     paper = await get_paper(db, paper_id)
     if paper:
         await db.delete(paper)
         await db.flush()
+        return True
+    return False

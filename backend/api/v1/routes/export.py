@@ -7,11 +7,12 @@ from api.v1.schemas import ExportRequest, ComparisonExportRequest, ExportRespons
 from app.dependencies import get_db
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.db.crud.paper_crud import get_paper
+from infrastructure.db.crud.message_crud import create_message
 from infrastructure.llm.fallback_chain import FallbackChain
 from infrastructure.storage.file_storage import FileStorage
 from services.export_service import export_chat, export_comparison
 from services.comparison_service import compare_papers
-from shared.enums import ExportFormat
+from shared.enums import ExportFormat, MessageRole
 from shared.errors import NotFoundError
 from shared.logger import get_logger
 
@@ -71,12 +72,26 @@ async def export_comparison_route(
 
     comparison_result = await compare_papers(body.paper_ids, db, llm)
 
+    # Persist the comparison as an assistant message so users can review
+    # previous comparisons via the session message history (CRT-005 fix).
+    await create_message(
+        db,
+        session_id=session_id,
+        role=MessageRole.ASSISTANT,
+        content=comparison_result["comparison"],
+        provider=comparison_result.get("provider"),
+        havf_results=[],
+    )
+    await db.commit()
+
     output_path = await export_comparison(
         session_id=session_id,
         comparison_content=comparison_result["comparison"],
         paper_titles=comparison_result["paper_titles"],
         export_format=fmt,
         file_storage=file_storage,
+        paper_ids=body.paper_ids,
+        db=db,
     )
 
     return ExportResponse(

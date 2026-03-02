@@ -41,9 +41,15 @@ def _build_user_prompt(
     history_block = build_history_block(history)
 
     if query_type == QueryType.COMPARISON:
-        return COMPARISON_PROMPT_TEMPLATE.format(paper_contexts=context_block)
+        return COMPARISON_PROMPT_TEMPLATE.format(
+            paper_contexts=context_block,
+            question=query,
+        )
     if query_type == QueryType.SUMMARY:
-        return SUMMARY_PROMPT_TEMPLATE.format(context=context_block)
+        return SUMMARY_PROMPT_TEMPLATE.format(
+            context=context_block,
+            question=query,
+        )
     return CHAT_PROMPT_TEMPLATE.format(
         context=context_block,
         history=history_block,

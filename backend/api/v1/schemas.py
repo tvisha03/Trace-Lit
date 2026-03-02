@@ -133,7 +133,7 @@ class ExportRequest(BaseModel):
 
 class ComparisonExportRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)
-    format: str = Field(default="pdf", pattern="^(pdf|excel)$")
+    format: str = Field(default="pdf", pattern="^(pdf|excel|bibtex)$")
 
 class ExportResponse(BaseModel):
     download_url: str

@@ -23,6 +23,22 @@ def set_faiss_store(faiss_store: FAISSStore) -> None:
     global _faiss_store
     _faiss_store = faiss_store
 
+def _progress_to_stage(progress: float) -> str:
+    """Map a fractional progress value to a human-readable processing stage name.
+
+    The thresholds mirror the progress updates emitted by process_paper so the
+    frontend can display a meaningful label alongside the progress bar.
+    """
+    if progress < 0:
+        return "failed"
+    if progress <= 0.3:
+        return "extracting"
+    if progress <= 0.4:
+        return "chunking"
+    if progress < 1.0:
+        return "embedding"
+    return "indexing"
+
 async def paper_job_processor(job: PaperJob):
     if _faiss_store is None:
         raise RuntimeError(
@@ -33,10 +49,19 @@ async def paper_job_processor(job: PaperJob):
     async with async_session_factory() as db:
         async def progress_callback(progress: float):
             if _ws_manager:
-                await _ws_manager.send_progress(
+                stage = _progress_to_stage(progress)
+                # Use send_event so the payload carries both a fractional
+                # progress value (0–1) and a named stage string that the
+                # frontend can display without having to reverse-engineer
+                # progress thresholds (HI-001 fix).
+                await _ws_manager.send_event(
                     session_id=job.session_id,
-                    paper_id=job.paper_id,
-                    progress=progress,
+                    event_type="paper_progress",
+                    data={
+                        "paper_id": job.paper_id,
+                        "progress": max(0.0, progress),
+                        "stage": stage,
+                    },
                 )
 
         try:

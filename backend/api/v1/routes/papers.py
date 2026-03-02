@@ -1,4 +1,7 @@
 
+from collections import defaultdict
+from time import monotonic
+
 from fastapi import APIRouter, Depends, UploadFile, File, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +19,36 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
+# ---------------------------------------------------------------------------
+# Sliding-window rate limiter for the paper upload endpoint.
+# Uploading triggers expensive PDF extraction, chunking, and embedding, so we
+# cap each client IP to _UPLOAD_RATE_LIMIT_MAX batches per window to prevent
+# resource exhaustion from rapid-fire uploads (HI-003 fix).
+# ---------------------------------------------------------------------------
+_UPLOAD_RATE_LIMIT_MAX = 5
+_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 60.0
+_upload_rate_limit_calls: dict[str, list[float]] = defaultdict(list)
+
+
+def _enforce_upload_rate_limit(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    now = monotonic()
+    cutoff = now - _UPLOAD_RATE_LIMIT_WINDOW_SECONDS
+
+    calls = _upload_rate_limit_calls[client_ip]
+    _upload_rate_limit_calls[client_ip] = [t for t in calls if t > cutoff]
+
+    if len(_upload_rate_limit_calls[client_ip]) >= _UPLOAD_RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit exceeded: max {_UPLOAD_RATE_LIMIT_MAX} upload "
+                f"requests per {int(_UPLOAD_RATE_LIMIT_WINDOW_SECONDS)} seconds."
+            ),
+        )
+
+    _upload_rate_limit_calls[client_ip].append(now)
+
 @router.post("", response_model=PaperUploadResponse, status_code=201)
 async def upload_papers(
     session_id: str,
@@ -23,6 +56,8 @@ async def upload_papers(
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
+    _enforce_upload_rate_limit(request)
+
     if len(files) > MAX_UPLOAD_FILES:
         raise FileValidationError(f"Maximum {MAX_UPLOAD_FILES} files allowed per upload")
 
