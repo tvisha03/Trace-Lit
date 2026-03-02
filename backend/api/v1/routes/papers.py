@@ -1,6 +1,3 @@
-"""
-Paper upload and management routes.
-"""
 
 from fastapi import APIRouter, Depends, UploadFile, File, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +15,6 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
-
 @router.post("", response_model=PaperUploadResponse, status_code=201)
 async def upload_papers(
     session_id: str,
@@ -26,10 +22,6 @@ async def upload_papers(
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Upload 1–7 PDF files to a session.
-    Files are validated (type, size) then queued for processing.
-    """
     if len(files) > MAX_UPLOAD_FILES:
         raise FileValidationError(f"Maximum {MAX_UPLOAD_FILES} files allowed per upload")
 
@@ -37,11 +29,9 @@ async def upload_papers(
     paper_ids = []
 
     for upload_file in files:
-        # Validate file type
         if not upload_file.filename or not upload_file.filename.lower().endswith(".pdf"):
             raise FileValidationError(f"Only PDF files are accepted: {upload_file.filename}")
 
-        # Validate file size
         content = await upload_file.read()
         size_mb = len(content) / (1024 * 1024)
         if size_mb > MAX_FILE_SIZE_MB:
@@ -49,10 +39,8 @@ async def upload_papers(
                 f"{upload_file.filename} exceeds {MAX_FILE_SIZE_MB}MB limit ({size_mb:.1f}MB)"
             )
 
-        # Save to disk
         file_path = file_storage.save_upload(content, upload_file.filename, session_id)
 
-        # Register in DB
         paper_id = await register_paper(
             db,
             session_id=session_id,
@@ -62,7 +50,6 @@ async def upload_papers(
         )
         paper_ids.append(paper_id)
 
-        # Enqueue for processing
         paper_queue = request.app.state.paper_queue
         await paper_queue.enqueue(paper_id, session_id)
 
@@ -71,13 +58,11 @@ async def upload_papers(
         message=f"{len(paper_ids)} paper(s) uploaded and queued for processing",
     )
 
-
 @router.get("", response_model=PaperListResponse)
 async def list_papers(
     session_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """List all papers in a session."""
     papers = await get_session_papers(db, session_id)
     items = [
         PaperResponse(
@@ -100,14 +85,12 @@ async def list_papers(
     ]
     return PaperListResponse(papers=items)
 
-
 @router.get("/{paper_id}", response_model=PaperResponse)
 async def get_paper(
     session_id: str,
     paper_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single paper's details."""
     from infrastructure.db.crud.paper_crud import get_paper as db_get_paper
     paper = await db_get_paper(db, paper_id)
     if not paper:
@@ -131,7 +114,6 @@ async def get_paper(
         created_at=paper.created_at.isoformat(),
     )
 
-
 @router.delete("/{paper_id}", status_code=204)
 async def remove_paper(
     session_id: str,
@@ -139,5 +121,4 @@ async def remove_paper(
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
-    """Delete a paper and its associated chunks/vectors."""
     await delete_paper(paper_id, db, faiss_store)

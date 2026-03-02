@@ -3,17 +3,19 @@ from dataclasses import dataclass
 from typing import Callable, Awaitable
 
 from shared.constants import MAX_PARALLEL_PAPERS
+from shared.utils.memory_monitor import is_memory_pressure_high
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+_MEMORY_BACKOFF_SECONDS: float = 5.0
+_MAX_MEMORY_WAITS: int = 12
 
 @dataclass
 class PaperJob:
     paper_id: str
     session_id: str
-    priority: int = 0  # lower = higher priority
-
+    priority: int = 0
 
 class SmartPaperQueue:
 
@@ -53,12 +55,27 @@ class SmartPaperQueue:
                 continue
             asyncio.create_task(self._process_with_semaphore(job))
 
+    async def _wait_for_memory(self) -> None:
+        for attempt in range(1, _MAX_MEMORY_WAITS + 1):
+            if not is_memory_pressure_high():
+                return
+            logger.warning(
+                f"Memory pressure high — delaying paper job "
+                f"(attempt {attempt}/{_MAX_MEMORY_WAITS}, "
+                f"retrying in {_MEMORY_BACKOFF_SECONDS}s)"
+            )
+            await asyncio.sleep(_MEMORY_BACKOFF_SECONDS)
+
+        logger.warning("Max memory-pressure waits exceeded — proceeding anyway")
+
     async def _process_with_semaphore(self, job: PaperJob):
         if not self._process_fn:
             logger.error("No processor function set on SmartPaperQueue")
             return
 
         async with self._semaphore:
+            await self._wait_for_memory()
+
             self._active_jobs.add(job.paper_id)
             try:
                 logger.info(f"Processing paper {job.paper_id} (active: {len(self._active_jobs)})")

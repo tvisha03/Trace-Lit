@@ -14,17 +14,12 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 async def export_chat(
     session_id: str,
     export_format: ExportFormat,
     db: AsyncSession,
     file_storage: FileStorage,
 ) -> Path:
-    """
-    Export a chat session to PDF or Excel.
-    Returns the path to the generated file.
-    """
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
@@ -57,7 +52,6 @@ async def export_chat(
     else:
         raise ValueError(f"Unsupported export format: {format}")
 
-
 async def export_comparison(
     session_id: str,
     comparison_content: str,
@@ -65,7 +59,6 @@ async def export_comparison(
     export_format: ExportFormat,
     file_storage: FileStorage,
 ) -> Path:
-    """Export a comparison result to PDF or Excel."""
     filename = f"comparison_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
 
     if export_format == ExportFormat.PDF:
@@ -79,9 +72,7 @@ async def export_comparison(
     else:
         raise ValueError(f"Unsupported export format for comparison: {format}")
 
-
 def _flatten_citations(messages: list[dict]) -> list[dict]:
-    """Extract all HAVF citation results from messages into a flat list."""
     citations = []
     for msg in messages:
         for result in msg.get("havf_results", []):

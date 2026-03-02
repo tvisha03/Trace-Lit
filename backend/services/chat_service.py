@@ -13,9 +13,7 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 async def _format_havf_data(response: ChatResponse) -> list[dict]:
-    """Format HAVF verification results for persistence."""
     return [
         {
             "claim": r.claim,
@@ -27,9 +25,7 @@ async def _format_havf_data(response: ChatResponse) -> list[dict]:
         for r in response.havf_results
     ]
 
-
 async def _prepare_chat_context(session_id: str, db: AsyncSession) -> tuple[list[str], list]:
-    """Validate session and retrieve papers and history."""
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
@@ -42,7 +38,6 @@ async def _prepare_chat_context(session_id: str, db: AsyncSession) -> tuple[list
     history = await get_recent_messages(db, session_id, max_turns=4)
     return paper_ids, history
 
-
 async def chat(
     session_id: str,
     query: str,
@@ -50,7 +45,6 @@ async def chat(
     faiss_store: FAISSStore,
     llm: FallbackChain,
 ) -> ChatResponse:
-    """Process a user query: retrieve → generate → verify → persist."""
     paper_ids, history = await _prepare_chat_context(session_id, db)
     await create_message(
         db,
@@ -78,7 +72,6 @@ async def chat(
     )
     return response
 
-
 async def chat_stream(
     session_id: str,
     query: str,
@@ -86,13 +79,8 @@ async def chat_stream(
     faiss_store: FAISSStore,
     llm: FallbackChain,
 ):
-    """
-    Stream a chat response as SSE events.
-    Returns an async generator of SSE-formatted strings.
-    """
     paper_ids, history = await _prepare_chat_context(session_id, db)
 
-    # Save user message
     await create_message(
         db,
         session_id=session_id,

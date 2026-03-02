@@ -1,14 +1,11 @@
-"""
-Multi-provider fallback chain: Gemini → Groq → Ollama.
 
-Handles rate limits, timeouts, and empty responses transparently.
-The caller never needs to know which provider actually answered.
-"""
+from __future__ import annotations
 
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Tuple, Optional, List
 
 from infrastructure.llm.base import BaseLLMProvider
 from infrastructure.llm.factory import create_provider
+from infrastructure.llm.rate_monitor import RateLimitMonitor
 from shared.enums import LLMProvider
 from shared.errors import (
     RateLimitError,
@@ -21,35 +18,63 @@ from app.config import get_settings
 
 logger = get_logger(__name__)
 
-
 class FallbackChain:
-    """
-    Tries providers in priority order.
-    On 429 → switch immediately (no retry).
-    On timeout → retry per provider up to LLM_MAX_RETRIES, then switch.
-    """
 
     def __init__(self) -> None:
         settings = get_settings()
         self._max_retries = settings.LLM_MAX_RETRIES
         self._retry_delay = settings.LLM_RETRY_DELAY_BASE
         self._providers = self._build_chain()
+        self._rate_monitor = RateLimitMonitor()
 
-    def _build_chain(self) -> list[BaseLLMProvider]:
-        """Build provider list respecting USE_LOCAL_LLM toggle."""
+    @property
+    def rate_monitor(self) -> RateLimitMonitor:
+        return self._rate_monitor
+
+    def _build_chain(self) -> List[BaseLLMProvider]:
         settings = get_settings()
         if settings.USE_LOCAL_LLM:
-            # Local-first: Ollama → Gemini → Groq
             order = [LLMProvider.OLLAMA, LLMProvider.GEMINI, LLMProvider.GROQ]
         else:
-            # Cloud-first: Gemini → Groq → Ollama
             order = [LLMProvider.GEMINI, LLMProvider.GROQ, LLMProvider.OLLAMA]
         return [create_provider(p) for p in order]
 
     @property
-    def providers(self) -> list[BaseLLMProvider]:
-        """Read-only access to the provider chain."""
+    def providers(self) -> List[BaseLLMProvider]:
         return self._providers
+
+    async def _try_provider(
+        self,
+        provider: BaseLLMProvider,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> Optional[Tuple[str, int]]:
+        retries = 0
+        while retries <= self._max_retries:
+            try:
+                text = await provider.generate(
+                    system_prompt, user_prompt, temperature, max_tokens
+                )
+                return text, retries
+
+            except RateLimitError:
+                logger.warning(f"Rate limit on {provider.provider.value} — switching")
+                return None
+
+            except (ProviderTimeoutError, EmptyResponseError) as exc:
+                retries += 1
+                logger.warning(f"{provider.provider.value} attempt {retries}: {exc.message}")
+                if retries > self._max_retries:
+                    return None
+                import asyncio
+                await asyncio.sleep(self._retry_delay * retries)
+
+            except Exception as exc:
+                logger.error(f"{provider.provider.value} unexpected: {exc}")
+                return None
+        return None
 
     async def generate(
         self,
@@ -57,50 +82,63 @@ class FallbackChain:
         user_prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 2048,
-    ) -> tuple[str, LLMProvider, dict]:
-        """
-        Try each provider until one succeeds.
-
-        Returns
-        -------
-        tuple of (response_text, provider_used, metadata_dict)
-        """
-        errors: list[str] = []
+        estimated_tokens: int = 8_500,
+    ) -> Tuple[str, LLMProvider, dict]:
+        errors: List[str] = []
 
         for provider in self._providers:
-            retries = 0
-            while retries <= self._max_retries:
-                try:
-                    text = await provider.generate(
-                        system_prompt, user_prompt, temperature, max_tokens
-                    )
-                    logger.info(f"LLM response from {provider.provider.value}")
-                    return text, provider.provider, {"retries": retries}
+            if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                logger.info(f"Skipping {provider.provider.value} — over rate budget")
+                errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                continue
 
-                except RateLimitError:
-                    # Switch immediately — retrying the same provider wastes time
-                    logger.warning(f"Rate limit on {provider.provider.value} — switching")
-                    errors.append(f"{provider.provider.value}: rate_limit")
-                    break
+            result = await self._try_provider(
+                provider, system_prompt, user_prompt, temperature, max_tokens,
+            )
+            if result is None:
+                errors.append(f"{provider.provider.value}: failed")
+                continue
 
-                except (ProviderTimeoutError, EmptyResponseError) as exc:
-                    retries += 1
-                    logger.warning(
-                        f"{provider.provider.value} attempt {retries}: {exc.message}"
-                    )
-                    errors.append(f"{provider.provider.value}: {exc.message}")
-                    if retries > self._max_retries:
-                        break
-                    import asyncio
-                    await asyncio.sleep(self._retry_delay * retries)
-
-                except Exception as exc:
-                    logger.error(f"{provider.provider.value} unexpected: {exc}")
-                    errors.append(f"{provider.provider.value}: {exc}")
-                    break
+            text, retries = result
+            from shared.utils.text_utils import estimate_tokens as _est
+            self._rate_monitor.track_usage(
+                provider.provider, _est(system_prompt + user_prompt + text),
+            )
+            logger.info(f"LLM response from {provider.provider.value}")
+            return text, provider.provider, {"retries": retries}
 
         logger.error(f"All providers failed: {errors}")
         raise AllProvidersFailedError()
+
+    async def _stream_from_provider(
+        self,
+        provider: BaseLLMProvider,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
+        try:
+            full_text = ""
+            stream = provider.generate_streaming(
+                system_prompt, user_prompt, temperature, max_tokens
+            )
+            async for token in stream:
+                full_text += token
+                yield (token, provider.provider)
+
+            from shared.utils.text_utils import estimate_tokens as _est
+            actual_tokens = _est(system_prompt + user_prompt + full_text)
+            self._rate_monitor.track_usage(provider.provider, actual_tokens)
+
+        except RateLimitError:
+            logger.warning(f"Rate limit on {provider.provider.value} during stream — switching")
+
+        except (ProviderTimeoutError, EmptyResponseError) as exc:
+            logger.warning(f"Stream error on {provider.provider.value}: {exc.message} — switching")
+
+        except Exception as exc:
+            logger.error(f"Stream unexpected on {provider.provider.value}: {exc}")
 
     async def generate_streaming(
         self,
@@ -108,29 +146,17 @@ class FallbackChain:
         user_prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 2048,
-    ) -> AsyncGenerator[tuple[str, LLMProvider], None]:
-        """
-        Stream tokens from the first available provider.
-        Yields (token_chunk, provider) tuples.
-        """
+        estimated_tokens: int = 8_500,
+    ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
         for provider in self._providers:
-            try:
-                async for token in provider.generate_streaming(
-                    system_prompt, user_prompt, temperature, max_tokens
-                ):
-                    yield token, provider.provider
-                return  # stream completed successfully
-
-            except RateLimitError:
-                logger.warning(f"Rate limit on {provider.provider.value} during stream — switching")
+            if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                logger.info(f"Skipping {provider.provider.value} stream — over rate budget")
                 continue
 
-            except (ProviderTimeoutError, EmptyResponseError) as exc:
-                logger.warning(f"Stream error on {provider.provider.value}: {exc.message} — switching")
-                continue
-
-            except Exception as exc:
-                logger.error(f"Stream unexpected on {provider.provider.value}: {exc}")
-                continue
+            async for item in self._stream_from_provider(
+                provider, system_prompt, user_prompt, temperature, max_tokens
+            ):
+                yield item
+            return
 
         raise AllProvidersFailedError()

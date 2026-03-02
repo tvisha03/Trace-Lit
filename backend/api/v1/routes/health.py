@@ -1,6 +1,3 @@
-"""
-Health check route.
-"""
 
 from fastapi import APIRouter, Request
 
@@ -8,10 +5,8 @@ from api.v1.schemas import HealthResponse
 
 router = APIRouter()
 
-
 @router.get("", response_model=HealthResponse)
 async def health_check(request: Request):
-    """Return service health status and active LLM provider availability."""
     providers = {}
     llm = getattr(request.app.state, "llm", None)
     if llm:

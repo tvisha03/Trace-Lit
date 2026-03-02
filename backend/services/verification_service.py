@@ -5,18 +5,12 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 async def verify_text_against_papers(
     text: str,
     paper_ids: list[str],
     faiss_store: FAISSStore,
     db_session,
 ) -> list[dict]:
-    """
-    Verify arbitrary text against indexed papers.
-    Returns list of claim verification results.
-    """
-    # Retrieve relevant chunks for the text
     chunks = await retrieve(
         query=text,
         paper_ids=paper_ids,

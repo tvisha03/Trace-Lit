@@ -1,7 +1,3 @@
-"""
-PDF text extraction using PyMuPDF4LLM as the primary tool.
-Outputs Markdown-formatted text with headings and paragraphs preserved.
-"""
 
 from pathlib import Path
 from dataclasses import dataclass
@@ -11,22 +7,13 @@ from shared.errors import PDFExtractionError
 
 logger = get_logger(__name__)
 
-
 @dataclass
 class ExtractedDocument:
-    """Raw extraction result before section parsing."""
     markdown_text: str
     page_count: int
     filename: str
 
-
 def extract_pdf(file_path: str | Path) -> ExtractedDocument:
-    """
-    Extract text from a PDF using PyMuPDF4LLM.
-
-    Returns Markdown-formatted text with ``##`` headings and paragraph breaks.
-    Raises PDFExtractionError on corrupt / unreadable files.
-    """
     file_path = Path(file_path)
     if not file_path.exists():
         raise PDFExtractionError(file_path.name, "file not found")

@@ -1,27 +1,20 @@
-"""
-CRUD operations for the Chunk model.
-"""
 
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.chunk import Chunk
 
-
 async def create_chunks_bulk(db: AsyncSession, chunks: list[dict]) -> list[Chunk]:
-    """Insert multiple chunks in one flush. Each dict maps to Chunk columns."""
     objects = [Chunk(**c) for c in chunks]
     db.add_all(objects)
     await db.flush()
     return objects
-
 
 async def get_chunks_by_paper(db: AsyncSession, paper_id: str) -> list[Chunk]:
     result = await db.execute(
         select(Chunk).where(Chunk.paper_id == paper_id).order_by(Chunk.paragraph_id)
     )
     return list(result.scalars().all())
-
 
 async def get_chunk_by_paragraph_id(
     db: AsyncSession, paper_id: str, paragraph_id: str
@@ -33,11 +26,9 @@ async def get_chunk_by_paragraph_id(
     )
     return result.scalar_one_or_none()
 
-
 async def get_chunks_by_ids(db: AsyncSession, chunk_ids: list[str]) -> list[Chunk]:
     result = await db.execute(select(Chunk).where(Chunk.id.in_(chunk_ids)))
     return list(result.scalars().all())
-
 
 async def delete_chunks_by_paper(db: AsyncSession, paper_id: str) -> None:
     await db.execute(sa_delete(Chunk).where(Chunk.paper_id == paper_id))

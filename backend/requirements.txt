@@ -35,3 +35,4 @@ openpyxl
 python-multipart
 python-dotenv
 websockets
+psutil

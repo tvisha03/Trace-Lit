@@ -1,16 +1,12 @@
-"""
-Abstract base for all LLM providers.
-Concrete providers implement generate() and generate_streaming().
-"""
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator
 
 from shared.enums import LLMProvider
 
-
 class BaseLLMProvider(ABC):
-    """Interface that every LLM provider must satisfy."""
 
     provider: LLMProvider
 
@@ -22,7 +18,6 @@ class BaseLLMProvider(ABC):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> str:
-        """Return the complete generated text."""
         ...
 
     @abstractmethod
@@ -33,10 +28,9 @@ class BaseLLMProvider(ABC):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> AsyncGenerator[str, None]:
-        """Yield incremental token chunks."""
-        ...
+        return
+        yield
 
     @abstractmethod
     async def health_check(self) -> bool:
-        """Return True if the provider is reachable and has available quota."""
         ...

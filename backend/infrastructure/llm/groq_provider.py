@@ -1,7 +1,5 @@
-"""
-Groq provider — fast, configurable model (defaults to mixtral-8x7b-32768).
-Model can be overridden via GROQ_MODEL environment variable.
-"""
+
+from __future__ import annotations
 
 import asyncio
 from typing import AsyncGenerator
@@ -15,7 +13,6 @@ from shared.logger import get_logger
 from app.config import get_settings
 
 logger = get_logger(__name__)
-
 
 class GroqProvider(BaseLLMProvider):
     provider = LLMProvider.GROQ

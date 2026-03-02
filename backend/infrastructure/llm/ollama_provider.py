@@ -1,8 +1,6 @@
-"""
-Ollama provider — local fallback (Llama 3.2 3B, unlimited, slower).
-"""
 
-import asyncio
+from __future__ import annotations
+
 from typing import AsyncGenerator
 
 import httpx
@@ -14,7 +12,6 @@ from shared.logger import get_logger
 from app.config import get_settings
 
 logger = get_logger(__name__)
-
 
 class OllamaProvider(BaseLLMProvider):
     provider = LLMProvider.OLLAMA

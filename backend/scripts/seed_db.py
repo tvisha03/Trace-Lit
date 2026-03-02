@@ -1,16 +1,9 @@
-"""
-Seed the database with a test session for development.
-
-Usage:
-    python -m scripts.seed_db
-"""
 
 import asyncio
 import uuid
 
 from infrastructure.db.database import init_db, async_session_factory
 from infrastructure.db.crud.session_crud import create_session
-
 
 async def seed():
     print("Initialising database...")
@@ -27,7 +20,6 @@ async def seed():
         print(f"Created session: {session.id} — {session.title}")
 
     print("Database seeded successfully.")
-
 
 if __name__ == "__main__":
     asyncio.run(seed())

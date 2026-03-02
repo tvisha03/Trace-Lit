@@ -21,15 +21,11 @@ async_session_factory = async_sessionmaker(
     expire_on_commit=False,
 )
 
-
 class Base(DeclarativeBase):
-    """Shared declarative base for all ORM models."""
     pass
 
-
 async def init_db() -> None:
-    """Create all tables that don't yet exist (idempotent)."""
-    from infrastructure.db.models import paper, chunk, session, message  # noqa: F401 — register models
+    from infrastructure.db.models import paper, chunk, session, message
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

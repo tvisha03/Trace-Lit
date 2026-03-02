@@ -11,20 +11,11 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 async def compare_papers(
     paper_ids: list[str],
     db: AsyncSession,
     llm: FallbackChain,
 ) -> dict:
-    """
-    Compare 2+ papers. Returns structured comparison text with provider info.
-
-    Steps:
-    1. Fetch top chunks per paper.
-    2. Build context blocks.
-    3. Generate comparison via LLM.
-    """
     if len(paper_ids) < 2:
         raise ValueError("At least 2 papers required for comparison")
 
@@ -39,7 +30,6 @@ async def compare_papers(
         paper_titles.append(paper.title or paper.filename)
         chunks = await get_chunks_by_paper(db, pid)
 
-        # Use the first ~20 chunks as representative context
         context = build_context_block(chunks[:20])
         paper_contexts[pid] = context
 
@@ -57,13 +47,11 @@ async def compare_papers(
         "provider": provider.value,
     }
 
-
 async def extract_paper_contributions(
     paper_id: str,
     db: AsyncSession,
     llm: FallbackChain,
 ) -> dict:
-    """Extract structured contributions from a single paper."""
     paper = await get_paper(db, paper_id)
     if not paper:
         raise NotFoundError("Paper", paper_id)

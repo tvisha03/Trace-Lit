@@ -18,7 +18,6 @@ from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
 
-
 async def register_paper(
     db: AsyncSession,
     session_id: str,
@@ -26,7 +25,6 @@ async def register_paper(
     file_path: str,
     file_size_mb: float,
 ) -> str:
-    """Create a paper record in QUEUED status. Returns the paper ID."""
     paper = await create_paper(
         db,
         session_id=session_id,
@@ -36,26 +34,18 @@ async def register_paper(
     )
     return str(paper.id)
 
-
 async def process_paper(
     paper_id: str,
     db: AsyncSession,
     faiss_store: FAISSStore,
     progress_callback=None,
 ) -> None:
-    """
-    Full ingestion pipeline for a single paper.
-    Updates DB status at each stage. Calls progress_callback(float) for WS updates.
-
-    Stages: QUEUED → EXTRACTING → CHUNKING → EMBEDDING → COMPLETED (or FAILED).
-    """
     try:
         paper = await get_paper(db, paper_id)
         if not paper:
             logger.error(f"Paper {paper_id} not found")
             return
 
-        # --- Stage 1: Extract text ---
         await update_paper_status(db, paper_id, PaperStatus.EXTRACTING, progress=0.1)
         if progress_callback:
             await progress_callback(0.1)
@@ -71,7 +61,6 @@ async def process_paper(
         if progress_callback:
             await progress_callback(0.3)
 
-        # --- Stage 2: Parse sections + extract metadata ---
         sections = parse_sections(extracted.markdown_text)
         metadata = extract_metadata(extracted.markdown_text)
 
@@ -86,11 +75,9 @@ async def process_paper(
         if progress_callback:
             await progress_callback(0.4)
 
-        # --- Stage 3: Chunk ---
         with timer(f"Chunk {paper.filename}"):
             chunks = create_chunks(sections, paper_title=metadata.title)
 
-        # Persist chunks to DB
         chunk_records = [
             {
                 "id": str(uuid.uuid4()),
@@ -115,11 +102,9 @@ async def process_paper(
         if progress_callback:
             await progress_callback(0.6)
 
-        # --- Stage 4: Embed + Index into FAISS ---
         with timer(f"Index {paper.filename}"):
             await index_chunks(chunks, paper_id, faiss_store)
 
-        # --- Done ---
         await update_paper_status(db, paper_id, PaperStatus.COMPLETED, progress=1.0)
         if progress_callback:
             await progress_callback(1.0)
@@ -133,20 +118,16 @@ async def process_paper(
             error_message=str(exc)[:500],
         )
         if progress_callback:
-            await progress_callback(-1.0)  # Signal failure
-
+            await progress_callback(-1.0)
 
 async def get_session_papers(db: AsyncSession, session_id: str, status: PaperStatus | None = None):
-    """List papers in a session, optionally filtered by status."""
     return await get_papers_by_session(db, session_id, status=status)
-
 
 async def delete_paper(
     paper_id: str,
     db: AsyncSession,
     faiss_store: FAISSStore,
 ) -> bool:
-    """Remove a paper's vectors, chunks, and DB record."""
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     from infrastructure.db.crud.paper_crud import delete_paper as db_delete_paper
 

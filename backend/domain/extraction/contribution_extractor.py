@@ -1,7 +1,3 @@
-"""
-Contribution extractor — uses LLM to pull structured contribution data per paper.
-Extracts: problem, method, dataset, metrics, results + source paragraph IDs.
-"""
 
 from typing import Any
 
@@ -12,7 +8,7 @@ logger = get_logger(__name__)
 
 CONTRIBUTION_PROMPT = """You are an academic paper analysis assistant.
 Given the following paper sections, extract the paper's contributions in this exact JSON format.
-For each field, also include the paragraph_id ([P#]) where you found the information.
+For each field, also include the paragraph_id ([P
 
 {
   "problem": {"text": "...", "paragraph_id": "P#"},
@@ -25,15 +21,10 @@ For each field, also include the paragraph_id ([P#]) where you found the informa
 If a field is not found, set text to "Not mentioned" and paragraph_id to null.
 Respond ONLY with valid JSON — no markdown fences, no explanation."""
 
-
 async def extract_contributions(
     context: str,
     llm: FallbackChain,
 ) -> dict[str, Any]:
-    """
-    Ask the LLM to extract structured contributions from paper context.
-    Returns a dict with keys: problem, method, dataset, metrics, results.
-    """
     prompt = f"{CONTRIBUTION_PROMPT}\n\nPaper context:\n{context}"
 
     response_text, provider, _ = await llm.generate(
@@ -44,7 +35,6 @@ async def extract_contributions(
 
     import json
     try:
-        # Strip possible markdown code fences
         cleaned = response_text.strip().strip("`").strip()
         if cleaned.startswith("json"):
             cleaned = cleaned[4:].strip()

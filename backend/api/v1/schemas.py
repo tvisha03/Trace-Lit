@@ -1,14 +1,7 @@
-"""
-Pydantic schemas for all API request/response models.
-Validates input, serialises output, and documents the API contract.
-"""
 
-from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional
 
-
-# ─── Session ───────────────────────────────────────────────────────────
 class SessionCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
@@ -30,8 +23,6 @@ class WebSocketURLResponse(BaseModel):
     websocket_url: str
     session_id: str
 
-
-# ─── Paper ─────────────────────────────────────────────────────────────
 class PaperResponse(BaseModel):
     id: str
     session_id: str
@@ -55,8 +46,6 @@ class PaperUploadResponse(BaseModel):
     paper_ids: list[str]
     message: str
 
-
-# ─── Chat ──────────────────────────────────────────────────────────────
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=5000)
     stream: bool = False
@@ -89,8 +78,6 @@ class MessageResponse(BaseModel):
 class MessageListResponse(BaseModel):
     messages: list[MessageResponse]
 
-
-# ─── Comparison ────────────────────────────────────────────────────────
 class CompareRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)
 
@@ -105,18 +92,18 @@ class ContributionResponse(BaseModel):
     title: str
     contributions: dict
 
-
-# ─── Export ─────────────────────────────────────────────────────────────
 class ExportRequest(BaseModel):
     format: str = Field(..., pattern="^(pdf|excel)$")
+
+class ComparisonExportRequest(BaseModel):
+    paper_ids: list[str] = Field(..., min_length=2, max_length=7)
+    format: str = Field(default="pdf", pattern="^(pdf|excel)$")
 
 class ExportResponse(BaseModel):
     download_url: str
     filename: str
     format: str
 
-
-# ─── Analysis ──────────────────────────────────────────────────────────
 class KeywordItem(BaseModel):
     keyword: str
     score: float
@@ -140,8 +127,6 @@ class ReviewResponse(BaseModel):
     paper_count: int
     provider: str
 
-
-# ─── Verification ──────────────────────────────────────────────────────
 class VerifyRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000)
     paper_ids: list[str] = Field(..., min_length=1)
@@ -149,8 +134,6 @@ class VerifyRequest(BaseModel):
 class VerifyResponse(BaseModel):
     results: list[VerificationItem]
 
-
-# ─── Health ────────────────────────────────────────────────────────────
 class HealthResponse(BaseModel):
     status: str
     version: str

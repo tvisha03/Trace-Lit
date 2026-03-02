@@ -7,9 +7,7 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Dedicated thread pool for export tasks (WeasyPrint is not async-safe)
 _export_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="export")
-
 
 async def run_export_in_thread(
     export_fn: Callable[..., Path],

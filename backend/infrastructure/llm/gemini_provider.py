@@ -1,7 +1,5 @@
-"""
-Gemini 2.0 Flash provider — primary LLM (250K TPM, highest quality).
-Uses the current google-genai SDK (google.genai).
-"""
+
+from __future__ import annotations
 
 from typing import AsyncGenerator
 
@@ -18,7 +16,6 @@ logger = get_logger(__name__)
 
 _MODEL = "gemini-2.5-flash"
 
-
 class GeminiProvider(BaseLLMProvider):
     provider = LLMProvider.GEMINI
 
@@ -29,7 +26,6 @@ class GeminiProvider(BaseLLMProvider):
         self._client: genai.Client | None = None
 
     def _get_client(self) -> genai.Client:
-        """Lazily create the genai client on first use."""
         if self._client is None:
             self._client = genai.Client(api_key=self._api_key)
         return self._client

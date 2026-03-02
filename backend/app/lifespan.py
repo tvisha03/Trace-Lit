@@ -1,9 +1,3 @@
-"""
-Application lifespan — startup and shutdown hooks.
-Initialises the database, ensures data directories, and warms critical models.
-Wires up: FAISS store, LLM fallback chain, paper queue, WebSocket manager.
-"""
-
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -23,33 +17,27 @@ from shared.enums import PaperStatus
 
 logger = get_logger(__name__)
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Runs once on startup and once on shutdown."""
-    # ── Startup ────────────────────────────────────────────────────────────
+
     setup_logging()
     logger.info("TraceLit backend starting …")
 
     ensure_directories()
     await init_db()
 
-    # Pre-load FAISS store (warm, avoids first-query penalty)
     faiss_store = FAISSStore()
     faiss_store.load_or_create()
     app.state.faiss_store = faiss_store
 
-    # Initialise LLM fallback chain (Gemini → Groq → Ollama)
     llm = FallbackChain()
     app.state.llm = llm
 
-    # Start paper processing queue (max 3 concurrent)
     paper_queue = create_paper_queue()
     set_ws_manager(ws_manager)
     await paper_queue.start()
     app.state.paper_queue = paper_queue
 
-    # Re-queue any papers stuck in non-terminal states (e.g. from a crashed run)
     async with async_session_factory() as db:
         stuck = await get_stuck_papers(db)
         if stuck:
@@ -63,7 +51,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # ── Shutdown ───────────────────────────────────────────────────────────
     logger.info("TraceLit backend shutting down …")
     await paper_queue.stop()
     shutdown_export_pool()

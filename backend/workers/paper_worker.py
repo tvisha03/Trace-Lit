@@ -6,14 +6,11 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Global reference — set during app startup via lifespan
 _ws_manager = None
-
 
 def set_ws_manager(manager):
     global _ws_manager
     _ws_manager = manager
-
 
 async def paper_job_processor(job: PaperJob):
     async with async_session_factory() as db:
@@ -39,7 +36,6 @@ async def paper_job_processor(job: PaperJob):
         except Exception:
             await db.rollback()
             raise
-
 
 def create_paper_queue() -> SmartPaperQueue:
     queue = SmartPaperQueue()

@@ -1,6 +1,3 @@
-"""
-Session — user research session that groups papers and messages.
-"""
 
 import uuid
 from datetime import datetime, timezone
@@ -10,10 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.database import Base
 
-
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
 
 class Session(Base):
     __tablename__ = "sessions"

@@ -1,6 +1,3 @@
-"""
-Chat routes — query with RAG + HAVF verification.
-"""
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -14,11 +11,8 @@ from infrastructure.db.crud.message_crud import get_messages_by_session
 
 router = APIRouter()
 
-
 def _get_llm(request: Request) -> FallbackChain:
-    """Retrieve the shared LLM fallback chain from app state."""
     return request.app.state.llm
-
 
 @router.post("", response_model=ChatResponse)
 async def send_message(
@@ -28,10 +22,6 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
-    """
-    Send a query and receive a verified response.
-    If stream=True, returns an SSE stream instead.
-    """
     llm = _get_llm(request)
 
     if body.stream:
@@ -65,13 +55,11 @@ async def send_message(
         latency_ms=response.latency_ms,
     )
 
-
 @router.get("/messages", response_model=MessageListResponse)
 async def get_messages(
     session_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get all messages in a session's chat history."""
     messages = await get_messages_by_session(db, session_id)
     items = [
         MessageResponse(

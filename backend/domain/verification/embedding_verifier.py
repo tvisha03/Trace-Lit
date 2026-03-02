@@ -1,9 +1,3 @@
-"""
-Embedding Verifier — Level 1 of HAVF.
-
-Performs batch cosine similarity between generated claim sentences and
-source chunk sentences. Handles ~89% of cases (HIGH confidence ≥ 0.85).
-"""
 
 import numpy as np
 
@@ -14,9 +8,7 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 def _determine_confidence(best_score: float) -> tuple[ConfidenceLevel, bool]:
-    """Determine confidence level and whether reranking is needed."""
     if best_score >= HAVF_HIGH_THRESHOLD:
         return ConfidenceLevel.HIGH, False
     elif best_score >= HAVF_MEDIUM_THRESHOLD:
@@ -24,14 +16,12 @@ def _determine_confidence(best_score: float) -> tuple[ConfidenceLevel, bool]:
     else:
         return ConfidenceLevel.LOW, False
 
-
 def _build_result(
     i: int,
     claim: str,
     scores: np.ndarray,
     source_sentences: list[dict],
 ) -> dict:
-    """Build a single verification result."""
     best_idx = int(np.argmax(scores))
     best_score = float(scores[best_idx])
     confidence, needs_reranking = _determine_confidence(best_score)
@@ -46,36 +36,20 @@ def _build_result(
         "needs_reranking": needs_reranking,
     }
 
-
 def _process_claims(
     claims: list[str],
     similarity_matrix: np.ndarray,
     source_sentences: list[dict],
 ) -> list[dict]:
-    """Process each claim and build results."""
     return [
         _build_result(i, claim, similarity_matrix[i], source_sentences)
         for i, claim in enumerate(claims)
     ]
 
-
 def verify_claims_embedding(
     claims: list[str],
     source_sentences: list[dict],
 ) -> list[dict]:
-    """
-    Level 1 verification via embedding similarity.
-
-    Args:
-        claims: list of generated sentences to verify.
-        source_sentences: list of dicts, each having ``text``, ``paragraph_id``,
-                          ``sentence_key``.
-
-    Returns:
-        list of verification results, one per claim:
-        ``{"claim", "confidence", "best_score", "source_sentence", "paragraph_id",
-          "sentence_key", "needs_reranking"}``
-    """
     if not claims or not source_sentences:
         return [
             {

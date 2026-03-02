@@ -1,70 +1,64 @@
-"""
-Section parser — splits raw Markdown into structured sections.
-Detects headings via Markdown syntax, font-size heuristics, and numbering patterns.
-"""
-
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from re import Match
 
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Patterns for academic section headings
 _MD_HEADING = re.compile(r"^(#{1,4})\s+(.+)$", re.MULTILINE)
 _NUMBERED_HEADING = re.compile(
     r"^(\d+(?:\.\d+)*)\s+([A-Z][A-Za-z\s:,\-–—]+)$", re.MULTILINE
 )
 
-
 @dataclass
 class Section:
-    """A logical section extracted from a paper."""
     title: str
     content: str
-    level: int = 1  # heading depth (1 = top-level)
+    level: int = 1
     page_start: int | None = None
     order: int = 0
 
+def _find_headings(markdown_text: str) -> list[Match]:
+    headings = list(_MD_HEADING.finditer(markdown_text))
+    return headings or list(_NUMBERED_HEADING.finditer(markdown_text))
+
+def _build_section(match: Match, idx: int, headings: list[Match], markdown_text: str) -> Section | None:
+    title = (
+        match.group(2).strip()
+        if match.lastindex and match.lastindex >= 2
+        else match.group(1).strip()
+    )
+
+    first_group = match.group(1)
+    level = len(first_group) if first_group.startswith("#") else 1
+
+    start = match.end()
+    end = headings[idx + 1].start() if idx + 1 < len(headings) else len(markdown_text)
+    content = markdown_text[start:end].strip()
+
+    return Section(title=title, content=content, level=level, order=idx) if content else None
+
+def _create_sections_from_headings(
+    markdown_text: str, headings: list[Match]
+) -> list[Section]:
+    sections = []
+    for idx, match in enumerate(headings):
+        section = _build_section(match, idx, headings, markdown_text)
+        if section:
+            sections.append(section)
+    return sections
+
+def _create_default_section(markdown_text: str) -> list[Section]:
+    return [Section(title="Full Document", content=markdown_text.strip(), order=0)]
 
 def parse_sections(markdown_text: str) -> list[Section]:
-    """
-    Split Markdown text into ordered sections.
-
-    Strategy:
-    1. Find all ``## Heading`` style markers.
-    2. Fall back to numbered heading detection (``1. Introduction``).
-    3. If no headings found, treat the whole document as one section.
-    """
-    sections: list[Section] = []
-
-    # Try Markdown headings first
-    headings = list(_MD_HEADING.finditer(markdown_text))
-
-    if not headings:
-        # Fallback: numbered headings
-        headings = list(_NUMBERED_HEADING.finditer(markdown_text))
-
-    if not headings:
-        # No structure detected — wrap everything in a single section
-        sections.append(Section(title="Full Document", content=markdown_text.strip(), order=0))
-        return sections
-
-    for idx, match in enumerate(headings):
-        title = match.group(2) if match.lastindex and match.lastindex >= 2 else match.group(1)
-        level = len(match.group(1)) if match.group(1).startswith("#") else 1
-
-        start = match.end()
-        end = headings[idx + 1].start() if idx + 1 < len(headings) else len(markdown_text)
-        content = markdown_text[start:end].strip()
-
-        if content:
-            sections.append(Section(
-                title=title.strip(),
-                content=content,
-                level=level,
-                order=idx,
-            ))
+    headings = _find_headings(markdown_text)
+    sections = (
+        _create_default_section(markdown_text)
+        if not headings
+        else _create_sections_from_headings(markdown_text, headings)
+    )
 
     logger.info(f"Parsed {len(sections)} sections")
     return sections

@@ -1,6 +1,3 @@
-"""
-Paper — metadata and processing state for each uploaded PDF.
-"""
 
 import uuid
 from datetime import datetime, timezone
@@ -11,10 +8,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from infrastructure.db.database import Base
 from shared.enums import PaperStatus
 
-
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
 
 class Paper(Base):
     __tablename__ = "papers"
