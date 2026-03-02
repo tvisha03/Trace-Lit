@@ -75,20 +75,36 @@ async def delete_full_session(
     session_id: str,
     faiss_store: FAISSStore,
     file_storage: FileStorage,
-) -> bool:
+) -> list[str]:
+    """Delete a session and all its related data in top-down order.
+
+    Returns the list of paper IDs that were deleted so the caller can emit
+    WebSocket events in the correct top-down sequence without the service
+    layer needing to know about the WS infrastructure.
+    """
     papers = await get_papers_by_session(db, session_id)
+    paper_ids = [str(p.id) for p in papers]
+
+    # Remove FAISS vectors and DB chunks for every paper in the session.
     for paper in papers:
         faiss_store.remove_paper(str(paper.id))
         await delete_chunks_by_paper(db, str(paper.id))
 
-    faiss_store.save()
     await delete_messages_by_session(db, session_id)
-    file_storage.delete_session_uploads(session_id)
-    file_storage.delete_session_exports(session_id)
 
     deleted = await db_delete_session(db, session_id)
     if not deleted:
         raise NotFoundError("Session", session_id)
 
+    # Commit all DB deletions atomically before touching the filesystem so the
+    # database remains the authoritative source of truth if a later step fails.
+    await db.commit()
+
+    # Persist the trimmed FAISS index and remove uploaded/exported files only
+    # after the DB transaction is committed successfully.
+    faiss_store.save()
+    file_storage.delete_session_uploads(session_id)
+    file_storage.delete_session_exports(session_id)
+
     logger.info(f"Deleted session {session_id} with {len(papers)} papers")
-    return True
+    return paper_ids

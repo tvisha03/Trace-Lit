@@ -24,7 +24,6 @@ def _get_llm(request: Request) -> FallbackChain:
 
 @router.get("/keywords/{paper_id}", response_model=KeywordResponse)
 async def paper_keywords(
-    session_id: str,
     paper_id: str,
     db: AsyncSession = Depends(get_db),
 ):

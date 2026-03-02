@@ -84,9 +84,20 @@ class GeminiProvider(BaseLLMProvider):
                 if chunk.text:
                     yield chunk.text
         except Exception as exc:
-            if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+            exc_str = str(exc)
+            if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
                 raise RateLimitError("gemini")
+            if "timeout" in exc_str.lower() or "deadline" in exc_str.lower():
+                raise ProviderTimeoutError("gemini", self._timeout)
             raise
 
     async def health_check(self) -> bool:
-        return bool(self._api_key)
+        # Verify the key exists and the API is reachable with a lightweight models.get call
+        if not self._api_key:
+            return False
+        try:
+            client = self._get_client()
+            await client.aio.models.get(model=_MODEL)
+            return True
+        except Exception:
+            return False

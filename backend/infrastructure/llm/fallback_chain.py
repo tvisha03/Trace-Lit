@@ -118,18 +118,14 @@ class FallbackChain:
         temperature: float,
         max_tokens: int,
     ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
+        full_text = ""
         try:
-            full_text = ""
             stream = provider.generate_streaming(
                 system_prompt, user_prompt, temperature, max_tokens
             )
             async for token in stream:
                 full_text += token
                 yield (token, provider.provider)
-
-            from shared.utils.text_utils import estimate_tokens as _est
-            actual_tokens = _est(system_prompt + user_prompt + full_text)
-            self._rate_monitor.track_usage(provider.provider, actual_tokens)
 
         except RateLimitError:
             logger.warning(f"Rate limit on {provider.provider.value} during stream — switching")
@@ -139,6 +135,14 @@ class FallbackChain:
 
         except Exception as exc:
             logger.error(f"Stream unexpected on {provider.provider.value}: {exc}")
+
+        finally:
+            # Track usage for whatever portion of the stream was received,
+            # including interrupted streams where full_text may be partial.
+            if full_text:
+                from shared.utils.text_utils import estimate_tokens as _est
+                actual_tokens = _est(system_prompt + user_prompt + full_text)
+                self._rate_monitor.track_usage(provider.provider, actual_tokens)
 
     async def generate_streaming(
         self,

@@ -104,6 +104,7 @@ async def process_paper(
 
         with timer(f"Index {paper.filename}"):
             await index_chunks(chunks, paper_id, faiss_store)
+            faiss_store.save()  # Persist FAISS index to disk
 
         await update_paper_status(db, paper_id, PaperStatus.COMPLETED, progress=1.0)
         if progress_callback:
@@ -131,9 +132,23 @@ async def delete_paper(
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     from infrastructure.db.crud.paper_crud import delete_paper as db_delete_paper
 
-    faiss_store.remove_paper(paper_id)
-    faiss_store.save()
-
+    # Perform DB deletions first so that if they fail the FAISS index is left
+    # untouched.  The caller is responsible for committing the DB transaction.
     await delete_chunks_by_paper(db, paper_id)
     deleted = await db_delete_paper(db, paper_id)
-    return bool(deleted)
+    if not deleted:
+        return False
+
+    # Remove from the shared in-memory FAISS index after DB ops succeed.  A
+    # failed FAISS removal is non-fatal: it will be reconciled on next startup
+    # when the index is rebuilt from the committed DB state.
+    try:
+        faiss_store.remove_paper(paper_id)
+        faiss_store.save()
+    except Exception as exc:
+        logger.warning(
+            f"FAISS removal for paper {paper_id} failed after DB delete — "
+            f"index will be reconciled on restart: {exc}"
+        )
+
+    return True

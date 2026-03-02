@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Integer, DateTime, Text, JSON
+from sqlalchemy import String, Integer, DateTime, Text, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.database import Base
@@ -16,7 +16,13 @@ class Chunk(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    paper_id: Mapped[str] = mapped_column(String(36), index=True)
+    # Cascade: deleting a Paper removes all its Chunks at the DB level,
+    # serving as a safety net alongside delete_chunks_by_paper in the service.
+    paper_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        index=True,
+    )
     paragraph_id: Mapped[str] = mapped_column(String(32))
     text: Mapped[str] = mapped_column(Text)
     enriched_text: Mapped[str] = mapped_column(Text)

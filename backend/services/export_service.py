@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.export.pdf_exporter import export_chat_to_pdf, export_comparison_to_pdf
-from domain.export.excel_exporter import export_citations_to_excel
+from domain.export.excel_exporter import export_citations_to_excel, export_comparison_to_excel
 from infrastructure.db.crud.message_crud import get_messages_by_session
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
@@ -50,7 +50,7 @@ async def export_chat(
             output_path=output_path,
         )
     else:
-        raise ValueError(f"Unsupported export format: {format}")
+        raise ValueError(f"Unsupported export format: {export_format.value}")
 
 async def export_comparison(
     session_id: str,
@@ -69,12 +69,25 @@ async def export_comparison(
             paper_titles=paper_titles,
             output_path=output_path,
         )
+    elif export_format == ExportFormat.EXCEL:
+        output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
+        # Build structured rows from available data; fields not provided default to empty
+        paper_data = [{"title": title} for title in paper_titles]
+        return export_comparison_to_excel(
+            paper_data=paper_data,
+            output_path=output_path,
+        )
     else:
-        raise ValueError(f"Unsupported export format for comparison: {format}")
+        raise ValueError(f"Unsupported export format for comparison: {export_format.value}")
 
 def _flatten_citations(messages: list[dict]) -> list[dict]:
     citations = []
     for msg in messages:
-        for result in msg.get("havf_results", []):
-            citations.append(result)
+        raw_results = msg.get("havf_results", [])
+        if not isinstance(raw_results, list):
+            continue
+        for result in raw_results:
+            # Guard against non-dict items (e.g. null entries or malformed data)
+            if isinstance(result, dict):
+                citations.append(result)
     return citations

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.v1.schemas import PaperResponse, PaperListResponse, PaperUploadResponse
+from api.v1.routes.websocket import ws_manager
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.storage.file_storage import FileStorage
 from services.paper_service import register_paper, get_session_papers, delete_paper
@@ -121,4 +122,21 @@ async def remove_paper(
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
-    await delete_paper(paper_id, db, faiss_store)
+    deleted = await delete_paper(paper_id, db, faiss_store)
+    if not deleted:
+        from shared.errors import NotFoundError
+        raise NotFoundError("Paper", paper_id)
+    await db.commit()
+
+    # Notify all connections in the session that this paper has been removed.
+    # Fire after the commit so the client only reacts to confirmed deletions.
+    try:
+        await ws_manager.send_event(
+            session_id,
+            "paper_deleted",
+            {"paper_id": paper_id, "session_id": session_id},
+        )
+    except Exception as exc:
+        logger.warning(f"WS paper_deleted event failed for {paper_id}: {exc}")
+
+    return None

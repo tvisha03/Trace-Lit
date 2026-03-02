@@ -14,11 +14,14 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 async def _format_havf_data(response: ChatResponse) -> list[dict]:
+    # All keys must match the VerificationItem schema so historical messages
+    # deserialise correctly when later fetched via the messages endpoint.
     return [
         {
             "claim": r.claim,
             "confidence": r.confidence.value,
             "score": r.score,
+            "source_sentence": r.source_sentence,
             "paragraph_id": r.paragraph_id,
             "sentence_key": r.sentence_key,
         }
@@ -52,6 +55,9 @@ async def chat(
         role=MessageRole.USER,
         content=query,
     )
+    # Commit the user message before invoking the LLM so it is persisted even
+    # if generation fails — matching the explicit commit in the streaming path.
+    await db.commit()
     response = await generate_response(
         query=query,
         paper_ids=paper_ids,
@@ -79,20 +85,34 @@ async def chat_stream(
     faiss_store: FAISSStore,
     llm: FallbackChain,
 ):
-    paper_ids, history = await _prepare_chat_context(session_id, db)
+    """Stream chat response as SSE events.
 
-    await create_message(
-        db,
-        session_id=session_id,
-        role=MessageRole.USER,
-        content=query,
-    )
+    Saves the user message before streaming begins. The assistant message and HAVF
+    results are persisted inside stream_chat_response once all tokens have been
+    generated, while the db_session dependency is still open.
+    """
+    try:
+        paper_ids, history = await _prepare_chat_context(session_id, db)
 
-    return stream_chat_response(
-        query=query,
-        paper_ids=paper_ids,
-        history=history,
-        faiss_store=faiss_store,
-        llm=llm,
-        db_session=db,
-    )
+        await create_message(
+            db,
+            session_id=session_id,
+            role=MessageRole.USER,
+            content=query,
+        )
+        # Commit the user message before streaming so it is persisted even if
+        # the stream fails partway through.
+        await db.commit()
+
+        return stream_chat_response(
+            query=query,
+            paper_ids=paper_ids,
+            history=history,
+            faiss_store=faiss_store,
+            llm=llm,
+            db_session=db,
+            session_id=session_id,
+        )
+    except Exception as exc:
+        logger.error(f"Error during chat stream setup: {exc}")
+        raise

@@ -14,9 +14,20 @@ _cross_encoder = None
 def _get_cross_encoder():
     global _cross_encoder
     if _cross_encoder is None:
-        with timer("Load cross-encoder"):
-            from sentence_transformers import CrossEncoder
-            _cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL)
+        try:
+            with timer("Load cross-encoder"):
+                from sentence_transformers import CrossEncoder
+                _cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL)
+        except Exception as exc:
+            logger.error(
+                f"Failed to load cross-encoder model '{CROSS_ENCODER_MODEL}': {exc}. "
+                "Run scripts/download_models.py to pre-download required models."
+            )
+            raise RuntimeError(
+                f"Cross-encoder model '{CROSS_ENCODER_MODEL}' is not available. "
+                "Ensure the model is downloaded before starting the server "
+                "(run scripts/download_models.py)."
+            ) from exc
     return _cross_encoder
 
 def _update_result_confidence(best_score: float) -> ConfidenceLevel:

@@ -8,7 +8,7 @@ logger = get_logger(__name__)
 
 CONTRIBUTION_PROMPT = """You are an academic paper analysis assistant.
 Given the following paper sections, extract the paper's contributions in this exact JSON format.
-For each field, also include the paragraph_id ([P
+For each field, also include the paragraph_id ([P#]) from which the information was extracted.
 
 {
   "problem": {"text": "...", "paragraph_id": "P#"},

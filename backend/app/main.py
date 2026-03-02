@@ -5,6 +5,7 @@ from app.config import get_settings
 from app.exceptions import register_exception_handlers
 from app.lifespan import lifespan
 from api.v1.router import api_v1_router
+from api.v1.routes.websocket import router as ws_router
 
 def create_app() -> FastAPI:
     settings = get_settings()
@@ -27,6 +28,9 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     app.include_router(api_v1_router, prefix="/api/v1")
+    # WebSocket routes are mounted at the app root (no versioning) so the frontend
+    # can connect via ws://host/ws/{session_id} without a versioned prefix.
+    app.include_router(ws_router, prefix="/ws", tags=["WebSocket"])
 
     return app
 

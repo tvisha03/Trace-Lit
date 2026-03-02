@@ -17,10 +17,21 @@ class FileStorage:
         self._exports.mkdir(parents=True, exist_ok=True)
 
     def save_upload(self, file: BinaryIO, filename: str, session_id: str) -> Path:
+        content = file if isinstance(file, bytes) else file.read()
+        if not content:
+            raise ValueError(f"File '{filename}' is empty; refusing to save.")
         dest_dir = self._uploads / session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / filename
-        dest.write_bytes(file if isinstance(file, bytes) else file.read())
+        try:
+            dest.write_bytes(content)
+        except OSError as exc:
+            logger.error(f"Failed to write upload '{dest}': {exc}")
+            raise
+        # Verify the written file size matches what was provided
+        if dest.stat().st_size != len(content):
+            dest.unlink(missing_ok=True)
+            raise OSError(f"Write verification failed for '{dest}': size mismatch.")
         logger.info(f"Saved upload: {dest}")
         return dest
 

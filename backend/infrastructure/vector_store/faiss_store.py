@@ -57,6 +57,10 @@ class FAISSStore:
             np.save(str(self._index_dir / "id_map.npy"), np.array(self._id_map, dtype=object))
         logger.info(f"FAISS index saved — {self._index.ntotal} vectors")
 
+    def is_ready(self) -> bool:
+        """Return True when the index is loaded and operational."""
+        return faiss is not None and np is not None and self._index is not None
+
     def add_vectors(
         self,
         vectors: Any,
@@ -91,8 +95,12 @@ class FAISSStore:
 
         with self._lock:
             scores, indices = self._index.search(query, total_k)
+            # Snapshot the id_map while the lock is held so that a concurrent
+            # remove_paper call cannot mutate the list between the FAISS search
+            # and the index-based lookups in _filter_search_results.
+            id_map_snapshot = list(self._id_map)
 
-        return self._filter_search_results(scores[0], indices[0], paper_ids, top_k_per_paper)
+        return self._filter_search_results(scores[0], indices[0], paper_ids, top_k_per_paper, id_map_snapshot)
 
     def _filter_search_results(
         self,
@@ -100,13 +108,14 @@ class FAISSStore:
         indices: Any,
         paper_ids: list[str],
         top_k_per_paper: int,
+        id_map_snapshot: list[str],
     ) -> list[dict]:
         results_by_paper: dict[str, list[dict]] = {pid: [] for pid in paper_ids}
 
         for score, idx in zip(scores, indices):
             if idx == -1:
                 continue
-            self._add_result_if_valid(results_by_paper, idx, score, top_k_per_paper)
+            self._add_result_if_valid(results_by_paper, idx, score, top_k_per_paper, id_map_snapshot)
 
         return self._flatten_and_sort_results(results_by_paper)
 
@@ -124,8 +133,13 @@ class FAISSStore:
         idx: int,
         score: float,
         top_k_per_paper: int,
+        id_map_snapshot: list[str],
     ) -> None:
-        composite = self._id_map[idx]
+        if idx >= len(id_map_snapshot):
+            # Index was appended to the live map after the snapshot was taken;
+            # skip safely rather than raising an IndexError.
+            return
+        composite = id_map_snapshot[idx]
         paper_id, paragraph_id = composite.split("::", 1)
         if paper_id not in results_by_paper:
             return
@@ -177,7 +191,17 @@ class FAISSStore:
             return
 
         if keep_indices:
-            all_vectors = np.array([self._index.reconstruct(i) for i in keep_indices])
+            reconstructed = []
+            for i in keep_indices:
+                try:
+                    reconstructed.append(self._index.reconstruct(i))
+                except Exception as exc:
+                    logger.warning(f"Skipping vector at index {i} during rebuild: {exc}")
+            if not reconstructed:
+                self._index = faiss.IndexFlatIP(EMBEDDING_DIMENSIONS)
+                self._id_map = []
+                return
+            all_vectors = np.array(reconstructed)
             new_index = faiss.IndexFlatIP(EMBEDDING_DIMENSIONS)
             new_index.add(all_vectors)
             self._index = new_index

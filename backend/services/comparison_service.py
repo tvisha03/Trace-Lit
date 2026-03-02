@@ -16,9 +16,6 @@ async def compare_papers(
     db: AsyncSession,
     llm: FallbackChain,
 ) -> dict:
-    if len(paper_ids) < 2:
-        raise ValueError("At least 2 papers required for comparison")
-
     paper_contexts: dict[str, str] = {}
     paper_titles: list[str] = []
 

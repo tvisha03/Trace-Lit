@@ -97,4 +97,12 @@ class GroqProvider(BaseLLMProvider):
                 yield delta
 
     async def health_check(self) -> bool:
-        return bool(self._api_key)
+        # Verify the key exists and the API is reachable with a lightweight models.list call
+        if not self._api_key:
+            return False
+        try:
+            client = self._get_client()
+            await asyncio.wait_for(client.models.list(), timeout=5.0)
+            return True
+        except Exception:
+            return False

@@ -9,10 +9,13 @@ from api.v1.schemas import (
     SessionListResponse,
     WebSocketURLResponse,
 )
+from api.v1.routes.websocket import ws_manager
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.storage.file_storage import FileStorage
 from services import session_service
+from shared.logger import get_logger
 
+logger = get_logger(__name__)
 router = APIRouter()
 
 @router.post("", response_model=SessionResponse, status_code=201)
@@ -51,11 +54,10 @@ async def get_websocket_url(
     session_id: str,
     request: Request,
 ):
-    client_host = request.url.hostname or "localhost"
-    client_port = request.url.port or 8000
+    # Use request.url.netloc (host:port) so standard ports are omitted automatically
+    # and reverse-proxy forwarded headers are respected transparently.
     scheme = "wss" if request.url.scheme == "https" else "ws"
-
-    ws_url = f"{scheme}://{client_host}:{client_port}/api/v1/ws/{session_id}"
+    ws_url = f"{scheme}://{request.url.netloc}/ws/{session_id}"
 
     return WebSocketURLResponse(
         websocket_url=ws_url,
@@ -69,4 +71,28 @@ async def delete_session(
     faiss_store=Depends(get_faiss_store),
 ):
     file_storage = FileStorage()
-    await session_service.delete_full_session(db, session_id, faiss_store, file_storage)
+    deleted_paper_ids = await session_service.delete_full_session(
+        db, session_id, faiss_store, file_storage
+    )
+
+    # Broadcast deletion events top-down: each paper first (in the order they
+    # belonged to the session), then the session itself.  Events fire after the
+    # DB commit so clients only see confirmed state changes.
+    for paper_id in deleted_paper_ids:
+        try:
+            await ws_manager.send_event(
+                session_id,
+                "paper_deleted",
+                {"paper_id": paper_id, "session_id": session_id},
+            )
+        except Exception as exc:
+            logger.warning(f"WS paper_deleted event failed for {paper_id}: {exc}")
+
+    try:
+        await ws_manager.send_event(
+            session_id,
+            "session_deleted",
+            {"session_id": session_id},
+        )
+    except Exception as exc:
+        logger.warning(f"WS session_deleted event failed for {session_id}: {exc}")

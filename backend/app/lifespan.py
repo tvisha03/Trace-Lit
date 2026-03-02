@@ -8,7 +8,7 @@ from shared.utils.file_utils import ensure_directories
 from infrastructure.db.database import init_db
 from infrastructure.vector_store.faiss_store import FAISSStore
 from infrastructure.llm.fallback_chain import FallbackChain
-from workers.paper_worker import create_paper_queue, set_ws_manager
+from workers.paper_worker import create_paper_queue, set_ws_manager, set_faiss_store
 from workers.export_worker import shutdown_export_pool
 from api.v1.routes.websocket import ws_manager
 from infrastructure.db.crud.paper_crud import get_stuck_papers, update_paper_status
@@ -35,6 +35,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     paper_queue = create_paper_queue()
     set_ws_manager(ws_manager)
+    # Share the single app-level FAISS instance with paper workers so
+    # concurrent jobs don't create independent copies that overwrite each other.
+    set_faiss_store(faiss_store)
     await paper_queue.start()
     app.state.paper_queue = paper_queue
 
