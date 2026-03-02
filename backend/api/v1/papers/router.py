@@ -18,15 +18,24 @@ router = APIRouter()
 @router.post("/papers/upload", response_model=PaperUploadResponse, status_code=202)
 async def upload_papers(
     files: List[UploadFile] = File(...),
+    background: bool = True,
     db: Session = Depends(get_db),
 ) -> PaperUploadResponse:
     """Upload one or more PDF papers for processing.
 
+    Args:
+        files: PDF files to upload.
+        background: If True (default), processes papers in background
+                    with WebSocket progress. If False, processes synchronously.
+
     Returns 202 Accepted with paper IDs and WebSocket URL for progress tracking.
     """
-    from services.paper_service import process_uploads
-
-    return await process_uploads(files=files, db=db)
+    if background:
+        from services.paper_upload import process_uploads_async
+        return await process_uploads_async(files=files, db=db)
+    else:
+        from services.paper_service import process_uploads
+        return await process_uploads(files=files, db=db)
 
 
 @router.get("/papers", response_model=List[PaperSchema])
@@ -62,3 +71,16 @@ async def delete_paper(paper_id: str, db: Session = Depends(get_db)) -> None:
     from services.paper_service import delete_paper
 
     await delete_paper(paper_id=paper_id, db=db)
+
+
+@router.get("/papers/processing/status")
+async def get_processing_status():
+    """Get the status of all papers in the processing queue."""
+    from workers.paper_worker import get_paper_queue
+
+    queue = get_paper_queue()
+    return {
+        "active_count": queue.active_count,
+        "queue_size": queue.queue_size,
+        "jobs": queue.get_all_statuses(),
+    }

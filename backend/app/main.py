@@ -146,8 +146,10 @@ async def health_check() -> HealthResponse:
 # ============================================================
 
 from api.v1.router import router as v1_router
+from api.v1.websocket.router import router as ws_router
 
 app.include_router(v1_router, prefix="/api/v1")
+app.include_router(ws_router)  # WebSocket at root level: /ws/papers/progress
 
 # ─── Legacy unversioned prefix (keeps existing frontend working) ────────────
 from api.v1.papers.router import router as papers_router

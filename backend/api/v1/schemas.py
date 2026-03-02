@@ -49,6 +49,7 @@ class ExportRequest(BaseModel):
     """Request body for export endpoints."""
 
     session_id: str
+    format: Optional[str] = "pdf"  # "pdf" | "excel" | "session-excel"
 
 
 # ============================================================
@@ -186,3 +187,110 @@ class ErrorResponse(BaseModel):
         description="Error details with code, message, details",
     )
     status: str = "error"
+
+
+# ============================================================
+# Response Models — Comparison
+# ============================================================
+
+class ContributionEntry(BaseModel):
+    """A single contribution field value with source."""
+
+    value: str = "Not specified"
+    source: str = ""
+
+
+class PaperContributions(BaseModel):
+    """Structured contributions for a single paper."""
+
+    problem: ContributionEntry = Field(default_factory=ContributionEntry)
+    method: ContributionEntry = Field(default_factory=ContributionEntry)
+    dataset: ContributionEntry = Field(default_factory=ContributionEntry)
+    metrics: ContributionEntry = Field(default_factory=ContributionEntry)
+    results: ContributionEntry = Field(default_factory=ContributionEntry)
+
+
+class ComparisonRow(BaseModel):
+    """A single row in the comparison table."""
+
+    field: str
+    papers: Dict[str, ContributionEntry] = Field(default_factory=dict)
+
+
+class ComparisonResponse(BaseModel):
+    """Full comparison table response."""
+
+    session_id: str
+    papers: List[Dict[str, Any]] = Field(default_factory=list)
+    contributions: Dict[str, Any] = Field(default_factory=dict)
+    rows: List[ComparisonRow] = Field(default_factory=list)
+
+
+# ============================================================
+# Response Models — Analysis (Phase 2)
+# ============================================================
+
+class KeywordResponse(BaseModel):
+    """Keywords extracted from a paper."""
+
+    paper_id: str
+    keywords: List[str] = Field(default_factory=list)
+    cached: bool = False
+
+
+class SummaryResponse(BaseModel):
+    """Generated paper summary."""
+
+    paper_id: str
+    summary: Optional[str] = None
+    has_summary: bool = False
+
+
+class LiteratureReviewResponse(BaseModel):
+    """Generated literature review."""
+
+    session_id: str
+    review: str
+    focus_area: Optional[str] = None
+
+
+class ResearchGapEntry(BaseModel):
+    """A single identified research gap."""
+
+    gap_title: str
+    description: str
+    papers_affected: List[str] = Field(default_factory=list)
+    severity: str = "medium"
+    cluster_size: int = 0
+    limitations: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class ResearchGapsResponse(BaseModel):
+    """Research gaps analysis result."""
+
+    session_id: str
+    gaps: List[ResearchGapEntry] = Field(default_factory=list)
+    total_limitations_found: int = 0
+    clusters_formed: int = 0
+    papers_analyzed: int = 0
+
+
+# ============================================================
+# Response Models — Processing Status
+# ============================================================
+
+class ProcessingJobStatus(BaseModel):
+    """Status of a single paper processing job."""
+
+    paper_id: str
+    stage: str  # queued | extracting | chunking | embedding | indexing | complete | failed
+    progress: float = 0.0
+    error: Optional[str] = None
+
+
+class ProcessingQueueStatus(BaseModel):
+    """Status of the paper processing queue."""
+
+    active_count: int = 0
+    queue_size: int = 0
+    jobs: Dict[str, ProcessingJobStatus] = Field(default_factory=dict)

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # === LLM Models ===
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.5-flash"
     groq_model: str = "llama-3.3-70b-versatile"
 
     # === Database ===

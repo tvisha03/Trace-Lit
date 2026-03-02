@@ -2,8 +2,10 @@
 
 Provides embedding generation using all-MiniLM-L6-v2 on Apple MPS (M3 GPU).
 Falls back to CPU if MPS is unavailable.
+Includes embedding cache for repeat queries.
 """
 
+import hashlib
 from typing import List, Optional
 
 import numpy as np
@@ -51,24 +53,52 @@ class MPSAcceleratedEmbedder:
         normalize: bool = True,
         show_progress: bool = False,
     ) -> np.ndarray:
-        """Encode a list of texts into embeddings."""
+        """Encode a list of texts into embeddings.
+
+        Uses a TTL cache to avoid re-encoding identical text.
+        """
         self._ensure_model()
         if not texts:
             return np.array([])
 
-        with torch.no_grad():
-            embeddings = self._model.encode(
-                texts,
-                device=self.device,
-                batch_size=batch_size,
-                normalize_embeddings=normalize,
-                show_progress_bar=show_progress,
-            )
+        from shared.cache import get_embedding_cache
+        cache = get_embedding_cache()
 
-        if self.device == "mps":
-            torch.mps.synchronize()
+        # Separate cached vs. uncached
+        results = [None] * len(texts)
+        uncached_indices = []
 
-        return np.array(embeddings, dtype=np.float32, copy=True)
+        for i, text in enumerate(texts):
+            key = hashlib.md5(text.encode("utf-8")).hexdigest()
+            cached = cache.get(key)
+            if cached is not None:
+                results[i] = cached
+            else:
+                uncached_indices.append(i)
+
+        if uncached_indices:
+            uncached_texts = [texts[i] for i in uncached_indices]
+            with torch.no_grad():
+                embeddings = self._model.encode(
+                    uncached_texts,
+                    device=self.device,
+                    batch_size=batch_size,
+                    normalize_embeddings=normalize,
+                    show_progress_bar=show_progress,
+                )
+
+            if self.device == "mps":
+                torch.mps.synchronize()
+
+            embeddings = np.array(embeddings, dtype=np.float32, copy=True)
+
+            for local_idx, global_idx in enumerate(uncached_indices):
+                emb = embeddings[local_idx]
+                results[global_idx] = emb
+                key = hashlib.md5(texts[global_idx].encode("utf-8")).hexdigest()
+                cache.set(key, emb)
+
+        return np.array(results, dtype=np.float32)
 
     def encode_single(self, text: str, normalize: bool = True) -> np.ndarray:
         return self.encode([text], normalize=normalize)[0]

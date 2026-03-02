@@ -1,10 +1,11 @@
 # Web Framework
-fastapi>
+fastapi>=0.100.0
 uvicorn[standard]
 pydantic-settings
 python-multipart
 aiofiles
 httpx
+websockets
 
 # PDF Extraction
 pymupdf4llm>=0.0.5
@@ -15,6 +16,7 @@ pymupdf>=1.23.0
 sentence-transformers
 torch
 numpy
+
 # Vector Store
 faiss-cpu
 
@@ -33,10 +35,11 @@ openpyxl
 python-docx
 jinja2
 
-# Phase 2
+# Phase 2 — Analysis
 keybert
 scikit-learn
 
 # Utilities
 python-dotenv
 loguru
+psutil

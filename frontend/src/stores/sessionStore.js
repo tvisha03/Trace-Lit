@@ -13,8 +13,10 @@ const useSessionStore = create((set, get) => ({
     try {
       const sessions = await sessionsApi.list();
       set({ sessions, loading: false });
+      return sessions;
     } catch (err) {
       set({ error: err.message, loading: false });
+      return [];
     }
   },
 

@@ -58,12 +58,16 @@ class GeminiClient(BaseLLMProvider):
         Passing system_instruction via config (not concatenated into the user
         prompt) avoids INVALID_ARGUMENT errors on the free tier and gives
         Gemini the two-turn structure it expects.
+
+        Gemini 2.5 Flash is a thinking model: internal reasoning tokens count
+        against max_output_tokens, so enforce a practical minimum of 1024 to
+        avoid MAX_TOKENS before any response text is produced.
         """
         from google.genai import types
         return types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=temperature,
-            max_output_tokens=max_tokens,
+            max_output_tokens=max(max_tokens, 1024),
         )
 
     def _classify_error(self, e: Exception):

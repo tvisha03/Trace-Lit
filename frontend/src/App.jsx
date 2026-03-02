@@ -17,12 +17,17 @@ function App() {
   // Bootstrap: load sessions + papers, auto-create session if needed
   useEffect(() => {
     fetchPapers().catch(console.error);
+
     fetchSessions()
-      .then(() => {
-        const { sessions: s, activeSession: a } = useSessionStore.getState();
-        if (!a) {
-          if (s.length > 0) setActiveSession(s[0]);
-          else createSession('Session 1').catch(console.error);
+      .then((fetchedSessions) => {
+        // Use the returned value directly — avoids timing issues reading store state
+        const { activeSession: current } = useSessionStore.getState();
+        if (!current) {
+          if (fetchedSessions && fetchedSessions.length > 0) {
+            setActiveSession(fetchedSessions[0]);
+          } else {
+            createSession('Session 1').catch(console.error);
+          }
         }
       })
       .catch(console.error);

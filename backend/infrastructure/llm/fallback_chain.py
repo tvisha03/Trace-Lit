@@ -114,6 +114,27 @@ class RobustMultiProviderLLM:
                     response_text = remove_invalid_citations(response_text, validation["invalid_citations"])
                     warning = "Some citations were automatically corrected."
 
+                # Fallback attribution when citation coverage is too low
+                from domain.generation.fallback_attribution import (
+                    needs_fallback_attribution,
+                    fallback_attribution,
+                )
+                if needs_fallback_attribution(
+                    validation["citation_coverage"],
+                    validation["uncited_factual_sentences"],
+                ):
+                    fb = fallback_attribution(
+                        response_text=response_text,
+                        context_paragraphs=context_paragraphs,
+                    )
+                    response_text = fb["text"]
+                    if fb["warning"]:
+                        warning = (warning + " " + fb["warning"]) if warning else fb["warning"]
+                    logger.info(
+                        "Fallback attribution applied: {} auto-attributed, {} unverified",
+                        fb["auto_attributed_count"], fb["removed_count"],
+                    )
+
                 if validation["citation_coverage"] < 0.6 and not warning:
                     warning = "Low citation coverage — some claims may need manual verification."
 

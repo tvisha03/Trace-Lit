@@ -1,6 +1,7 @@
 """TraceLit — Paper Upload & Processing Pipeline.
 
 Pipeline: upload → validate → save file → extract → chunk → embed → DB + FAISS.
+Supports both synchronous (inline) and async (background queue) processing.
 """
 
 import json
@@ -169,4 +170,83 @@ async def _process_single_paper(
     logger.info(
         "Paper {} ready: {} sections, {} paragraphs",
         paper_id, len(sections_data), len(chunks),
+    )
+
+
+async def process_uploads_async(
+    files: List[UploadFile],
+    db: DBSession,
+) -> PaperUploadResponse:
+    """Validate, save, and queue uploaded PDFs for background processing.
+
+    Uses the SmartPaperQueue for concurrent processing with WebSocket
+    progress updates, instead of blocking the upload request.
+
+    Args:
+        files: List of uploaded PDF files.
+        db: Database session.
+
+    Returns:
+        PaperUploadResponse with paper IDs and status.
+    """
+    from workers.paper_worker import get_paper_queue
+
+    existing_count = db.query(Paper).count()
+    if existing_count + len(files) > settings.max_papers:
+        raise PaperLimitError(limit=settings.max_papers)
+
+    paper_ids: List[str] = []
+    queue = get_paper_queue()
+
+    for upload_file in files:
+        paper_id = generate_id()
+
+        # Validate PDF
+        header = await upload_file.read(8)
+        await upload_file.seek(0)
+        if not validate_pdf_magic_bytes(header):
+            raise InvalidFileError(
+                filename=upload_file.filename or "unknown",
+                reason="File is not a valid PDF",
+            )
+
+        content = await upload_file.read()
+        size_mb = len(content) / (1024 * 1024)
+
+        if size_mb > settings.max_upload_size_mb:
+            raise FileTooLargeError(
+                filename=upload_file.filename or "unknown",
+                size_mb=size_mb,
+                limit_mb=settings.max_upload_size_mb,
+            )
+
+        # Save file
+        filename = safe_filename(upload_file.filename or f"{paper_id}.pdf")
+        file_path = os.path.join(settings.upload_dir, f"{paper_id}_{filename}")
+        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+
+        with open(file_path, "wb") as fh:
+            fh.write(content)
+
+        logger.info("Saved PDF: {} ({:.1f} MB) → {}", filename, size_mb, file_path)
+
+        # Create DB record
+        paper = Paper(
+            id=paper_id,
+            title=filename.replace(".pdf", "").replace("_", " "),
+            file_path=file_path,
+            status="processing",
+        )
+        db.add(paper)
+        db.flush()
+        paper_ids.append(paper_id)
+
+        # Submit to background queue
+        await queue.submit(paper_id, file_path)
+
+    db.commit()
+    return PaperUploadResponse(
+        status="processing",
+        paper_ids=paper_ids,
+        websocket_url="/ws/papers/progress",
     )
