@@ -18,6 +18,8 @@ _CAPTION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_SYMBOL_ONLY = re.compile(r"^[\s✓✗×☑☐●○◯■□▪▫\-–—|,.\d<>br/\s]+$")
+
 
 @dataclass
 class ExtractedTable:
@@ -30,17 +32,47 @@ class ExtractedTable:
     table_number: int | None = None
 
 
-def _count_table_dimensions(markdown_table: str) -> tuple[int, int]:
+def _extract_data_rows(markdown_table: str) -> list[str]:
     lines = [ln for ln in markdown_table.strip().split("\n") if ln.strip()]
-    data_rows = [ln for ln in lines if not _SEPARATOR_ROW.match(ln.strip())]
-    row_count = len(data_rows)
+    return [ln for ln in lines if not _SEPARATOR_ROW.match(ln.strip())]
 
+
+def _compute_text_ratio(data_rows: list[str]) -> float:
+    total_cells = 0
+    text_cells = 0
+    for row in data_rows:
+        cells = [c.strip() for c in row.split("|")[1:-1]]
+        for cell in cells:
+            total_cells += 1
+            cleaned = re.sub(r"[\s✓✗×☑☐●○◯■□▪▫\-–—<>br/]", "", cell)
+            if len(cleaned) > 1:
+                text_cells += 1
+    return text_cells / total_cells if total_cells > 0 else 0.0
+
+
+def _get_all_cell_text(data_rows: list[str]) -> str:
+    return " ".join(
+        c.strip()
+        for row in data_rows
+        for c in row.split("|")[1:-1]
+    )
+
+
+def _count_table_dimensions(markdown_table: str) -> tuple[int, int]:
+    data_rows = _extract_data_rows(markdown_table)
+    row_count = len(data_rows)
     col_count = 0
     if data_rows:
         col_count = data_rows[0].count("|") - 1
         col_count = max(col_count, 1)
-
     return row_count, col_count
+
+
+def _has_meaningful_content(markdown_table: str) -> bool:
+    data_rows = _extract_data_rows(markdown_table)
+    if _compute_text_ratio(data_rows) < 0.15:
+        return False
+    return not _SYMBOL_ONLY.match(_get_all_cell_text(data_rows))
 
 
 def _find_caption_near(text: str, table_start: int) -> str:
@@ -69,6 +101,9 @@ def extract_tables_from_text(
         if rows < 2 or cols < 2:
             continue
 
+        if not _has_meaningful_content(raw):
+            continue
+
         table_number += 1
         caption = _find_caption_near(markdown_text, match.start())
 
@@ -84,6 +119,24 @@ def extract_tables_from_text(
     return tables
 
 
+def _validate_table_content(content: str) -> tuple[int, int] | None:
+    if not content or len(content.strip()) < 10:
+        return None
+    rows, cols = _count_table_dimensions(content)
+    if rows < 2 or cols < 2:
+        return None
+    if not _has_meaningful_content(content):
+        return None
+    return rows, cols
+
+
+def _extract_bbox(raw_table: dict) -> tuple[float, float, float, float] | None:
+    bbox_raw = raw_table.get("bbox")
+    if bbox_raw and len(bbox_raw) >= 4:
+        return tuple(bbox_raw)
+    return None
+
+
 def _process_raw_table(
     raw_table: dict | list,
     page_num: int,
@@ -92,23 +145,18 @@ def _process_raw_table(
     if not isinstance(raw_table, dict):
         return None
     content = raw_table.get("content", raw_table.get("markdown", ""))
-    if not content or len(content.strip()) < 10:
+    dims = _validate_table_content(content)
+    if not dims:
         return None
-    rows, cols = _count_table_dimensions(content)
-    if rows < 2 or cols < 2:
-        return None
-
+    rows, cols = dims
     table_counter["count"] += 1
-    bbox_raw = raw_table.get("bbox")
-    bbox = tuple(bbox_raw) if bbox_raw and len(bbox_raw) >= 4 else None
-
     return ExtractedTable(
         content=content.strip(),
         page_number=page_num,
         caption=raw_table.get("caption", f"Table {table_counter['count']}"),
         row_count=rows,
         col_count=cols,
-        bbox=bbox,
+        bbox=_extract_bbox(raw_table),
         table_number=table_counter["count"],
     )
 
@@ -159,18 +207,12 @@ def _process_pdf_table(
         md = tab.to_markdown()
     except Exception:
         return None
-
-    if not md or len(md.strip()) < 10:
+    dims = _validate_table_content(md)
+    if not dims:
         return None
-    rows, cols = _count_table_dimensions(md)
-    if rows < 2 or cols < 2:
-        return None
-
+    rows, cols = dims
     table_counter["count"] += 1
-    bbox = None
-    if hasattr(tab, "bbox") and tab.bbox:
-        bbox = tuple(tab.bbox[:4])
-
+    bbox = tuple(tab.bbox[:4]) if hasattr(tab, "bbox") and tab.bbox else None
     return ExtractedTable(
         content=md.strip(),
         page_number=page_idx,
@@ -196,7 +238,7 @@ def extract_tables_from_pdf(file_path: str | Path) -> list[ExtractedTable]:
     try:
         for page_idx, page in enumerate(doc):
             try:
-                tab_finder = page.find_tables()
+                tab_finder = page.find_tables(strategy="lines_strict")
             except Exception as exc:
                 logger.warning(f"Table detection failed on page {page_idx}: {exc}")
                 continue

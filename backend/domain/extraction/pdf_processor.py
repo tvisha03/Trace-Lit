@@ -43,6 +43,7 @@ class ExtractedDocument:
     figures: list[ExtractedFigure] = field(default_factory=list)
     tables: list[ExtractedTable] = field(default_factory=list)
     formulas: list[ExtractedFormula] = field(default_factory=list)
+    pdf_metadata: dict | None = None
 
 
 def _ensure_figure_dir(file_path: Path) -> Path:
@@ -173,7 +174,7 @@ def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
     return pages
 
 
-def _validate_pdf(file_path: Path) -> int:
+def _validate_pdf(file_path: Path) -> tuple[int, dict]:
     import pymupdf
 
     doc = pymupdf.open(str(file_path))
@@ -184,24 +185,49 @@ def _validate_pdf(file_path: Path) -> int:
             "PDF is password-protected. Please provide an unlocked version of the file.",
         )
     page_count = len(doc)
+    pdf_metadata = dict(doc.metadata) if doc.metadata else {}
     doc.close()
-    return page_count
+    logger.info(f"PDF validated: {file_path.name}, {page_count} pages, meta keys={list(pdf_metadata.keys())}")
+    return page_count, pdf_metadata
+
+
+def _get_ocr_function():
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        ocr_engine = RapidOCR()
+
+        def _ocr_wrapper(img_path, _lang=None, **_kwargs):
+            result, _elapse = ocr_engine(img_path)
+            if not result:
+                return ""
+            return "\n".join(line[1] for line in result if line and len(line) > 1)
+
+        logger.info("RapidOCR loaded for scanned page fallback")
+        return _ocr_wrapper
+    except ImportError:
+        logger.info("RapidOCR not available — OCR disabled for scanned pages")
+        return None
 
 
 def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
-    import pymupdf.layout  # pylint: disable=unused-import
     import pymupdf4llm
 
-    return pymupdf4llm.to_markdown(
-        str(file_path),
-        page_chunks=True,
-        write_images=True,
-        image_path=str(figure_dir),
-        image_format=FIGURE_IMAGE_FORMAT,
-        image_size_limit=FIGURE_MIN_SIZE_RATIO,
-        dpi=FIGURE_IMAGE_DPI,
-        force_text=True,
-    )
+    ocr_fn = _get_ocr_function()
+
+    kwargs = {
+        "page_chunks": True,
+        "write_images": True,
+        "image_path": str(figure_dir),
+        "image_format": FIGURE_IMAGE_FORMAT,
+        "image_size_limit": FIGURE_MIN_SIZE_RATIO,
+        "dpi": FIGURE_IMAGE_DPI,
+        "force_text": True,
+    }
+
+    if ocr_fn:
+        kwargs["ocr"] = ocr_fn
+
+    return pymupdf4llm.to_markdown(str(file_path), **kwargs)
 
 
 def _assemble_document(
@@ -209,6 +235,7 @@ def _assemble_document(
     page_chunks: list[dict],
     page_count: int,
     figure_dir: Path,
+    pdf_metadata: dict | None = None,
 ) -> ExtractedDocument:
     md_text = "\n\n".join(p.get("text", "") for p in page_chunks)
 
@@ -243,6 +270,7 @@ def _assemble_document(
         figures=all_figures,
         tables=all_tables,
         formulas=all_formulas,
+        pdf_metadata=pdf_metadata,
     )
 
 
@@ -252,10 +280,10 @@ def extract_pdf(file_path: str | Path) -> ExtractedDocument:
         raise PDFExtractionError(file_path.name, "file not found")
 
     try:
-        page_count = _validate_pdf(file_path)
+        page_count, pdf_metadata = _validate_pdf(file_path)
         figure_dir = _ensure_figure_dir(file_path)
         page_chunks = _run_layout_extraction(file_path, figure_dir)
-        return _assemble_document(file_path, page_chunks, page_count, figure_dir)
+        return _assemble_document(file_path, page_chunks, page_count, figure_dir, pdf_metadata)
 
     except PDFExtractionError:
         raise

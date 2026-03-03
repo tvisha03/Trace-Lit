@@ -67,7 +67,7 @@ async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
         extracted = extract_pdf(paper.file_path)
 
     sections = parse_sections(extracted.markdown_text)
-    metadata = extract_metadata(extracted.markdown_text)
+    metadata = extract_metadata(extracted.markdown_text, pdf_metadata=extracted.pdf_metadata)
 
     return extracted, sections, metadata
 
@@ -302,7 +302,8 @@ async def _run_chunking_phase(
     )
 
     await _update_status_with_progress(
-        db, paper_id, PaperStatus.COMPLETED, 1.0, progress_callback
+        db, paper_id, PaperStatus.COMPLETED, 1.0, progress_callback,
+        chunk_count=chunk_count,
     )
 
     return chunk_count

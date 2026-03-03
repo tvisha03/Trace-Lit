@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from shared.logger import get_logger
@@ -33,9 +34,12 @@ _COMMON_SYMBOLS = re.compile(
     r"mathbb|mathcal|mathbf|mathrm|hat|bar|tilde|vec|dot|ddot|"
     r"left|right|Big|big|lim|max|min|sup|inf|log|ln|exp|sin|cos|tan|"
     r"leq|geq|neq|approx|equiv|sim|propto|forall|exists|in|subset|cup|cap)"
-    r"|[∑∏∫∂∇∞≤≥≠≈±×÷√∈∀∃⊂⊃∪∩]"
+    r"|[∑∏∫∂∇∞≈±÷√∀∃⊂⊃∪∩]"
     r")",
 )
+
+_TABLE_GARBAGE = re.compile(r"[|].*[|]|<br>|<tr|<td|<th")
+_CHECKMARK_ONLY = re.compile(r"^[\s✓✗×☑☐●○◯■□▪▫\-–—|,.\d\s]+$")
 
 _MIN_FORMULA_LENGTH = 3
 _MAX_INLINE_LENGTH = 500
@@ -56,6 +60,17 @@ def _clean_formula(raw: str) -> str:
     return cleaned
 
 
+def _is_table_fragment(content: str) -> bool:
+    if _TABLE_GARBAGE.search(content):
+        return True
+    if _CHECKMARK_ONLY.match(content):
+        return True
+    pipe_count = content.count("|")
+    if pipe_count >= 2:
+        return True
+    return False
+
+
 def _has_common_symbols(content: str) -> bool:
     return bool(_COMMON_SYMBOLS.search(content))
 
@@ -72,6 +87,8 @@ def _has_numerical_relation(content: str) -> bool:
 
 def _is_meaningful_formula(content: str) -> bool:
     if len(content) < _MIN_FORMULA_LENGTH:
+        return False
+    if _is_table_fragment(content):
         return False
     if _has_common_symbols(content):
         return True
@@ -112,7 +129,7 @@ def _find_latex_environments(text: str) -> list[ExtractedFormula]:
         formulas.append(ExtractedFormula(
             content=full,
             page_number=None,
-            formula_type="environment",
+            formula_type="display",
             context=env_name,
         ))
 
@@ -157,24 +174,35 @@ def _find_inline_equations(text: str) -> list[ExtractedFormula]:
     return formulas
 
 
+_UNICODE_MATH_CHARS = set("∑∏∫∂∇∞≈±÷√∀∃⊂⊃∪∩")
+
+
+def _is_table_like_line(line: str) -> bool:
+    if "|" in line and line.count("|") >= 2:
+        return True
+    return "<br>" in line or "<tr" in line
+
+
+def _has_unicode_math(line: str) -> bool:
+    return any(ch in _UNICODE_MATH_CHARS for ch in line)
+
+
 def _find_unicode_equations(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
-
-    pattern = re.compile(
-        r"[A-Za-z0-9\s]*[∑∏∫∂∇∞≤≥≠≈±×÷√∈∀∃⊂⊃∪∩][^\n]{3,80}"
-    )
-
-    for match in pattern.finditer(text):
-        content = _clean_formula(match.group(0))
-        if not _is_meaningful_formula(content):
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or len(stripped) < 5:
             continue
-
+        if _is_table_like_line(stripped) or not _has_unicode_math(stripped):
+            continue
+        content = _clean_formula(stripped)
+        if len(content) > 200 or not _is_meaningful_formula(content):
+            continue
         formulas.append(ExtractedFormula(
             content=content,
             page_number=None,
             formula_type="unicode",
         ))
-
     return formulas
 
 
@@ -189,12 +217,12 @@ def _deduplicate_formulas(formulas: list[ExtractedFormula]) -> list[ExtractedFor
     return deduplicated
 
 
+_FORMULA_TYPES = ("display", "inline", "numbered", "unicode")
+
+
 def _count_formula_types(formulas: list[ExtractedFormula]) -> dict[str, int]:
-    return {
-        "display": sum(1 for f in formulas if f.formula_type in ("display", "environment")),
-        "inline": sum(1 for f in formulas if f.formula_type == "inline"),
-        "numbered": sum(1 for f in formulas if f.formula_type == "numbered"),
-    }
+    counts = Counter(f.formula_type for f in formulas)
+    return {t: counts.get(t, 0) for t in _FORMULA_TYPES}
 
 
 def extract_formulas(markdown_text: str) -> list[ExtractedFormula]:
@@ -210,7 +238,8 @@ def extract_formulas(markdown_text: str) -> list[ExtractedFormula]:
 
     logger.info(
         f"Extracted {len(deduplicated)} formulas "
-        f"(display={counts['display']}, inline={counts['inline']}, numbered={counts['numbered']})"
+        f"(display={counts['display']}, inline={counts['inline']}, "
+        f"numbered={counts['numbered']}, unicode={counts['unicode']})"
     )
     return deduplicated
 
