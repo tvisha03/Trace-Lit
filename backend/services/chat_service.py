@@ -137,20 +137,26 @@ async def chat(
         llm=llm,
         db_session=db,
     )
-    # Validate response has citations - Layer 2 of HAVF hallucination prevention.
-    # Build valid paragraph IDs from the actually retrieved chunks (not HAVF
-    # results) so every cited [P#] can be checked regardless of its HAVF score.
-    retrieved_para_ids = [
-        str(r.paragraph_id)
-        for r in (response.retrieved_chunks or [])
-        if r.paragraph_id
-    ]
-    validated_content = await validate_response_has_citations(
-        response.content,
-        [{"paper_id": pid} for pid in paper_ids],
-        retrieved_paragraph_ids=retrieved_para_ids or None,
-    )
-    response.content = validated_content
+    # BUG-1 fix: Skip citation validation for metadata queries.  Metadata
+    # responses (paper titles, authors, year, etc.) are answered from DB
+    # fields, not from retrieved chunks, so they legitimately have no [P#]
+    # citations.  Forcing validation would overwrite them with an apology.
+    is_metadata = not response.retrieved_chunks and not response.havf_results
+    if not is_metadata:
+        # Validate response has citations - Layer 2 of HAVF hallucination prevention.
+        # Build valid paragraph IDs from the actually retrieved chunks (not HAVF
+        # results) so every cited [P#] can be checked regardless of its HAVF score.
+        retrieved_para_ids = [
+            str(r.paragraph_id)
+            for r in (response.retrieved_chunks or [])
+            if r.paragraph_id
+        ]
+        validated_content = await validate_response_has_citations(
+            response.content,
+            [{"paper_id": pid} for pid in paper_ids],
+            retrieved_paragraph_ids=retrieved_para_ids or None,
+        )
+        response.content = validated_content
     await create_message(
         db,
         session_id=session_id,

@@ -11,7 +11,6 @@ from infrastructure.storage.file_storage import FileStorage
 from services.paper_service import register_paper, get_session_papers, delete_paper, mark_paper_failed
 from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB, MAX_PAPERS_PER_SESSION
 from shared.errors import FileValidationError, ForbiddenError, NotFoundError, TraceLitError
-from shared.utils.file_utils import get_file_size_mb
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
 from shared.logger import get_logger
 
@@ -53,6 +52,20 @@ async def upload_papers(
             f"Session already has {len(existing_papers)} paper(s). "
             f"Maximum {MAX_PAPERS_PER_SESSION} papers per session; "
             f"you can upload at most {max(0, allowed)} more."
+        )
+
+    # EDGE-CASE: Detect duplicate filenames within the same session to prevent
+    # users from accidentally re-uploading the same paper.  Comparing by
+    # filename is a lightweight heuristic — not a content hash — but catches
+    # the most common accidental duplicates without adding latency.
+    existing_filenames = {p.filename for p in existing_papers}
+    incoming_filenames = [f.filename for f in files if f.filename]
+    duplicates = [fn for fn in incoming_filenames if fn in existing_filenames]
+    if duplicates:
+        dup_list = ", ".join(duplicates[:5])
+        raise FileValidationError(
+            f"Duplicate file(s) already exist in this session: {dup_list}. "
+            "Please rename the file or remove the existing paper first."
         )
 
     file_storage = FileStorage()

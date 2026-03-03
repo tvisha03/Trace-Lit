@@ -169,11 +169,11 @@ class FAISSStore:
         if not self._is_initialized():
             return
 
-        # Safety: save a backup before destructive rebuild so the index
-        # can be recovered if the process crashes mid-operation.
-        self._backup_index()
-
+        # EDGE-CASE fix: Both backup and rebuild must happen inside the lock
+        # to prevent concurrent add_vectors() calls from mutating the index
+        # between the backup snapshot and the rebuild.
         with self._lock:
+            self._backup_index()
             self._remove_paper_from_index(paper_id)
 
     def _is_initialized(self) -> bool:

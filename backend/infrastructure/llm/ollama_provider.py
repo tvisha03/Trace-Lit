@@ -82,9 +82,28 @@ class OllamaProvider(BaseLLMProvider):
             raise ProviderTimeoutError("ollama", self._timeout)
 
     async def health_check(self) -> bool:
+        """Check that Ollama is reachable AND the configured model is pulled.
+
+        Returns False when the server is down or the model is not available,
+        allowing the health endpoint to surface model-level unavailability.
+        """
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(f"{self._base_url}/api/tags")
-                return resp.status_code == 200
+                if resp.status_code != 200:
+                    return False
+                # Verify the configured model exists in the list of pulled models.
+                data = resp.json()
+                models = data.get("models", [])
+                model_names = [m.get("name", "") for m in models]
+                # Ollama model names include a tag (e.g. "llama3.2:3b"); match
+                # with or without the default ":latest" suffix.
+                if any(self._model in name for name in model_names):
+                    return True
+                logger.warning(
+                    f"Ollama server is up but model '{self._model}' not found. "
+                    f"Available models: {model_names}"
+                )
+                return False
         except Exception:
             return False

@@ -75,6 +75,18 @@ def _build_chunk(
     else:
         paragraph_id = f"P{paragraph_idx}"
     sentences = split_into_sentences(text)
+
+    # EDGE-CASE: If sentence splitting yields no sentences (e.g. text is only
+    # whitespace or special characters after splitting), log a warning and
+    # treat the entire text as a single sentence so the chunk still has a
+    # usable sentence_map for HAVF verification.
+    if not sentences:
+        logger.warning(
+            f"Zero sentences extracted from chunk {paragraph_id} — "
+            "falling back to full text as a single sentence."
+        )
+        sentences = [text]
+
     sentence_map = {}
     offset = 0
 

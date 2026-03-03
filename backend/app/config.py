@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     HAVF_MEDIUM_THRESHOLD: float = 0.65
     HAVF_CROSS_ENCODER_THRESHOLD: float = 0.75
 
+    # Cross-encoder model — override via CROSS_ENCODER_MODEL env var to use
+    # a different model without changing code (Improvement fix).
+    CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

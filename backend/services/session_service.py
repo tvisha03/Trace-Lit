@@ -12,7 +12,8 @@ from infrastructure.db.crud.paper_crud import get_papers_by_session, delete_pape
 from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
 from infrastructure.storage.file_storage import FileStorage
 from infrastructure.vector_store.faiss_store import FAISSStore
-from shared.errors import NotFoundError
+from shared.enums import PaperStatus
+from shared.errors import NotFoundError, TraceLitError
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -84,6 +85,28 @@ async def delete_full_session(
     """
     papers = await get_papers_by_session(db, session_id)
     paper_ids = [str(p.id) for p in papers]
+
+    # BUG-4 fix: Refuse to delete a session that has papers actively being
+    # processed.  Deleting mid-processing would leave FAISS in an inconsistent
+    # state and crash the worker.  Return 409 Conflict so the frontend can
+    # surface a meaningful error message.
+    _processing_statuses = {
+        PaperStatus.QUEUED,
+        PaperStatus.EXTRACTING,
+        PaperStatus.CHUNKING,
+        PaperStatus.EMBEDDING,
+    }
+    active_papers = [p for p in papers if p.status in _processing_statuses]
+    if active_papers:
+        active_ids = [str(p.id) for p in active_papers]
+        raise TraceLitError(
+            message=(
+                f"Cannot delete session '{session_id}': "
+                f"{len(active_papers)} paper(s) are still processing ({', '.join(active_ids)}). "
+                "Please wait for processing to complete or fail before deleting."
+            ),
+            status_code=409,
+        )
 
     # Remove FAISS vectors, DB chunks, and paper records for every paper in
     # the session.  Explicit paper deletion provides defence-in-depth on top

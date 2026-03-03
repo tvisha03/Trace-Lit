@@ -1,6 +1,7 @@
 from domain.verification.havf import verify_response
 from domain.retrieval.retriever import retrieve
 from infrastructure.vector_store.faiss_store import FAISSStore
+from app.config import get_settings
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,7 +19,17 @@ async def verify_text_against_papers(
         db_session=db_session,
     )
 
-    havf_results = await verify_response(text, chunks)
+    # BUG-3 fix: Forward runtime-configurable HAVF thresholds from Settings
+    # so the standalone verification endpoint honours the same overrides as
+    # the chat pipeline (chat_engine.py + streaming.py already do this).
+    settings = get_settings()
+    havf_results = await verify_response(
+        text,
+        chunks,
+        high_threshold=settings.HAVF_HIGH_THRESHOLD,
+        medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
+        cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
+    )
 
     return [
         {

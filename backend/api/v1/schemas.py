@@ -115,6 +115,9 @@ class MessageResponse(BaseModel):
 
 class MessageListResponse(BaseModel):
     messages: list[MessageResponse]
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
 
 class CompareRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)

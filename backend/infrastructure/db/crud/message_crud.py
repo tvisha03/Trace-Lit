@@ -1,5 +1,5 @@
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.message import Message
@@ -11,17 +11,34 @@ async def create_message(db: AsyncSession, **kwargs) -> Message:
     return msg
 
 async def get_messages_by_session(
-    db: AsyncSession, session_id: str, limit: int | None = None
+    db: AsyncSession,
+    session_id: str,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> list[Message]:
+    """Retrieve messages for a session, ordered by creation time ascending.
+
+    Supports optional ``limit`` and ``offset`` for pagination.
+    """
     stmt = (
         select(Message)
         .where(Message.session_id == session_id)
         .order_by(Message.created_at.asc())
     )
+    if offset:
+        stmt = stmt.offset(offset)
     if limit:
         stmt = stmt.limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+async def count_messages_by_session(
+    db: AsyncSession, session_id: str,
+) -> int:
+    """Return the total number of messages in a session (for pagination metadata)."""
+    stmt = select(func.count()).select_from(Message).where(Message.session_id == session_id)
+    result = await db.execute(stmt)
+    return result.scalar_one()
 
 async def get_recent_messages(
     db: AsyncSession, session_id: str, max_turns: int = 5

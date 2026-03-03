@@ -1,5 +1,4 @@
 import uuid
-from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +14,6 @@ from infrastructure.db.crud.paper_crud import (
     get_papers_by_session,
 )
 from infrastructure.db.crud.chunk_crud import create_chunks_bulk
-from infrastructure.db.models.chunk import Chunk as ChunkModel
 from infrastructure.vector_store.faiss_store import FAISSStore
 from shared.enums import PaperStatus
 from shared.logger import get_logger
@@ -185,6 +183,11 @@ async def process_paper(
             logger.warning(
                 f"Could not clean up upload for paper {paper_id}: {cleanup_exc}"
             )
+
+        # BUG-10 fix: Re-raise so the worker's except block can trigger its
+        # own rollback and logging.  Without this, the worker's try/except was
+        # dead code because process_paper swallowed all exceptions.
+        raise
 
 
 async def get_session_papers(

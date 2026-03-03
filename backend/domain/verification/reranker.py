@@ -1,6 +1,6 @@
 
 from shared.constants import (
-    CROSS_ENCODER_MODEL,
+    CROSS_ENCODER_MODEL as _DEFAULT_CROSS_ENCODER_MODEL,
     HAVF_CROSS_ENCODER_THRESHOLD,
 )
 from shared.enums import ConfidenceLevel
@@ -17,13 +17,24 @@ def _get_cross_encoder():
     Returning None instead of raising allows HAVF to degrade gracefully to
     Level 1 (embedding similarity) rather than crashing the verification
     pipeline entirely when the model is unavailable (CRT-003 fix).
+
+    Uses the model name from Settings (configurable via env var) with a
+    fallback to the compile-time constant for non-app contexts (scripts, tests).
     """
     global _cross_encoder
     if _cross_encoder is None:
         try:
+            # Prefer runtime setting; fall back to constant if Settings
+            # cannot be resolved (e.g. during unit tests or scripts).
+            try:
+                from app.config import get_settings
+                model_name = get_settings().CROSS_ENCODER_MODEL
+            except Exception:
+                model_name = _DEFAULT_CROSS_ENCODER_MODEL
+
             with timer("Load cross-encoder"):
                 from sentence_transformers import CrossEncoder
-                _cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL)
+                _cross_encoder = CrossEncoder(model_name)
         except Exception as exc:
             logger.error(
                 f"Cross-encoder unavailable: {exc}. "
@@ -50,12 +61,16 @@ def _update_result_confidence(
 ) -> ConfidenceLevel:
     """Determine confidence from a cross-encoder score.
 
+    Per the HAVF specification, Level 2 (cross-encoder) promotes uncertain
+    claims to MEDIUM when the score meets the threshold, otherwise LOW.
+    Level 1 already handles HIGH confidence assignments.
+
     Threshold defaults to the constant but can be overridden when the caller
     forwards runtime-configurable settings (HI-003).
     """
     if best_score >= cross_encoder_threshold:
-        return ConfidenceLevel.HIGH
-    return ConfidenceLevel.MEDIUM
+        return ConfidenceLevel.MEDIUM
+    return ConfidenceLevel.LOW
 
 def _build_candidates(claim: str, result: dict, source_sentences: list[dict] | None, top_k: int) -> list[tuple[str, str]]:
     candidates = []
@@ -141,6 +156,6 @@ def rerank_claims(
         for result in uncertain_results
     ]
 
-    high_count = sum(1 for r in refined if r["confidence"] == ConfidenceLevel.HIGH)
-    logger.info(f"Level 2 reranking: promoted {high_count}/{len(refined)} to HIGH")
+    medium_count = sum(1 for r in refined if r["confidence"] == ConfidenceLevel.MEDIUM)
+    logger.info(f"Level 2 reranking: promoted {medium_count}/{len(refined)} to MEDIUM")
     return refined

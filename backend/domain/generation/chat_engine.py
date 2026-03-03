@@ -94,6 +94,14 @@ async def generate_response(
             user_prompt=user_prompt,
         )
 
+    # EDGE-CASE: Guard against LLM providers returning empty or whitespace-only
+    # responses (e.g. safety filters, context-length overflows).  Raise early
+    # so the caller gets a clean error instead of propagating empty text through
+    # HAVF and citation validation.
+    if not response_text or not response_text.strip():
+        from shared.errors import EmptyResponseError
+        raise EmptyResponseError(provider.value)
+
     settings = get_settings()
     havf_results = await verify_response(
         response_text,

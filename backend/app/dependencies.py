@@ -9,10 +9,17 @@ from infrastructure.llm.fallback_chain import FallbackChain
 from workers.paper_queue import SmartPaperQueue
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Yield an async DB session for the request lifetime.
+
+    BUG-9 fix: The session no longer auto-commits on yield exit.  Services
+    are responsible for calling ``await session.commit()`` explicitly so each
+    route can control its own transaction boundaries.  Auto-commit was causing
+    double commits (once in the service, once here) which is harmless for
+    SQLite but semantically incorrect and masks missing commits.
+    """
     async with async_session_factory() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise

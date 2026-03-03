@@ -13,8 +13,8 @@ from api.v1.schemas import (
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.llm.fallback_chain import FallbackChain
 from services.chat_service import chat, chat_stream
-from infrastructure.db.crud.message_crud import get_messages_by_session
-from shared.errors import NotFoundError, InsufficientDataError, TraceLitError
+from infrastructure.db.crud.message_crud import get_messages_by_session, count_messages_by_session
+from shared.errors import TraceLitError
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
 from shared.logger import get_logger
 
@@ -114,9 +114,20 @@ async def send_message_stream(
 @router.get("/messages", response_model=MessageListResponse)
 async def get_messages(
     session_id: str,
+    limit: int | None = None,
+    offset: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    messages = await get_messages_by_session(db, session_id)
+    """Retrieve messages for a session with optional pagination.
+
+    Query parameters:
+    - ``limit``: Maximum number of messages to return (default: all).
+    - ``offset``: Number of messages to skip from the start (default: 0).
+    """
+    messages = await get_messages_by_session(
+        db, session_id, limit=limit, offset=offset,
+    )
+    total = await count_messages_by_session(db, session_id)
     items = [
         MessageResponse(
             id=str(m.id),
@@ -132,4 +143,9 @@ async def get_messages(
         )
         for m in messages
     ]
-    return MessageListResponse(messages=items)
+    return MessageListResponse(
+        messages=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
