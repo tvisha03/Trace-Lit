@@ -7,21 +7,10 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Maximum query length accepted by the classifier.  Truncating here prevents
-# pathologically-large inputs from inflating pattern-match costs or bypassing
-# classification by burying keywords deep in noisy content.
 _MAX_QUERY_CHARS = 5_000
 
 
 def _sanitize_query(query: str) -> str:
-    """Strip control characters and cap length before pattern matching.
-
-    User queries pass through the classifier before being forwarded to the
-    LLM.  Sanitising at this layer prevents malformed input from influencing
-    retrieval behaviour through classifier side-effects.
-    """
-    # Remove null bytes and non-printable control characters while keeping
-    # standard whitespace (\n, \r, \t) that appear legitimately in queries.
     sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", query)
     return sanitized[:_MAX_QUERY_CHARS]
 
@@ -118,10 +107,6 @@ def _compute_scores(
     _apply_contextual_boosts(scores, query, query_lower, history, paper_count)
     return scores
 
-# Minimum confidence required to trust a non-SIMPLE_QA classification.
-# When every pattern fires weakly and the winning score is still below this
-# threshold the classifier defaults to SIMPLE_QA so straightforward questions
-# receive broad retrieval rather than being silently mis-routed (MED-001 fix).
 _MIN_CLASSIFICATION_CONFIDENCE = 0.3
 
 
@@ -130,8 +115,6 @@ def classify_query(
     history: list | None = None,
     paper_count: int = 1,
 ) -> QueryClassification:
-    # Sanitize before any pattern matching so control characters and
-    # oversized payloads cannot influence classification outcomes.
     query = _sanitize_query(query)
     query_lower = query.lower().strip()
 
@@ -140,8 +123,6 @@ def classify_query(
     best_type = max(scores, key=lambda k: scores[k])
     best_score = scores[best_type]
 
-    # If confidence is too low for a specialised route, fall back to SIMPLE_QA
-    # so the query gets standard retrieval rather than a potentially wrong route.
     if best_type != QueryType.SIMPLE_QA and best_score < _MIN_CLASSIFICATION_CONFIDENCE:
         logger.info(
             f"Query confidence {best_score:.2f} below threshold "
@@ -179,3 +160,4 @@ def _build_classification(
         retrieval_top_k=top_k,
         balanced=balanced,
     )
+

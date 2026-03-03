@@ -58,7 +58,6 @@ class FAISSStore:
         logger.info(f"FAISS index saved — {self._index.ntotal} vectors")
 
     def is_ready(self) -> bool:
-        """Return True when the index is loaded and operational."""
         return faiss is not None and np is not None and self._index is not None
 
     def add_vectors(
@@ -73,8 +72,6 @@ class FAISSStore:
         if vectors.shape[0] != len(ids):
             raise ValueError("vectors and ids must have the same length")
 
-        # GAP-5: Refuse to grow the index beyond FAISS_MAX_VECTORS to prevent
-        # unbounded memory consumption on resource-constrained hardware.
         current_total = self._index.ntotal if self._index else 0
         if current_total + vectors.shape[0] > FAISS_MAX_VECTORS:
             raise ValueError(
@@ -83,12 +80,9 @@ class FAISSStore:
                 "Delete unused papers to free space."
             )
 
-        # CRT-003: Guarantee L2-normalised vectors for IndexFlatIP (cosine sim).
-        # encode_texts already passes normalize_embeddings=True, but this is a
-        # safety net for any call-site that bypasses the encoder.
         vecs = vectors.astype(np.float32)
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        norms[norms == 0] = 1  # Avoid division by zero for zero vectors.
+        norms[norms == 0] = 1
         vecs = vecs / norms
 
         with self._lock:
@@ -113,11 +107,6 @@ class FAISSStore:
 
         with self._lock:
             scores, indices = self._index.search(query, total_k)
-            # The id_map snapshot MUST be taken inside the lock.  Taking it
-            # outside would open a window where a concurrent add_vectors() or
-            # remove_paper() call mutates self._id_map after the FAISS search
-            # returns its indices, causing index-to-id mismatches for newly
-            # added or removed vectors.  The lock serialises both operations.
             id_map_snapshot = list(self._id_map)
 
         return self._filter_search_results(scores[0], indices[0], paper_ids, top_k_per_paper, id_map_snapshot)
@@ -140,7 +129,6 @@ class FAISSStore:
         return self._flatten_and_sort_results(results_by_paper)
 
     def _flatten_and_sort_results(self, results_by_paper: dict[str, list[dict]]) -> list[dict]:
-        """Flatten results from all papers and sort by score."""
         flat: list[dict] = []
         for hits in results_by_paper.values():
             flat.extend(hits)
@@ -156,8 +144,6 @@ class FAISSStore:
         id_map_snapshot: list[str],
     ) -> None:
         if idx >= len(id_map_snapshot):
-            # Index was appended to the live map after the snapshot was taken;
-            # skip safely rather than raising an IndexError.
             return
         composite = id_map_snapshot[idx]
         paper_id, paragraph_id = composite.split("::", 1)
@@ -171,23 +157,14 @@ class FAISSStore:
             })
 
     def remove_paper(self, paper_id: str) -> None:
-        """Remove all vectors associated with a paper from the FAISS index.
-
-        Saves a backup of the index before rebuilding so that a crash
-        mid-rebuild does not permanently corrupt the index.
-        """
         if not self._is_initialized():
             return
 
-        # EDGE-CASE fix: Both backup and rebuild must happen inside the lock
-        # to prevent concurrent add_vectors() calls from mutating the index
-        # between the backup snapshot and the rebuild.
         with self._lock:
             self._backup_index()
             self._remove_paper_from_index(paper_id)
 
     def _is_initialized(self) -> bool:
-        """Check if FAISS and numpy are available and index is initialized."""
         if faiss is None:
             logger.error("Cannot remove paper: faiss not available")
             return False
@@ -200,20 +177,17 @@ class FAISSStore:
         return True
 
     def _remove_paper_from_index(self, paper_id: str) -> None:
-        """Remove all vectors associated with a paper from the index."""
         keep_indices = self._get_indices_to_keep(paper_id)
 
         if len(keep_indices) < len(self._id_map):
             self._rebuild_index(keep_indices)
 
     def _get_indices_to_keep(self, paper_id: str) -> list[int]:
-        """Get the list of indices that should be kept after removing a paper."""
         return [
             i for i, cid in enumerate(self._id_map) if not cid.startswith(f"{paper_id}::")
         ]
 
     def _rebuild_index(self, keep_indices: list[int]) -> None:
-        """Rebuild the index with only the specified indices."""
         if self._index is None:
             logger.error("Index is not initialized during rebuild")
             return
@@ -243,9 +217,7 @@ class FAISSStore:
         return self._index.ntotal if self._index else 0
 
     def get_stats(self) -> dict:
-        """Return index statistics for health/monitoring endpoints."""
         total = self.total_vectors
-        # Each float32 vector occupies EMBEDDING_DIMENSIONS * 4 bytes.
         memory_bytes = total * EMBEDDING_DIMENSIONS * 4
         return {
             "total_vectors": total,
@@ -255,11 +227,6 @@ class FAISSStore:
         }
 
     def _backup_index(self) -> None:
-        """Write a .bak copy of the FAISS index files before a destructive operation.
-
-        Best-effort: failures are logged but do not block the caller because
-        the primary index file is still intact at this point.
-        """
         try:
             index_path = self._index_dir / "index.faiss"
             map_path = self._index_dir / "id_map.npy"
@@ -272,3 +239,4 @@ class FAISSStore:
             logger.info("FAISS backup created before rebuild")
         except Exception as exc:
             logger.warning(f"Could not create FAISS backup: {exc}")
+

@@ -22,9 +22,6 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
-# CRT-003/MED-004: Chat calls the LLM + HAVF verification pipeline which is
-# both expensive and quota-limited.  Cap each client IP to 15 requests/min to
-# prevent accidental DoS or rapid API-quota exhaustion.
 _chat_limiter = SlidingWindowRateLimiter(
     max_calls=15, window_seconds=60.0, resource_name="chat requests",
 )
@@ -40,19 +37,13 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
-    """Non-streaming chat endpoint. Returns a fully-formed ChatResponse."""
     _chat_limiter.enforce(request)
     llm = _get_llm(request)
     try:
-        response = await chat(session_id, body.query, db, faiss_store, llm)
+        response = await chat(session_id, body.query, db, faiss_store, llm, keywords=body.keywords)
     except TraceLitError:
-        # TraceLitError subclasses (NotFoundError, InsufficientDataError, etc.)
-        # are handled by the global exception handler in app/exceptions.py.
         raise
     except Exception as exc:
-        # Catch-all for LLM failures, FAISS errors, and unexpected exceptions.
-        # Log full details server-side; return a safe, generic message to the
-        # client so no internal state is leaked (MINOR-002 fix).
         logger.error(f"Chat failed for session {session_id}: {exc}", exc_info=True)
         raise TraceLitError(
             message="An error occurred while processing your request. Please try again.",
@@ -69,6 +60,7 @@ async def send_message(
                 source_sentence=r.source_sentence,
                 paragraph_id=r.paragraph_id,
                 sentence_key=r.sentence_key,
+                verification_method=r.verification_method.value if r.verification_method else None,
             )
             for r in response.havf_results
         ],
@@ -84,23 +76,9 @@ async def send_message_stream(
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
-    """Streaming chat endpoint using Server-Sent Events (SSE).
-
-    The response body is a stream of ``data: <json>\\n\\n`` lines.  Each line
-    carries a JSON object with a ``type`` field that determines its shape:
-
-    - ``query_type``  → SSEQueryTypeEvent
-    - ``sources``     → list[SSESourceItem]
-    - ``token``       → SSETokenEvent  (one per LLM token)
-    - ``havf``        → SSEHavfEvent   (after all tokens)
-    - ``done``        → SSEDoneEvent
-    - ``error``       → SSEErrorEvent
-
-    See ``api/v1/schemas.py`` for the Pydantic shapes of each event type.
-    """
     _chat_limiter.enforce(request)
     llm = _get_llm(request)
-    generator = await chat_stream(session_id, body.query, db, faiss_store, llm)
+    generator = await chat_stream(session_id, body.query, db, faiss_store, llm, keywords=body.keywords)
     return StreamingResponse(
         generator,
         media_type="text/event-stream",
@@ -118,12 +96,6 @@ async def get_messages(
     offset: int | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Retrieve messages for a session with optional pagination.
-
-    Query parameters:
-    - ``limit``: Maximum number of messages to return (default: all).
-    - ``offset``: Number of messages to skip from the start (default: 0).
-    """
     messages = await get_messages_by_session(
         db, session_id, limit=limit, offset=offset,
     )
@@ -149,3 +121,4 @@ async def get_messages(
         limit=limit,
         offset=offset,
     )
+

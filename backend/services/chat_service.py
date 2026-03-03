@@ -19,21 +19,12 @@ logger = get_logger(__name__)
 async def validate_response_has_citations(
     response: str, context: list[dict], retrieved_paragraph_ids: list[str] | None = None,
 ) -> str:
-    """Validate that response has proper citations or indicate not found.
-
-    This is Layer 2 of HAVF hallucination prevention - ensuring the model
-    actually cites sources for its claims.
-    """
-    # Check if response has any [P#] or [prefix_P#] citations
     citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?P\d+)\]"
     citations_found = re.findall(citation_pattern, response)
 
     if not citations_found:
-        # No citations - check if context was empty
         if not context:
             return "I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers."
-        # Context existed but model didn't produce citations. Return a clear, user-facing
-        # apology rather than internal placeholder text (CRT-001 fix).
         return (
             "I apologize, but I was unable to properly attribute my response to specific "
             "sections of the uploaded papers. The information provided may not be "
@@ -41,15 +32,10 @@ async def validate_response_has_citations(
             "information independently."
         )
 
-    # MED-006: Validate that cited paragraph IDs actually exist in retrieved context.
-    # Strip invalid citations (Layer 3 defence) so the user never sees [P#] tags
-    # pointing to non-existent paragraphs — not just warn about them.
     if retrieved_paragraph_ids:
         raw_cited = set(extract_paragraph_ids(response))
         valid_ids = set(retrieved_paragraph_ids)
 
-        # Normalise short-form citations ([P5]) to prefixed form so
-        # they match the full paragraph IDs from the chunker.
         cited_ids, short_to_long = normalize_paragraph_ids(raw_cited, valid_ids)
         for short_id, long_id in short_to_long.items():
             response = response.replace(f"[{short_id}]", f"[{long_id}]")
@@ -62,15 +48,12 @@ async def validate_response_has_citations(
             )
             for bad_id in invalid_ids:
                 response = response.replace(f"[{bad_id}]", "")
-            # Clean up any double-spaces left after stripping.
             response = re.sub(r"  +", " ", response).strip()
 
     return response
 
 
 async def _format_havf_data(response: ChatResponse) -> list[dict]:
-    # All keys must match the VerificationItem schema so historical messages
-    # deserialise correctly when later fetched via the messages endpoint.
     return [
         {
             "claim": r.claim,
@@ -94,7 +77,6 @@ async def _prepare_chat_context(
 
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if not papers:
-        # Distinguish between "no papers at all" and "no completed papers".
         all_papers = await get_papers_by_session(db, session_id)
         if not all_papers:
             raise NotFoundError(
@@ -118,6 +100,7 @@ async def chat(
     db: AsyncSession,
     faiss_store: FAISSStore,
     llm: FallbackChain,
+    keywords: list[str] | None = None,
 ) -> ChatResponse:
     paper_ids, history = await _prepare_chat_context(session_id, db)
     await create_message(
@@ -126,8 +109,6 @@ async def chat(
         role=MessageRole.USER,
         content=query,
     )
-    # Commit the user message before invoking the LLM so it is persisted even
-    # if generation fails — matching the explicit commit in the streaming path.
     await db.commit()
     response = await generate_response(
         query=query,
@@ -136,16 +117,10 @@ async def chat(
         faiss_store=faiss_store,
         llm=llm,
         db_session=db,
+        keywords=keywords,
     )
-    # BUG-1 fix: Skip citation validation for metadata queries.  Metadata
-    # responses (paper titles, authors, year, etc.) are answered from DB
-    # fields, not from retrieved chunks, so they legitimately have no [P#]
-    # citations.  Forcing validation would overwrite them with an apology.
     is_metadata = not response.retrieved_chunks and not response.havf_results
     if not is_metadata:
-        # Validate response has citations - Layer 2 of HAVF hallucination prevention.
-        # Build valid paragraph IDs from the actually retrieved chunks (not HAVF
-        # results) so every cited [P#] can be checked regardless of its HAVF score.
         retrieved_para_ids = [
             str(r.paragraph_id)
             for r in (response.retrieved_chunks or [])
@@ -176,13 +151,8 @@ async def chat_stream(
     db: AsyncSession,
     faiss_store: FAISSStore,
     llm: FallbackChain,
+    keywords: list[str] | None = None,
 ):
-    """Stream chat response as SSE events.
-
-    Saves the user message before streaming begins. The assistant message and HAVF
-    results are persisted inside stream_chat_response once all tokens have been
-    generated, while the db_session dependency is still open.
-    """
     try:
         paper_ids, history = await _prepare_chat_context(session_id, db)
 
@@ -192,8 +162,6 @@ async def chat_stream(
             role=MessageRole.USER,
             content=query,
         )
-        # Commit the user message before streaming so it is persisted even if
-        # the stream fails partway through.
         await db.commit()
 
         return stream_chat_response(
@@ -204,7 +172,9 @@ async def chat_stream(
             llm=llm,
             db_session=db,
             session_id=session_id,
+            keywords=keywords,
         )
     except Exception as exc:
         logger.error(f"Error during chat stream setup: {exc}")
         raise
+

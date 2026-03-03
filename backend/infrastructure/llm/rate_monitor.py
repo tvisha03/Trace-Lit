@@ -11,14 +11,6 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# Persistence (HI-004 fix)
-# ---------------------------------------------------------------------------
-# Rate-usage state is saved to a JSON file so the 60-second sliding window
-# survives server restarts.  Only entries that are still within their window
-# are written/read, so stale data is never resurrected.
-# The file path can be changed via the RATE_MONITOR_STATE_FILE env variable.
-# ---------------------------------------------------------------------------
 import os as _os
 _PERSISTENCE_PATH = Path(
     _os.environ.get(
@@ -46,8 +38,6 @@ _SAFETY_MARGIN: float = 0.90
 
 @dataclass
 class _UsageEntry:
-    # Wall-clock UNIX timestamp (time.time()) so entries can be persisted and
-    # compared correctly after a server restart (HI-004 fix).
     timestamp: float
     tokens: int
 
@@ -62,7 +52,6 @@ class _ProviderUsage:
             self.entries.popleft()
 
     def record(self, tokens: int) -> None:
-        # Use wall-clock time so timestamps survive serialisation (HI-004).
         now = time.time()
         with self.lock:
             self._prune(now)
@@ -81,27 +70,23 @@ class _ProviderUsage:
             return len(self.entries)
 
     def to_dict(self) -> list[dict]:
-        """Serialise non-expired entries for persistence."""
         now = time.time()
         with self.lock:
             self._prune(now)
             return [{"ts": e.timestamp, "tok": e.tokens} for e in self.entries]
 
     def load_dict(self, data: list[dict]) -> None:
-        """Restore entries from a previously persisted snapshot."""
         now = time.time()
         cutoff = now - 60.0
         with self.lock:
             self.entries.clear()
             for e in data:
                 ts = e.get("ts", 0.0)
-                if ts > cutoff:  # discard already-expired entries
+                if ts > cutoff:
                     self.entries.append(_UsageEntry(timestamp=ts, tokens=e.get("tok", 0)))
 
 class RateLimitMonitor:
 
-    # Batch persistence: save to disk at most every _SAVE_INTERVAL seconds or
-    # every _SAVE_EVERY_N_CALLS track_usage invocations, whichever comes first.
     _SAVE_INTERVAL: float = 30.0
     _SAVE_EVERY_N_CALLS: int = 10
 
@@ -112,26 +97,18 @@ class RateLimitMonitor:
         }
         self._calls_since_save: int = 0
         self._last_save_time: float = time.time()
-        # Attempt to restore token-usage state from the previous run so the
-        # 60-second sliding window is honoured across server restarts (HI-004).
         self._load_state()
 
-    # ------------------------------------------------------------------
-    # Persistence helpers (HI-004 fix)
-    # ------------------------------------------------------------------
 
     def _save_state(self) -> None:
-        """Persist current sliding-window entries to disk (best-effort)."""
         try:
             _PERSISTENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
             snapshot = {name: usage.to_dict() for name, usage in self._usage.items()}
             _PERSISTENCE_PATH.write_text(json.dumps(snapshot), encoding="utf-8")
         except Exception as exc:
-            # Non-fatal — rate limiting degrades to stateless on I/O errors.
             logger.debug(f"Rate-monitor state save failed (non-fatal): {exc}")
 
     def _load_state(self) -> None:
-        """Restore persisted entries, ignoring any that are already expired."""
         if not _PERSISTENCE_PATH.exists():
             return
         try:
@@ -184,8 +161,6 @@ class RateLimitMonitor:
                 f"Tracked {tokens_used} tokens for {provider.value} "
                 f"(window TPM: {usage.current_tpm()}, RPM: {usage.current_rpm()})"
             )
-            # BUG-F fix: batch persistence — save to disk only when the call
-            # count or elapsed-time threshold is exceeded, not on every call.
             self._calls_since_save += 1
             now = time.time()
             if (
@@ -217,3 +192,4 @@ class RateLimitMonitor:
                 "max_rpm": limits.get("rpm", 0),
             }
         return summary
+

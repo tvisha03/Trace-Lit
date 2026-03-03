@@ -12,3 +12,4 @@ async def sse_stream(
         yield sse_event(event_name, data)
 
     yield sse_event("done", {"status": "complete"})
+

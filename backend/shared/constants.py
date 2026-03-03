@@ -6,7 +6,7 @@ MAX_SESSIONS: int = 50
 
 MAX_PARALLEL_PAPERS: int = 3
 MEMORY_PRESSURE_THRESHOLD: float = 0.75
-PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600  # 10 minutes max per paper
+PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600
 
 EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
 EMBEDDING_DIMENSIONS: int = 384
@@ -32,7 +32,7 @@ CHUNK_MAX_TOKENS: int = 1024
 
 FAISS_TOP_K_PER_PAPER: int = 4
 FAISS_INDEX_DIR: str = "data/faiss_indexes"
-FAISS_MAX_VECTORS: int = 500_000  # Safety cap to prevent unbounded memory growth
+FAISS_MAX_VECTORS: int = 500_000
 
 LLM_TIMEOUT_SECONDS: int = 30
 LLM_MAX_RETRIES: int = 2
@@ -42,7 +42,9 @@ LLM_TEMPERATURE: float = 0.3
 UPLOADS_DIR: str = "data/uploads"
 EXPORTS_DIR: str = "data/exports"
 
-MIN_DISK_SPACE_MB: int = 500  # Minimum free disk space before rejecting uploads
+MIN_DISK_SPACE_MB: int = 500
+MAX_EXPORT_FILE_SIZE_MB: int = 100
+MAX_WS_CONNECTIONS_PER_SESSION: int = 10
 
 COMPARISON_TOKEN_BUDGET_PER_PAPER: int = 3_000
 
@@ -50,3 +52,4 @@ WS_PAPER_PROGRESS: str = "paper_progress"
 WS_PAPER_COMPLETE: str = "paper_complete"
 WS_PAPER_ERROR: str = "paper_error"
 WS_PROCESSING_DONE: str = "processing_done"
+

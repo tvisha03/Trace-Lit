@@ -7,16 +7,133 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from domain.export.pdf_exporter import export_chat_to_pdf, export_comparison_to_pdf
 from domain.export.excel_exporter import export_citations_to_excel, export_comparison_to_excel
 from domain.export.bibtex_exporter import export_papers_to_bibtex
+from domain.export.docx_exporter import export_chat_to_docx, export_comparison_to_docx
+from domain.export.latex_exporter import export_chat_to_latex, export_comparison_to_latex
 from infrastructure.db.crud.message_crud import get_messages_by_session
 from infrastructure.db.crud.paper_crud import get_papers_by_session, get_paper
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
+from shared.constants import MAX_EXPORT_FILE_SIZE_MB
 from shared.enums import ExportFormat
-from shared.errors import NotFoundError
+from shared.errors import NotFoundError, TraceLitError
 from shared.logger import get_logger
 from workers.export_worker import run_export_in_thread
 
 logger = get_logger(__name__)
+
+
+def _check_export_size(output_path: Path) -> None:
+    if not output_path.exists():
+        return
+    size_mb = output_path.stat().st_size / (1024 * 1024)
+    if size_mb > MAX_EXPORT_FILE_SIZE_MB:
+        output_path.unlink(missing_ok=True)
+        raise TraceLitError(
+            message=(
+                f"Generated export is too large ({size_mb:.1f} MB, "
+                f"limit {MAX_EXPORT_FILE_SIZE_MB} MB). Try exporting fewer messages "
+                "or a smaller range."
+            ),
+            status_code=413,
+        )
+
+async def _export_chat_as_pdf(
+    session_id: str,
+    session_title: str,
+    messages: list[dict],
+    filename: str,
+    file_storage: FileStorage,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
+    result = await run_export_in_thread(
+        export_chat_to_pdf,
+        session_title=session_title,
+        messages=messages,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_chat_as_excel(
+    session_id: str,
+    messages: list[dict],
+    filename: str,
+    file_storage: FileStorage,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
+    result = await run_export_in_thread(
+        export_citations_to_excel,
+        citations=_flatten_citations(messages),
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_chat_as_bibtex(
+    session_id: str,
+    filename: str,
+    file_storage: FileStorage,
+    db: AsyncSession,
+) -> Path:
+    papers_db = await get_papers_by_session(db, session_id)
+    paper_dicts = [
+        {
+            "id": p.id,
+            "title": p.title,
+            "authors": p.authors,
+            "year": p.year,
+            "abstract": p.abstract,
+            "filename": p.filename,
+        }
+        for p in papers_db
+    ]
+    output_path = file_storage.get_export_path(f"{filename}.bib", session_id)
+    result = await run_export_in_thread(
+        export_papers_to_bibtex,
+        papers=paper_dicts,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_chat_as_docx(
+    session_id: str,
+    session_title: str,
+    messages: list[dict],
+    filename: str,
+    file_storage: FileStorage,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.docx", session_id)
+    result = await run_export_in_thread(
+        export_chat_to_docx,
+        session_title=session_title,
+        messages=messages,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_chat_as_latex(
+    session_id: str,
+    session_title: str,
+    messages: list[dict],
+    filename: str,
+    file_storage: FileStorage,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.tex", session_id)
+    result = await run_export_in_thread(
+        export_chat_to_latex,
+        session_title=session_title,
+        messages=messages,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
 
 async def export_chat(
     session_id: str,
@@ -39,49 +156,26 @@ async def export_chat(
     ]
 
     filename = f"chat_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
+    session_title = session.title or "Chat Export"
 
-    if export_format == ExportFormat.PDF:
-        output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
-        return await run_export_in_thread(
-            export_chat_to_pdf,
-            session_title=session.title or "Chat Export",
-            messages=messages,
-            output_path=output_path,
-        )
-    elif export_format == ExportFormat.EXCEL:
-        output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
-        return await run_export_in_thread(
-            export_citations_to_excel,
-            citations=_flatten_citations(messages),
-            output_path=output_path,
-        )
-    elif export_format == ExportFormat.BIBTEX:
-        # BibTeX export serialises paper metadata (authors, title, year,
-        # abstract) for all papers in the session so researchers can cite them
-        # directly from their reference managers.
-        papers_db = await get_papers_by_session(db, session_id)
-        paper_dicts = [
-            {
-                "id": p.id,
-                "title": p.title,
-                "authors": p.authors,
-                "year": p.year,
-                "abstract": p.abstract,
-                "filename": p.filename,
-            }
-            for p in papers_db
-        ]
-        output_path = file_storage.get_export_path(f"{filename}.bib", session_id)
-        return await run_export_in_thread(
-            export_papers_to_bibtex,
-            papers=paper_dicts,
-            output_path=output_path,
-        )
-    else:
+    handlers = {
+        ExportFormat.PDF: _export_chat_as_pdf,
+        ExportFormat.EXCEL: _export_chat_as_excel,
+        ExportFormat.BIBTEX: _export_chat_as_bibtex,
+        ExportFormat.DOCX: _export_chat_as_docx,
+        ExportFormat.LATEX: _export_chat_as_latex,
+    }
+
+    if export_format not in handlers:
         raise ValueError(f"Unsupported export format: {export_format.value}")
 
+    handler = handlers[export_format]
+    if export_format == ExportFormat.BIBTEX:
+        return await handler(session_id, filename, file_storage, db)
+    else:
+        return await handler(session_id, session_title, messages, filename, file_storage)
+
 async def _collect_paper_dicts(paper_ids: list[str], db: AsyncSession) -> list[dict]:
-    """Fetch paper metadata dicts for BibTeX export."""
     paper_dicts = []
     for pid in paper_ids:
         paper = await get_paper(db, pid)
@@ -99,6 +193,108 @@ async def _collect_paper_dicts(paper_ids: list[str], db: AsyncSession) -> list[d
     return paper_dicts
 
 
+async def _export_comparison_as_pdf(
+    session_id: str,
+    comparison_content: str,
+    paper_titles: list[str],
+    filename: str,
+    file_storage: FileStorage,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
+    result = await run_export_in_thread(
+        export_comparison_to_pdf,
+        title="Paper Comparison",
+        comparison_content=comparison_content,
+        paper_titles=paper_titles,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_comparison_as_excel(
+    session_id: str,
+    paper_titles: list[str],
+    filename: str,
+    file_storage: FileStorage,
+    paper_ids: Optional[list[str]] = None,
+    db: Optional[AsyncSession] = None,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
+    paper_data = []
+    for i, title in enumerate(paper_titles):
+        entry: dict = {"title": title, "authors": "", "year": "", "problem": "", "method": "", "results": "", "keywords": ""}
+        if paper_ids and db and i < len(paper_ids):
+            paper_obj = await get_paper(db, paper_ids[i])
+            if paper_obj:
+                entry["authors"] = paper_obj.authors or ""
+                entry["year"] = paper_obj.year or ""
+        paper_data.append(entry)
+    result = await run_export_in_thread(
+        export_comparison_to_excel,
+        paper_data=paper_data,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_comparison_as_bibtex(
+    session_id: str,
+    filename: str,
+    file_storage: FileStorage,
+    paper_ids: list[str],
+    db: AsyncSession,
+) -> Path:
+    paper_dicts = await _collect_paper_dicts(paper_ids, db)
+    output_path = file_storage.get_export_path(f"{filename}.bib", session_id)
+    result = await run_export_in_thread(
+        export_papers_to_bibtex,
+        papers=paper_dicts,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_comparison_as_docx(
+    session_id: str,
+    comparison_content: str,
+    paper_titles: list[str],
+    filename: str,
+    file_storage: FileStorage,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.docx", session_id)
+    result = await run_export_in_thread(
+        export_comparison_to_docx,
+        title="Paper Comparison",
+        comparison_content=comparison_content,
+        paper_titles=paper_titles,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
+async def _export_comparison_as_latex(
+    session_id: str,
+    comparison_content: str,
+    paper_titles: list[str],
+    filename: str,
+    file_storage: FileStorage,
+) -> Path:
+    output_path = file_storage.get_export_path(f"{filename}.tex", session_id)
+    result = await run_export_in_thread(
+        export_comparison_to_latex,
+        title="Paper Comparison",
+        comparison_content=comparison_content,
+        paper_titles=paper_titles,
+        output_path=output_path,
+    )
+    _check_export_size(result)
+    return result
+
+
 async def export_comparison(
     session_id: str,
     comparison_content: str,
@@ -110,45 +306,26 @@ async def export_comparison(
 ) -> Path:
     filename = f"comparison_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
 
-    if export_format == ExportFormat.PDF:
-        output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
-        return await run_export_in_thread(
-            export_comparison_to_pdf,
-            title="Paper Comparison",
-            comparison_content=comparison_content,
-            paper_titles=paper_titles,
-            output_path=output_path,
-        )
-    elif export_format == ExportFormat.EXCEL:
-        output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
-        # BUG-5 fix: populate comparison rows with actual paper metadata
-        # instead of empty placeholder strings.
-        paper_data = []
-        for i, title in enumerate(paper_titles):
-            entry: dict = {"title": title, "authors": "", "year": "", "problem": "", "method": "", "results": "", "keywords": ""}
-            if paper_ids and db and i < len(paper_ids):
-                paper_obj = await get_paper(db, paper_ids[i])
-                if paper_obj:
-                    entry["authors"] = paper_obj.authors or ""
-                    entry["year"] = paper_obj.year or ""
-            paper_data.append(entry)
-        return await run_export_in_thread(
-            export_comparison_to_excel,
-            paper_data=paper_data,
-            output_path=output_path,
-        )
-    elif export_format == ExportFormat.BIBTEX:
+    if export_format == ExportFormat.BIBTEX:
         if not paper_ids or not db:
             raise ValueError("paper_ids and db are required for BibTeX comparison export.")
-        paper_dicts = await _collect_paper_dicts(paper_ids, db)
-        output_path = file_storage.get_export_path(f"{filename}.bib", session_id)
-        return await run_export_in_thread(
-            export_papers_to_bibtex,
-            papers=paper_dicts,
-            output_path=output_path,
-        )
-    else:
+        return await _export_comparison_as_bibtex(session_id, filename, file_storage, paper_ids, db)
+
+    handlers = {
+        ExportFormat.PDF: _export_comparison_as_pdf,
+        ExportFormat.EXCEL: _export_comparison_as_excel,
+        ExportFormat.DOCX: _export_comparison_as_docx,
+        ExportFormat.LATEX: _export_comparison_as_latex,
+    }
+
+    if export_format not in handlers:
         raise ValueError(f"Unsupported export format for comparison: {export_format.value}")
+
+    handler = handlers[export_format]
+    if export_format == ExportFormat.EXCEL:
+        return await handler(session_id, paper_titles, filename, file_storage, paper_ids, db)
+    else:
+        return await handler(session_id, comparison_content, paper_titles, filename, file_storage)
 
 def _flatten_citations(messages: list[dict]) -> list[dict]:
     citations = []
@@ -157,7 +334,7 @@ def _flatten_citations(messages: list[dict]) -> list[dict]:
         if not isinstance(raw_results, list):
             continue
         for result in raw_results:
-            # Guard against non-dict items (e.g. null entries or malformed data)
             if isinstance(result, dict):
                 citations.append(result)
     return citations
+

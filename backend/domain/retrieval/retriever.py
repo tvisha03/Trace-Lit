@@ -26,6 +26,26 @@ class RetrievedChunk:
     score: float
     sentence_map: dict
 
+def _should_use_balanced_budget(classification: QueryClassification) -> bool:
+    """Determine whether to use balanced token budget strategy."""
+    is_comparison_or_multi_hop = classification.query_type in (
+        QueryType.COMPARISON,
+        QueryType.MULTI_HOP,
+    )
+    return classification.balanced or is_comparison_or_multi_hop
+
+
+def _process_faiss_results(
+    results: list[dict],
+) -> tuple[dict[str, float], dict[str, list[str]]]:
+    """Extract score map and paper-to-paragraphs mapping from FAISS results."""
+    score_map = {f"{r['paper_id']}::{r['paragraph_id']}": r['score'] for r in results}
+    para_by_paper: dict[str, list[str]] = {}
+    for r in results:
+        para_by_paper.setdefault(r['paper_id'], []).append(r['paragraph_id'])
+    return score_map, para_by_paper
+
+
 async def _build_chunks(
     results: list[dict],
     para_by_paper: dict[str, list[str]],
@@ -72,15 +92,11 @@ async def retrieve(
         logger.info("Metadata query — skipping vector retrieval")
         return []
 
-    # EDGE-6: Guard against querying a FAISS index that hasn't been populated.
     if not faiss_store.is_ready():
         logger.warning("FAISS store not ready — returning empty results")
         return []
 
     effective_top_k = classification.retrieval_top_k or top_k
-
-    # EDGE-2: Truncate extremely long queries before embedding to avoid
-    # silent transformer truncation that could distort the vector.
     query = truncate_text(query, MAX_QUERY_TOKENS)
 
     query_vector = encode_query(query)
@@ -88,16 +104,10 @@ async def retrieve(
     if not results:
         return []
 
-    score_map = {f"{r['paper_id']}::{r['paragraph_id']}": r['score'] for r in results}
-    para_by_paper: dict[str, list[str]] = {}
-    for r in results:
-        para_by_paper.setdefault(r['paper_id'], []).append(r['paragraph_id'])
-
+    score_map, para_by_paper = _process_faiss_results(results)
     retrieved = await _build_chunks(results, para_by_paper, score_map, db_session)
+    use_balanced = _should_use_balanced_budget(classification)
 
-    use_balanced = classification.balanced or classification.query_type in (
-        QueryType.COMPARISON, QueryType.MULTI_HOP,
-    )
     return _apply_token_budget(retrieved, balanced=use_balanced)
 
 def _apply_token_budget(
@@ -153,3 +163,4 @@ def _greedy_budget(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
         total_tokens += tokens
 
     return selected
+

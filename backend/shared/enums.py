@@ -36,8 +36,11 @@ class ExportFormat(str, Enum):
     PDF = "pdf"
     EXCEL = "excel"
     BIBTEX = "bibtex"
+    DOCX = "docx"
+    LATEX = "latex"
 
 class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+

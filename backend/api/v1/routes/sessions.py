@@ -10,6 +10,7 @@ from api.v1.schemas import (
     WebSocketURLResponse,
 )
 from api.v1.routes.websocket import ws_manager
+from api.v1.routes.papers import _session_upload_locks
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.storage.file_storage import FileStorage
 from services import session_service
@@ -25,8 +26,6 @@ async def create_session(
     body: SessionCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    # GAP-2: Enforce a maximum number of sessions to prevent unbounded
-    # resource growth (DB rows, FAISS indexes, uploaded files).
     existing = await session_service.list_all_sessions(db)
     if len(existing) >= MAX_SESSIONS:
         raise TraceLitError(
@@ -68,8 +67,6 @@ async def get_websocket_url(
     session_id: str,
     request: Request,
 ):
-    # Use request.url.netloc (host:port) so standard ports are omitted automatically
-    # and reverse-proxy forwarded headers are respected transparently.
     scheme = "wss" if request.url.scheme == "https" else "ws"
     ws_url = f"{scheme}://{request.url.netloc}/ws/{session_id}"
 
@@ -89,9 +86,8 @@ async def delete_session(
         db, session_id, faiss_store, file_storage
     )
 
-    # Broadcast deletion events top-down: each paper first (in the order they
-    # belonged to the session), then the session itself.  Events fire after the
-    # DB commit so clients only see confirmed state changes.
+    _session_upload_locks.pop(session_id, None)
+
     for paper_id in deleted_paper_ids:
         try:
             await ws_manager.send_event(
@@ -110,3 +106,4 @@ async def delete_session(
         )
     except Exception as exc:
         logger.warning(f"WS session_deleted event failed for {session_id}: {exc}")
+

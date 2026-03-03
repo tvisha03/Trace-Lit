@@ -15,13 +15,11 @@ _WRAP_ALIGNMENT = Alignment(wrap_text=True, vertical="top")
 
 
 def _set_cell_value_and_wrap(ws: Worksheet, row: int, col: int, value: str) -> None:
-    """Set cell value with text wrapping."""
     cell = ws.cell(row=row, column=col, value=value)
     cell.alignment = _WRAP_ALIGNMENT
 
 
 def _set_column_widths(ws: Worksheet) -> None:
-    """Auto-fit column widths based on content."""
     for col in ws.columns:
         if not col or col[0] is None:
             continue
@@ -36,7 +34,6 @@ def _set_column_widths(ws: Worksheet) -> None:
 
 
 def _set_header_row(ws: Worksheet, headers: list[str]) -> None:
-    """Format header row."""
     for col_idx, header in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col_idx, value=header)
         cell.font = _HEADER_FONT
@@ -45,7 +42,6 @@ def _set_header_row(ws: Worksheet, headers: list[str]) -> None:
 
 
 def _populate_comparison_rows(ws: Worksheet, paper_data: list[dict]) -> None:
-    """Populate comparison data rows."""
     for row_idx, paper in enumerate(paper_data, start=2):
         _set_cell_value_and_wrap(ws, row_idx, 1, str(paper.get("title", "")))
         _set_cell_value_and_wrap(ws, row_idx, 2, str(paper.get("authors", "")))
@@ -57,7 +53,6 @@ def _populate_comparison_rows(ws: Worksheet, paper_data: list[dict]) -> None:
 
 
 def _populate_citation_rows(ws: Worksheet, citations: list[dict]) -> None:
-    """Populate citation data rows."""
     for row_idx, cit in enumerate(citations, start=2):
         _set_cell_value_and_wrap(ws, row_idx, 1, str(cit.get("claim", "")))
         ws.cell(row=row_idx, column=2, value=cit.get("confidence", ""))
@@ -69,7 +64,6 @@ def export_comparison_to_excel(
     paper_data: list[dict],
     output_path: str | Path,
 ) -> Path:
-    """Export paper comparison data to Excel file."""
     output_path = Path(output_path)
     wb = Workbook()
     ws = wb.active
@@ -90,7 +84,6 @@ def export_citations_to_excel(
     citations: list[dict],
     output_path: str | Path,
 ) -> Path:
-    """Export citation verification data to Excel file."""
     output_path = Path(output_path)
     wb = Workbook()
     ws = wb.active
@@ -106,3 +99,4 @@ def export_citations_to_excel(
     wb.save(str(output_path))
     logger.info(f"Exported citations Excel to {output_path.name}")
     return output_path
+

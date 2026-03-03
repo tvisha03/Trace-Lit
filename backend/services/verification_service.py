@@ -19,9 +19,6 @@ async def verify_text_against_papers(
         db_session=db_session,
     )
 
-    # BUG-3 fix: Forward runtime-configurable HAVF thresholds from Settings
-    # so the standalone verification endpoint honours the same overrides as
-    # the chat pipeline (chat_engine.py + streaming.py already do this).
     settings = get_settings()
     havf_results = await verify_response(
         text,
@@ -43,3 +40,4 @@ async def verify_text_against_papers(
         }
         for r in havf_results
     ]
+

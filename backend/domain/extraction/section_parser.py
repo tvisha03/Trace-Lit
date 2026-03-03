@@ -62,3 +62,4 @@ def parse_sections(markdown_text: str) -> list[Section]:
 
     logger.info(f"Parsed {len(sections)} sections")
     return sections
+

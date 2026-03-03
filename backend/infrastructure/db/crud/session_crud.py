@@ -34,3 +34,4 @@ async def delete_session(db: AsyncSession, session_id: str) -> bool:
         await db.flush()
         return True
     return False
+

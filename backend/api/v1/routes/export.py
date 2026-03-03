@@ -28,8 +28,6 @@ async def export_session(
     body: ExportRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    # Verify the session exists before delegating to the export service so
-    # callers receive a structured 404 rather than an opaque service-layer error.
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
@@ -52,19 +50,16 @@ async def export_comparison_route(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    # Verify the session exists.
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
 
-    # Verify every requested paper belongs to this session so one session
-    # cannot export data from another session's papers.
     for pid in body.paper_ids:
         paper = await get_paper(db, pid)
         if not paper:
             raise NotFoundError("Paper", pid)
         if str(paper.session_id) != session_id:
-            raise NotFoundError("Paper", pid)  # intentionally opaque — not your paper
+            raise NotFoundError("Paper", pid)
 
     llm = _get_llm(request)
     file_storage = FileStorage()
@@ -72,8 +67,6 @@ async def export_comparison_route(
 
     comparison_result = await compare_papers(body.paper_ids, db, llm)
 
-    # Persist the comparison as an assistant message so users can review
-    # previous comparisons via the session message history (CRT-005 fix).
     await create_message(
         db,
         session_id=session_id,
@@ -106,14 +99,12 @@ async def download_export(
     filename: str,
     background_tasks: BackgroundTasks,
 ):
-    # EDGE-8: Reject filenames that attempt path traversal (e.g. "../../etc/passwd").
     if ".." in filename or "/" in filename or "\\" in filename:
         raise NotFoundError("Export file", filename)
 
     file_storage = FileStorage()
     file_path = file_storage.get_export_path(filename, session_id)
 
-    # Double check the resolved path is still inside the expected export directory.
     try:
         file_path.resolve().relative_to(file_storage._exports.resolve())
     except ValueError:
@@ -127,12 +118,13 @@ async def download_export(
         if filename.endswith(".pdf")
         else "text/x-bibtex"
         if filename.endswith(".bib")
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if filename.endswith(".docx")
+        else "application/x-tex"
+        if filename.endswith(".tex")
         else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Schedule file deletion as a background task so it runs after the
-    # FileResponse has been fully sent to the client, preventing disk
-    # accumulation of one-time export files.
     def _delete_file() -> None:
         try:
             file_path.unlink(missing_ok=True)
@@ -147,3 +139,4 @@ async def download_export(
         filename=filename,
         media_type=media_type,
     )
+

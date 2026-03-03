@@ -32,3 +32,4 @@ def log_performance(
         detail = " | ".join(f"{k}={v}" for k, v in extra.items())
         parts += f" | {{{detail}}}"
     logger.info(parts)
+

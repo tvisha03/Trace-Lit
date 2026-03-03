@@ -29,9 +29,6 @@ async def compare_papers(
         paper_titles.append(paper.title or paper.filename)
         chunks = await get_chunks_by_paper(db, pid)
 
-        # Select chunks up to the token budget rather than using a fixed count.
-        # This captures more content from papers with small chunks while still
-        # preventing oversized prompts when chunks are large.
         selected: list = []
         cumulative_tokens = 0
         for chunk in chunks:
@@ -42,8 +39,6 @@ async def compare_papers(
             selected.append(chunk)
             cumulative_tokens += chunk_tokens
 
-        # Fall back to the first 20 chunks if budget estimation yields nothing
-        # (e.g. empty paper) to keep the rest of the pipeline functional.
         context = build_context_block(selected or chunks[:20])
         paper_contexts[pid] = context
 
@@ -79,3 +74,4 @@ async def extract_paper_contributions(
         "title": paper.title or paper.filename,
         "contributions": contributions,
     }
+

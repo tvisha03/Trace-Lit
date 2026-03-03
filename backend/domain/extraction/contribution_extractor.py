@@ -48,3 +48,4 @@ async def extract_contributions(
             "metrics": {"text": "Extraction failed", "paragraph_id": None},
             "results": {"text": "Extraction failed", "paragraph_id": None},
         }
+

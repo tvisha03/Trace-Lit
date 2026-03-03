@@ -13,17 +13,24 @@ router = APIRouter()
 
 
 def _check_cross_encoder() -> bool:
-    """Return True if the cross-encoder model is loadable.
-
-    BUG-001/MED-006: Surface cross-encoder availability in the health
-    endpoint so operators and monitoring dashboards can detect when HAVF
-    is running in degraded (Level 1 only) mode.
-    """
     try:
         from domain.verification.reranker import _get_cross_encoder
         return _get_cross_encoder() is not None
     except Exception:
         return False
+
+
+def _check_faiss(request) -> tuple[bool, dict | None]:
+    faiss_store = getattr(request.app.state, "faiss_store", None)
+    if faiss_store is None:
+        return False, None
+    try:
+        ok = faiss_store.is_ready()
+        stats = faiss_store.get_stats() if ok else None
+        return ok, stats
+    except Exception as exc:
+        logger.warning(f"Health check: FAISS status check failed: {exc}")
+        return False, None
 
 
 @router.get("", response_model=HealthResponse)
@@ -39,7 +46,6 @@ async def health_check(request: Request):
             except Exception:
                 providers[provider.__class__.__name__] = False
 
-    # Verify database connectivity with a lightweight round-trip query.
     db_ok = False
     try:
         async with async_session_factory() as db:
@@ -48,24 +54,10 @@ async def health_check(request: Request):
     except Exception as exc:
         logger.warning(f"Health check: DB connectivity failed: {exc}")
 
-    # Verify the FAISS index is loaded and contains at least 0 vectors.
-    faiss_ok = False
-    faiss_stats = None
-    faiss_store = getattr(request.app.state, "faiss_store", None)
-    if faiss_store is not None:
-        try:
-            faiss_ok = faiss_store.is_ready()
-            # IMP-3: Surface vector count, memory usage, and utilization in the
-            # health response so operators can monitor index growth.
-            if faiss_ok:
-                faiss_stats = faiss_store.get_stats()
-        except Exception as exc:
-            logger.warning(f"Health check: FAISS status check failed: {exc}")
+    faiss_ok, faiss_stats = _check_faiss(request)
 
     overall = "ok" if db_ok else "degraded"
 
-    # BUG-001/MED-006: Report cross-encoder availability so the frontend and
-    # monitoring can warn users that HAVF is operating in degraded mode.
     cross_encoder_ok = _check_cross_encoder()
     if not cross_encoder_ok:
         logger.warning(
@@ -85,3 +77,4 @@ async def health_check(request: Request):
         faiss_stats=faiss_stats,
         cross_encoder=cross_encoder_ok,
     )
+

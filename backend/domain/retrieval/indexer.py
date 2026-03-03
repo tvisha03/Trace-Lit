@@ -12,7 +12,6 @@ _encoder: SentenceTransformer | None = None
 
 
 def _mps_available() -> bool:
-    """Check if MPS (Apple Silicon GPU) is available."""
     try:
         import torch
 
@@ -85,10 +84,6 @@ async def index_chunks(
     try:
         faiss_store.save()
     except Exception as save_exc:
-        # save() failed: disk index is still the pre-existing snapshot while
-        # the in-memory index already contains the new vectors.  Roll back the
-        # in-memory state so both sides remain consistent.  The caller will
-        # catch the re-raised exception and mark the paper as FAILED.
         logger.error(
             f"FAISS save failed for {paper_id}: {save_exc} "
             "\u2014 rolling back in-memory index to maintain consistency"
@@ -101,3 +96,4 @@ async def index_chunks(
 
     logger.info(f"Indexed {len(chunks)} chunks for paper {paper_id}")
     return len(chunks)
+

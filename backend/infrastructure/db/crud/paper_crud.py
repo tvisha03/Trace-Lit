@@ -50,3 +50,18 @@ async def delete_paper(db: AsyncSession, paper_id: str) -> bool:
         await db.flush()
         return True
     return False
+
+
+async def get_paper_by_content_hash(
+    db: AsyncSession,
+    session_id: str,
+    content_hash: str,
+) -> Paper | None:
+    result = await db.execute(
+        select(Paper).where(
+            Paper.session_id == session_id,
+            Paper.content_hash == content_hash,
+        ).limit(1)
+    )
+    return result.scalar_one_or_none()
+

@@ -97,13 +97,6 @@ def build_context_block(chunks: list) -> str:
 
 
 def build_history_block(messages: list, max_turns: int = 4) -> str:
-    """Serialize recent conversation messages into a text block for the prompt.
-
-    Enforces ``HISTORY_TOKEN_BUDGET`` by walking backwards from the most
-    recent messages and dropping older turns that would blow the budget
-    (MED-002 fix).  This prevents long conversations from silently consuming
-    the context window and crowding out retrieved source paragraphs.
-    """
     from enum import Enum
     from shared.constants import HISTORY_TOKEN_BUDGET
     from shared.utils.text_utils import estimate_tokens
@@ -113,8 +106,6 @@ def build_history_block(messages: list, max_turns: int = 4) -> str:
 
     recent = messages[-max_turns * 2:]
 
-    # Build lines newest-first, then reverse, so we keep the most recent
-    # messages when the budget runs out.
     lines: list[str] = []
     remaining_budget = HISTORY_TOKEN_BUDGET
 
@@ -123,7 +114,6 @@ def build_history_block(messages: list, max_turns: int = 4) -> str:
         line = f"{role}: {msg.content}"
         estimated_tokens = estimate_tokens(line)
         if estimated_tokens > remaining_budget:
-            # No room for this (older) message — stop including history.
             break
         lines.append(line)
         remaining_budget -= estimated_tokens
@@ -133,3 +123,4 @@ def build_history_block(messages: list, max_turns: int = 4) -> str:
 
     lines.reverse()
     return "\n".join(lines)
+

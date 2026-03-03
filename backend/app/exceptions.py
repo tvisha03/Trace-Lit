@@ -12,8 +12,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def all_providers_failed_handler(
         _request: Request, exc: AllProvidersFailedError
     ) -> JSONResponse:
-        """Return 503 with a Retry-After header so clients back off gracefully
-        instead of hammering the server while all LLM providers are down."""
         logger.error(f"All LLM providers failed: {exc.message}")
         return JSONResponse(
             status_code=exc.status_code,
@@ -36,3 +34,4 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=500,
             content={"detail": "An unexpected error occurred. Please try again."},
         )
+

@@ -13,11 +13,6 @@ def _determine_confidence(
     high_threshold: float = HAVF_HIGH_THRESHOLD,
     medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
 ) -> tuple[ConfidenceLevel, bool]:
-    """Map an embedding similarity score to a confidence level.
-
-    Thresholds default to the constants but can be overridden at call time
-    so the HAVF pipeline can forward runtime-configurable values (HI-003).
-    """
     if best_score >= high_threshold:
         return ConfidenceLevel.HIGH, False
     elif best_score >= medium_threshold:
@@ -101,3 +96,4 @@ def verify_claims_embedding(
         f"{sum(1 for r in results if r['needs_reranking'])} need reranking"
     )
     return results
+

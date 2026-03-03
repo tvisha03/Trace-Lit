@@ -1,4 +1,3 @@
-"""Database configuration and initialization for TraceLit."""
 
 from typing import Any
 
@@ -30,9 +29,6 @@ def _set_sqlite_pragmas(dbapi_conn: Any, _connection_record: Any) -> None:
     try:
         cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS};")
-        # Enable FK enforcement so DB-level cascade deletes fire when the
-        # application-layer cleanup in delete_full_session is not the code
-        # path (e.g. direct SQL operations or future admin tooling).
         cursor.execute("PRAGMA foreign_keys=ON;")
     finally:
         cursor.close()
@@ -48,7 +44,6 @@ class Base(DeclarativeBase):
     pass
 
 async def init_db() -> None:
-    from infrastructure.db.models import paper, chunk, session, message
-
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+

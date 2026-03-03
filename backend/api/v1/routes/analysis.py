@@ -1,5 +1,6 @@
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.v1.schemas import (
@@ -19,6 +20,7 @@ from services.analysis_service import (
     get_session_gap_analysis,
     generate_literature_review,
     generate_paper_summary,
+    stream_literature_review,
 )
 from shared.enums import PaperStatus
 from shared.errors import ForbiddenError, InsufficientDataError, NotFoundError
@@ -26,8 +28,6 @@ from shared.utils.rate_limiter import SlidingWindowRateLimiter
 
 router = APIRouter()
 
-# Analysis endpoints invoke LLM + ML pipelines — rate-limit to prevent
-# accidental quota exhaustion and CPU saturation.
 _analysis_limiter = SlidingWindowRateLimiter(
     max_calls=10, window_seconds=60.0, resource_name="analysis requests",
 )
@@ -43,15 +43,10 @@ async def paper_keywords(
     db: AsyncSession = Depends(get_db),
 ):
     _analysis_limiter.enforce(request)
-    # Validate the paper exists before invoking the keyword extractor so the
-    # caller receives a structured 404 instead of a silent empty response or
-    # an opaque service-layer error (HI-005 fix).
     paper = await get_paper(db, paper_id)
     if not paper:
         raise NotFoundError("Paper", paper_id)
 
-    # HI-001/HI-004: Validate the paper belongs to the caller’s session to
-    # prevent cross-session keyword exposure.
     if str(paper.session_id) != session_id:
         raise ForbiddenError("Paper", paper_id)
 
@@ -68,13 +63,10 @@ async def gap_analysis(
     db: AsyncSession = Depends(get_db),
 ):
     _analysis_limiter.enforce(request)
-    # Validate session exists before running gap analysis (HI-005 fix).
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
 
-    # MED-003/BUG-003: Gap analysis requires at least one COMPLETED paper;
-    # return a structured 400 instead of silently running on zero context.
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if not papers:
         raise InsufficientDataError(
@@ -102,13 +94,10 @@ async def literature_review(
     db: AsyncSession = Depends(get_db),
 ):
     _analysis_limiter.enforce(request)
-    # Validate session exists before generating the review (HI-005 fix).
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
 
-    # BUG-004: Literature review requires at least one COMPLETED paper;
-    # return a structured 400 instead of letting the service layer fail silently.
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if not papers:
         raise InsufficientDataError(
@@ -119,6 +108,38 @@ async def literature_review(
     llm = _get_llm(request)
     result = await generate_literature_review(session_id, db, llm)
     return ReviewResponse(**result)
+
+
+@router.get("/review/stream", response_class=StreamingResponse)
+async def literature_review_stream(
+    session_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _analysis_limiter.enforce(request)
+
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
+
+    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+    if not papers:
+        raise InsufficientDataError(
+            f"No completed papers in session '{session_id}'. "
+            "Please wait for paper processing to finish before generating a review."
+        )
+
+    llm = _get_llm(request)
+    generator = stream_literature_review(session_id, db, llm)
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/summary/{paper_id}", response_model=SummaryResponse)
@@ -133,18 +154,10 @@ async def paper_summary(
     ),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate an on-demand structured summary for a single uploaded paper.
-
-    Returns a cited summary covering the paper's problem, approach, key
-    findings, and contributions.  Each point is cited with [P#] tags so the
-    response can be verified with HAVF.
-    """
     paper = await get_paper(db, paper_id)
     if not paper:
         raise NotFoundError("Paper", paper_id)
 
-    # Verify the paper belongs to the caller's session to prevent cross-session
-    # data exposure.
     if str(paper.session_id) != session_id:
         raise ForbiddenError("Paper", paper_id)
 
@@ -158,3 +171,4 @@ async def paper_summary(
     llm = _get_llm(request)
     result = await generate_paper_summary(paper_id, db, llm, user_question=question)
     return SummaryResponse(**result)
+

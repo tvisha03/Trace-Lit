@@ -1,8 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import AsyncGenerator
 
 from domain.analysis.keyword_extractor import extract_keywords, extract_keywords_per_paper
 from domain.analysis.gap_finder import find_gaps, GapAnalysis
-from domain.analysis.review_generator import generate_review
+from domain.analysis.review_generator import generate_review, stream_review
 from domain.generation.prompts import SYSTEM_PROMPT, SUMMARY_PROMPT_TEMPLATE, build_context_block
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
 from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
@@ -73,6 +74,22 @@ async def generate_literature_review(
     db: AsyncSession,
     llm: FallbackChain,
 ) -> dict:
+    chunks_by_paper = await _gather_review_chunks(session_id, db)
+    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+
+    review_text, provider = await generate_review(chunks_by_paper, llm)
+
+    return {
+        "review": review_text,
+        "paper_count": len(papers),
+        "provider": provider.value,
+    }
+
+
+async def _gather_review_chunks(
+    session_id: str,
+    db: AsyncSession,
+) -> dict[str, list]:
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if not papers:
         raise NotFoundError("Papers", f"no completed papers in session {session_id}")
@@ -88,21 +105,48 @@ async def generate_literature_review(
             continue
         chunks_by_paper[str(paper.id)] = chunks[:15]
 
-    # BUG-002/MED-001: Guard against empty context — if every paper had zero
-    # chunks the LLM would receive an empty prompt and hallucinate freely.
     if not chunks_by_paper:
         raise InsufficientDataError(
             "No indexed content found for the completed papers in this session. "
             "Please ensure papers have been fully processed before generating a review."
         )
+    return chunks_by_paper
 
-    review_text, provider = await generate_review(chunks_by_paper, llm)
 
-    return {
-        "review": review_text,
-        "paper_count": len(papers),
-        "provider": provider.value,
-    }
+async def stream_literature_review(
+    session_id: str,
+    db: AsyncSession,
+    llm: FallbackChain,
+) -> AsyncGenerator[str, None]:
+    import json
+    from shared.utils.streaming_utils import sse_event
+
+    full_text = ""
+    provider = ""
+
+    try:
+        chunks_by_paper = await _gather_review_chunks(session_id, db)
+
+        async for token, provider_obj in stream_review(chunks_by_paper, llm):
+            full_text += token
+            provider = provider_obj.value
+            yield sse_event("token", {"token": token})
+
+        resolved_provider = provider or "unknown"
+        yield sse_event("done", json.dumps({
+            "provider": resolved_provider,
+            "full_text": full_text,
+            "paper_count": len(chunks_by_paper),
+        }))
+
+    except Exception as exc:
+        logger.error(f"Streaming literature review error for session {session_id}: {exc}")
+        yield sse_event("error", str(exc))
+        yield sse_event("done", json.dumps({
+            "provider": provider or "unknown",
+            "full_text": full_text,
+            "error": True,
+        }))
 
 
 async def generate_paper_summary(
@@ -111,12 +155,6 @@ async def generate_paper_summary(
     llm: FallbackChain,
     user_question: str = "Provide a structured summary of this paper.",
 ) -> dict:
-    """Generate an on-demand summary for a single paper.
-
-    Uses SUMMARY_PROMPT_TEMPLATE to build a structured response covering
-    the paper's problem, approach, key findings, and contributions.
-    Each point must be cited with [P#] tags so HAVF can verify the output.
-    """
     paper = await get_paper(db, paper_id)
     if not paper:
         raise NotFoundError("Paper", paper_id)
@@ -128,8 +166,6 @@ async def generate_paper_summary(
             "Please wait for processing to complete before requesting a summary."
         )
 
-    # Use the first 20 chunks to stay within token budget while still
-    # covering the abstract, introduction, methodology, and conclusions.
     context = build_context_block(chunks[:20])
     user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
         context=context, question=user_question
@@ -149,3 +185,4 @@ async def generate_paper_summary(
         "summary": summary_text,
         "provider": provider.value,
     }
+

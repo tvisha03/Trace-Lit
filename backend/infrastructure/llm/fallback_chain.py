@@ -118,12 +118,6 @@ class FallbackChain:
         temperature: float,
         max_tokens: int,
     ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
-        # Both current provider implementations use truly-async HTTP clients
-        # (Groq → AsyncGroq, Gemini → google.genai Client.aio) so iterating the
-        # async generator returned by generate_streaming() does not block the
-        # event loop.  Any new provider added in future MUST also use a
-        # non-blocking HTTP client (e.g. httpx.AsyncClient, aiohttp) and NOT
-        # synchronous libraries such as requests or httplib.
         full_text = ""
         try:
             stream = provider.generate_streaming(
@@ -143,10 +137,6 @@ class FallbackChain:
             logger.error(f"Stream unexpected on {provider.provider.value}: {exc}")
 
         finally:
-            # Track usage for whatever portion of the stream was received,
-            # including interrupted streams where full_text may be partial.
-            # Even when no output tokens arrived, we still consumed input
-            # tokens that count toward rate limits (Issue 1.2 fix).
             from shared.utils.text_utils import estimate_tokens as _est
             input_tokens = _est(system_prompt + user_prompt)
             output_tokens = _est(full_text) if full_text else 0
@@ -178,13 +168,8 @@ class FallbackChain:
                 yield item
 
             if yielded_at_least_one:
-                # Provider produced at least one token — streaming succeeded.
-                # Stop iterating the provider list.
                 return
 
-            # _stream_from_provider yielded nothing: the provider raised an
-            # exception internally (rate-limit, timeout, unexpected error) and
-            # swallowed it silently.  Fall through to the next provider.
             logger.warning(
                 f"{provider.provider.value} stream yielded no tokens — trying next provider"
             )
@@ -192,3 +177,4 @@ class FallbackChain:
 
         logger.error(f"All providers failed for streaming: {errors}")
         raise AllProvidersFailedError()
+

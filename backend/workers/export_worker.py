@@ -26,3 +26,4 @@ async def run_export_in_thread(
 def shutdown_export_pool():
     _export_executor.shutdown(wait=True)
     logger.info("Export thread pool shut down")
+

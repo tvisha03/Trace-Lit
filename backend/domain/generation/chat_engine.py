@@ -32,6 +32,15 @@ class ChatResponse:
     token_count: int
     latency_ms: float
 
+def _filter_chunks_by_keywords(
+    chunks: list[RetrievedChunk],
+    keywords: list[str] | None,
+) -> list[RetrievedChunk]:
+    if not keywords or not chunks:
+        return chunks
+    lower_kw = [kw.lower() for kw in keywords]
+    return [c for c in chunks if any(kw in c.text.lower() for kw in lower_kw)]
+
 def _build_user_prompt(
     query_type: QueryType,
     query: str,
@@ -57,6 +66,52 @@ def _build_user_prompt(
         question=query,
     )
 
+async def _retrieve_and_filter_chunks(
+    query: str,
+    paper_ids: list[str],
+    faiss_store: FAISSStore,
+    db_session,
+    classification,
+    keywords: list[str] | None,
+) -> list[RetrievedChunk]:
+    chunks = await retrieve(
+        query=query,
+        paper_ids=paper_ids,
+        faiss_store=faiss_store,
+        db_session=db_session,
+        classification=classification,
+    )
+    return _filter_chunks_by_keywords(chunks, keywords)
+
+async def _verify_response_with_settings(
+    response_text: str,
+    chunks: list[RetrievedChunk],
+) -> list[VerificationResult]:
+    settings = get_settings()
+    return await verify_response(
+        response_text,
+        chunks,
+        high_threshold=settings.HAVF_HIGH_THRESHOLD,
+        medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
+        cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
+    )
+
+def _build_response(
+    response_text: str,
+    provider: LLMProvider,
+    havf_results: list[VerificationResult],
+    chunks: list[RetrievedChunk],
+    latency_ms: float,
+) -> ChatResponse:
+    return ChatResponse(
+        content=response_text,
+        provider=provider,
+        havf_results=havf_results,
+        retrieved_chunks=chunks,
+        token_count=estimate_tokens(response_text),
+        latency_ms=latency_ms,
+    )
+
 async def generate_response(
     query: str,
     paper_ids: list[str],
@@ -64,6 +119,7 @@ async def generate_response(
     faiss_store: FAISSStore,
     llm: FallbackChain,
     db_session,
+    keywords: list[str] | None = None,
 ) -> ChatResponse:
     start = time.perf_counter()
 
@@ -76,12 +132,8 @@ async def generate_response(
             query, paper_ids, history, llm, db_session, start,
         )
 
-    chunks = await retrieve(
-        query=query,
-        paper_ids=paper_ids,
-        faiss_store=faiss_store,
-        db_session=db_session,
-        classification=classification,
+    chunks = await _retrieve_and_filter_chunks(
+        query, paper_ids, faiss_store, db_session, classification, keywords,
     )
 
     user_prompt = _build_user_prompt(
@@ -94,33 +146,14 @@ async def generate_response(
             user_prompt=user_prompt,
         )
 
-    # EDGE-CASE: Guard against LLM providers returning empty or whitespace-only
-    # responses (e.g. safety filters, context-length overflows).  Raise early
-    # so the caller gets a clean error instead of propagating empty text through
-    # HAVF and citation validation.
     if not response_text or not response_text.strip():
         from shared.errors import EmptyResponseError
         raise EmptyResponseError(provider.value)
 
-    settings = get_settings()
-    havf_results = await verify_response(
-        response_text,
-        chunks,
-        high_threshold=settings.HAVF_HIGH_THRESHOLD,
-        medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
-        cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
-    )
-
+    havf_results = await _verify_response_with_settings(response_text, chunks)
     latency_ms = (time.perf_counter() - start) * 1000
 
-    return ChatResponse(
-        content=response_text,
-        provider=provider,
-        havf_results=havf_results,
-        retrieved_chunks=chunks,
-        token_count=estimate_tokens(response_text),
-        latency_ms=latency_ms,
-    )
+    return _build_response(response_text, provider, havf_results, chunks, latency_ms)
 
 async def _gather_paper_metadata(paper_ids: list[str], db_session) -> str:
     from infrastructure.db.crud.paper_crud import get_paper
@@ -212,3 +245,4 @@ async def generate_summary(
         user_prompt=user_prompt,
     )
     return response_text, provider
+

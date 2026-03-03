@@ -19,3 +19,4 @@ def timer(operation: str, target_ms: float = 0, extra: dict | None = None) -> Ge
 
 def timestamp_ms() -> int:
     return int(time.time() * 1000)
+

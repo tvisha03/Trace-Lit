@@ -77,19 +77,9 @@ async def delete_full_session(
     faiss_store: FAISSStore,
     file_storage: FileStorage,
 ) -> list[str]:
-    """Delete a session and all its related data in top-down order.
-
-    Returns the list of paper IDs that were deleted so the caller can emit
-    WebSocket events in the correct top-down sequence without the service
-    layer needing to know about the WS infrastructure.
-    """
     papers = await get_papers_by_session(db, session_id)
     paper_ids = [str(p.id) for p in papers]
 
-    # BUG-4 fix: Refuse to delete a session that has papers actively being
-    # processed.  Deleting mid-processing would leave FAISS in an inconsistent
-    # state and crash the worker.  Return 409 Conflict so the frontend can
-    # surface a meaningful error message.
     _processing_statuses = {
         PaperStatus.QUEUED,
         PaperStatus.EXTRACTING,
@@ -108,10 +98,6 @@ async def delete_full_session(
             status_code=409,
         )
 
-    # Remove FAISS vectors, DB chunks, and paper records for every paper in
-    # the session.  Explicit paper deletion provides defence-in-depth on top
-    # of the ondelete="CASCADE" FK — SQLite only honours cascading deletes
-    # when PRAGMA foreign_keys is ON (HI-005 fix).
     for paper in papers:
         faiss_store.remove_paper(str(paper.id))
         await delete_chunks_by_paper(db, str(paper.id))
@@ -123,15 +109,12 @@ async def delete_full_session(
     if not deleted:
         raise NotFoundError("Session", session_id)
 
-    # Commit all DB deletions atomically before touching the filesystem so the
-    # database remains the authoritative source of truth if a later step fails.
     await db.commit()
 
-    # Persist the trimmed FAISS index and remove uploaded/exported files only
-    # after the DB transaction is committed successfully.
     faiss_store.save()
     file_storage.delete_session_uploads(session_id)
     file_storage.delete_session_exports(session_id)
 
     logger.info(f"Deleted session {session_id} with {len(papers)} papers")
     return paper_ids
+

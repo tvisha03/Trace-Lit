@@ -4,13 +4,6 @@ import uuid as _uuid
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
-# ---------------------------------------------------------------------------
-# Input sanitization helpers
-# ---------------------------------------------------------------------------
-# Patterns that suggest prompt-injection attempts.  User-uploaded paper text
-# and chat queries are both untrusted inputs that will be forwarded to an LLM,
-# so we reject requests containing clear manipulation instructions early, at
-# the schema layer, before any business logic runs.
 _INJECT_PATTERNS: list[re.Pattern] = [
     re.compile(r"ignore\s+(previous|prior|all)\s+(instructions?|prompts?)", re.IGNORECASE),
     re.compile(r"you\s+are\s+now\s+a", re.IGNORECASE),
@@ -22,10 +15,7 @@ _INJECT_PATTERNS: list[re.Pattern] = [
 
 
 def _sanitize_user_text(value: str) -> str:
-    """Strip whitespace, remove control characters, and block injection attempts."""
     value = value.strip()
-    # Remove null bytes and non-printable control characters while keeping
-    # standard whitespace (\n, \r, \t) that appear legitimately in queries.
     value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
     if not value:
         raise ValueError("Input must contain visible characters after sanitization.")
@@ -81,6 +71,12 @@ class PaperUploadResponse(BaseModel):
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=5000)
     stream: bool = False
+    keywords: Optional[list[str]] = Field(
+        None,
+        max_length=10,
+        description="Optional keyword filter — when provided, retrieved context "
+                    "is limited to chunks containing at least one of these terms.",
+    )
 
     @field_validator("query")
     @classmethod
@@ -125,7 +121,6 @@ class CompareRequest(BaseModel):
     @field_validator("paper_ids")
     @classmethod
     def validate_paper_ids(cls, v: list[str]) -> list[str]:
-        """HI-004: Validate UUID format and uniqueness of paper_ids."""
         for pid in v:
             try:
                 _uuid.UUID(pid)
@@ -147,16 +142,15 @@ class ContributionResponse(BaseModel):
     contributions: dict
 
 class ExportRequest(BaseModel):
-    format: str = Field(..., pattern="^(pdf|excel|bibtex)$")
+    format: str = Field(..., pattern="^(pdf|excel|bibtex|docx|latex)$")
 
 class ComparisonExportRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)
-    format: str = Field(default="pdf", pattern="^(pdf|excel|bibtex)$")
+    format: str = Field(default="pdf", pattern="^(pdf|excel|bibtex|docx|latex)$")
 
     @field_validator("paper_ids")
     @classmethod
     def validate_paper_ids(cls, v: list[str]) -> list[str]:
-        """HI-004: Validate UUID format and uniqueness of paper_ids."""
         for pid in v:
             try:
                 _uuid.UUID(pid)
@@ -195,7 +189,6 @@ class ReviewResponse(BaseModel):
     provider: str
 
 class SummaryResponse(BaseModel):
-    """Response for the on-demand single-paper summary endpoint."""
     paper_id: str
     title: Optional[str] = None
     summary: str
@@ -213,7 +206,6 @@ class VerifyRequest(BaseModel):
     @field_validator("paper_ids")
     @classmethod
     def validate_paper_ids(cls, v: list[str]) -> list[str]:
-        """HI-004: Validate UUID format and uniqueness of paper_ids."""
         for pid in v:
             try:
                 _uuid.UUID(pid)
@@ -236,36 +228,24 @@ class HealthResponse(BaseModel):
     cross_encoder: bool = False
 
 
-# ---------------------------------------------------------------------------
-# Streaming (SSE) event schemas
-# These are not used as FastAPI response models but document the Server-Sent
-# Events emitted by POST /sessions/{session_id}/chat/stream so the frontend
-# can parse them in a type-safe manner.
-# ---------------------------------------------------------------------------
-
 class SSEQueryTypeEvent(BaseModel):
-    """event: query_type — classification result for the incoming query."""
-    type: str  # value from QueryType enum
+    type: str
 
 class SSESourceItem(BaseModel):
-    """One retrieved source chunk reference inside a `sources` SSE event."""
     paragraph_id: str
     paper_id: str
     score: float
 
 class SSETokenEvent(BaseModel):
-    """event: token — incremental text token from the LLM."""
     token: str
 
 class SSEHavfEvent(BaseModel):
-    """event: havf — full HAVF verification results after all tokens received."""
     results: list[VerificationItem]
 
 class SSEDoneEvent(BaseModel):
-    """event: done — signals stream completion with provider and full text."""
     provider: str
     full_text: str
 
 class SSEErrorEvent(BaseModel):
-    """event: error — emitted when an unrecoverable error occurs mid-stream."""
     detail: str
+

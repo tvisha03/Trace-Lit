@@ -95,13 +95,10 @@ class NotFoundError(TraceLitError):
 
 
 class ForbiddenError(TraceLitError):
-    """Raised when a resource exists but does not belong to the caller's scope
-    (e.g. a paper that belongs to a different session).  Returns HTTP 403 so
-    clients can distinguish 'not found' from 'found but not yours'.
-    """
 
     def __init__(self, resource: str, resource_id: str):
         super().__init__(
             message=f"Access to {resource} '{resource_id}' is forbidden",
             status_code=403,
         )
+

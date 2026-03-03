@@ -92,7 +92,6 @@ class GeminiProvider(BaseLLMProvider):
             raise
 
     async def health_check(self) -> bool:
-        # Verify the key exists and the API is reachable with a lightweight models.get call
         if not self._api_key:
             return False
         try:
@@ -101,3 +100,4 @@ class GeminiProvider(BaseLLMProvider):
             return True
         except Exception:
             return False
+

@@ -12,20 +12,9 @@ logger = get_logger(__name__)
 _cross_encoder = None
 
 def _get_cross_encoder():
-    """Return the cross-encoder model, or None if it cannot be loaded.
-
-    Returning None instead of raising allows HAVF to degrade gracefully to
-    Level 1 (embedding similarity) rather than crashing the verification
-    pipeline entirely when the model is unavailable (CRT-003 fix).
-
-    Uses the model name from Settings (configurable via env var) with a
-    fallback to the compile-time constant for non-app contexts (scripts, tests).
-    """
     global _cross_encoder
     if _cross_encoder is None:
         try:
-            # Prefer runtime setting; fall back to constant if Settings
-            # cannot be resolved (e.g. during unit tests or scripts).
             try:
                 from app.config import get_settings
                 model_name = get_settings().CROSS_ENCODER_MODEL
@@ -46,12 +35,6 @@ def _get_cross_encoder():
 
 
 async def async_get_cross_encoder():
-    """Load the cross-encoder in a thread to avoid blocking the event loop.
-
-    The first call after startup downloads weights (or loads from disk) which
-    can take several seconds.  Subsequent calls return the cached instance
-    immediately (MED-002 fix).
-    """
     import asyncio
     return await asyncio.to_thread(_get_cross_encoder)
 
@@ -59,15 +42,6 @@ def _update_result_confidence(
     best_score: float,
     cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
 ) -> ConfidenceLevel:
-    """Determine confidence from a cross-encoder score.
-
-    Per the HAVF specification, Level 2 (cross-encoder) promotes uncertain
-    claims to MEDIUM when the score meets the threshold, otherwise LOW.
-    Level 1 already handles HIGH confidence assignments.
-
-    Threshold defaults to the constant but can be overridden when the caller
-    forwards runtime-configurable settings (HI-003).
-    """
     if best_score >= cross_encoder_threshold:
         return ConfidenceLevel.MEDIUM
     return ConfidenceLevel.LOW
@@ -138,9 +112,6 @@ def rerank_claims(
         return []
 
     cross_encoder = _get_cross_encoder()
-    # If the cross-encoder failed to load, skip Level 2 and return the
-    # uncertain results unchanged.  The caller already assigned MEDIUM
-    # confidence; this preserves that signal rather than crashing (CRT-003).
     if cross_encoder is None:
         logger.warning(
             "Cross-encoder unavailable — skipping Level 2 reranking. "
@@ -159,3 +130,4 @@ def rerank_claims(
     medium_count = sum(1 for r in refined if r["confidence"] == ConfidenceLevel.MEDIUM)
     logger.info(f"Level 2 reranking: promoted {medium_count}/{len(refined)} to MEDIUM")
     return refined
+

@@ -33,3 +33,4 @@ async def get_chunks_by_ids(db: AsyncSession, chunk_ids: list[str]) -> list[Chun
 async def delete_chunks_by_paper(db: AsyncSession, paper_id: str) -> None:
     await db.execute(sa_delete(Chunk).where(Chunk.paper_id == paper_id))
     await db.flush()
+

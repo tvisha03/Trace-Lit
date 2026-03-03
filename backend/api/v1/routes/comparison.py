@@ -13,8 +13,6 @@ from shared.utils.rate_limiter import SlidingWindowRateLimiter
 
 router = APIRouter()
 
-# Comparison calls the LLM with large multi-paper context — cap each client
-# IP to 10 requests per minute to prevent quota exhaustion.
 _comparison_limiter = SlidingWindowRateLimiter(
     max_calls=10, window_seconds=60.0, resource_name="comparison requests",
 )
@@ -23,7 +21,6 @@ def _get_llm(request: Request) -> FallbackChain:
     return request.app.state.llm
 
 async def _verify_session_exists(session_id: str, db: AsyncSession) -> None:
-    """Raise NotFoundError if the session does not exist."""
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
@@ -33,7 +30,6 @@ async def _verify_papers_belong_to_session(
     session_id: str,
     db: AsyncSession,
 ) -> None:
-    """Raise NotFoundError if any paper_id doesn't exist or belongs to a different session."""
     for pid in paper_ids:
         paper = await get_paper(db, pid)
         if not paper or str(paper.session_id) != session_id:
@@ -61,10 +57,8 @@ async def get_contributions(
     db: AsyncSession = Depends(get_db),
 ):
     _comparison_limiter.enforce(request)
-    # Validate the session exists before checking paper ownership so that an
-    # invalid session_id surfaces a clear 404 rather than a confusing paper
-    # not-found error (CRT-006 fix).
     await _verify_session_exists(session_id, db)
     await _verify_papers_belong_to_session([paper_id], session_id, db)
     llm = _get_llm(request)
     return await extract_paper_contributions(paper_id, db, llm)
+

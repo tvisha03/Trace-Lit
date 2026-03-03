@@ -13,19 +13,12 @@ _MAX_MEMORY_WAITS: int = 6
 
 @dataclass(order=False)
 class PaperJob:
-    """Represents a paper processing job in the priority queue.
-
-    Uses a monotonic counter as tiebreaker so that PriorityQueue can compare
-    tuples without requiring PaperJob to implement ``__lt__``.  This avoids
-    TypeError when two jobs share the same priority.
-    """
     paper_id: str
     session_id: str
     priority: int = 0
-    _seq: int = 0  # monotonic tiebreaker — set by SmartPaperQueue.enqueue()
+    _seq: int = 0
 
     def __lt__(self, other: "PaperJob") -> bool:
-        """Compare by priority first, then by insertion order (FIFO)."""
         if not isinstance(other, PaperJob):
             return NotImplemented
         if self.priority != other.priority:
@@ -40,15 +33,12 @@ class SmartPaperQueue:
         self._active_jobs: set[str] = set()
         self._process_fn: Callable[[PaperJob], Awaitable[None]] | None = None
         self._running = False
-        self._seq_counter: int = 0  # monotonic tiebreaker for equal priorities
+        self._seq_counter: int = 0
 
     def set_processor(self, fn: Callable[[PaperJob], Awaitable[None]]):
         self._process_fn = fn
 
     async def enqueue(self, paper_id: str, session_id: str, priority: int = 0):
-        # Guard against duplicate processing if the same paper is re-enqueued
-        # (e.g. on retry after transient failure).  This is a best-effort check;
-        # the FAISS add is idempotent, so a race here is safe.
         if paper_id in self._active_jobs:
             logger.warning(
                 f"Paper {paper_id} is already being processed — skipping duplicate enqueue"
@@ -73,12 +63,6 @@ class SmartPaperQueue:
         asyncio.create_task(self._consumer_loop())
 
     async def stop(self):
-        """Gracefully stop the queue, marking in-progress papers as QUEUED.
-
-        Papers that were actively being processed when the shutdown signal
-        arrives are re-set to QUEUED so the startup re-queue logic in
-        lifespan.py picks them up on the next run.
-        """
         self._running = False
         logger.info("SmartPaperQueue stopping")
 
@@ -132,17 +116,12 @@ class SmartPaperQueue:
             logger.error("No processor function set on SmartPaperQueue")
             return
 
-        # Prevent duplicate concurrent processing of the same paper.
         if job.paper_id in self._active_jobs:
             logger.warning(
                 f"Paper {job.paper_id} is already active — ignoring duplicate job"
             )
             return
 
-        # MED-008: Check memory pressure BEFORE acquiring the semaphore so a
-        # high-memory situation doesn't waste a concurrency slot while waiting
-        # for RAM to free up.  This keeps the semaphore available for jobs
-        # that are already in-flight and just need to finish.
         await self._wait_for_memory()
 
         async with self._semaphore:
@@ -150,9 +129,6 @@ class SmartPaperQueue:
             self._active_jobs.add(job.paper_id)
             try:
                 logger.info(f"Processing paper {job.paper_id} (active: {len(self._active_jobs)})")
-                # EDGE-CASE: enforce a hard timeout so a single paper cannot
-                # block a semaphore slot indefinitely (e.g. hung PDF extraction
-                # or infinite LLM retry loop).
                 await asyncio.wait_for(
                     self._process_fn(job),
                     timeout=PAPER_PROCESSING_TIMEOUT_SECONDS,
@@ -162,7 +138,6 @@ class SmartPaperQueue:
                     f"Paper {job.paper_id} timed out after "
                     f"{PAPER_PROCESSING_TIMEOUT_SECONDS}s — marking as failed"
                 )
-                # Mark paper failed in DB so the user sees an actionable error.
                 try:
                     from infrastructure.db.database import async_session_factory
                     from services.paper_service import mark_paper_failed
@@ -186,3 +161,4 @@ class SmartPaperQueue:
     @property
     def queue_size(self) -> int:
         return self._queue.qsize()
+

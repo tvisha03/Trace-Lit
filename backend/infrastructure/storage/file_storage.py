@@ -1,7 +1,7 @@
 
 import shutil
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Union
 
 from shared.constants import UPLOADS_DIR, EXPORTS_DIR
 from shared.logger import get_logger
@@ -16,8 +16,11 @@ class FileStorage:
         self._uploads.mkdir(parents=True, exist_ok=True)
         self._exports.mkdir(parents=True, exist_ok=True)
 
-    def save_upload(self, file: BinaryIO, filename: str, session_id: str) -> Path:
-        content = file if isinstance(file, bytes) else file.read()
+    def save_upload(self, file: Union[BinaryIO, bytes], filename: str, session_id: str) -> Path:
+        if isinstance(file, (bytes, bytearray, memoryview)):
+            content: bytes = bytes(file)
+        else:
+            content = file.read()
         if not content:
             raise ValueError(f"File '{filename}' is empty; refusing to save.")
         dest_dir = self._uploads / session_id
@@ -28,7 +31,6 @@ class FileStorage:
         except OSError as exc:
             logger.error(f"Failed to write upload '{dest}': {exc}")
             raise
-        # Verify the written file size matches what was provided
         if dest.stat().st_size != len(content):
             dest.unlink(missing_ok=True)
             raise OSError(f"Write verification failed for '{dest}': size mismatch.")
@@ -59,3 +61,4 @@ class FileStorage:
         exports_dir = self._exports / session_id
         if exports_dir.is_dir():
             shutil.rmtree(exports_dir)
+

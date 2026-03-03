@@ -20,12 +20,7 @@ from app.config import get_settings
 logger = get_logger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    setup_logging()
-    logger.info("TraceLit backend starting …")
-
-    # Validate API keys at startup
+def _validate_llm_providers() -> None:
     settings = get_settings()
     missing_keys = settings.validate_keys()
     if missing_keys:
@@ -33,46 +28,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             f"Missing API keys: {missing_keys}. "
             "At least one LLM provider (Gemini or Groq) is required for chat functionality."
         )
-    # MED-002: Refuse to start when absolutely no LLM provider is reachable.
-    # This surfaces a clear startup error instead of a silent 500 on the first
-    # chat request.  USE_LOCAL_LLM=true (Ollama) is accepted without any key.
     if not settings.has_llm_provider():
         raise RuntimeError(
             "No LLM provider is configured. "
             "Set GEMINI_API_KEY, GROQ_API_KEY, or USE_LOCAL_LLM=true in the .env file."
         )
 
-    ensure_directories()
-    await init_db()
 
-    faiss_store = FAISSStore()
-    faiss_store.load_or_create()
-
-    # IMP-05: Reconcile FAISS id_map against DB chunks on startup.
-    # If a previous run crashed mid-indexing the FAISS index may reference
-    # papers/chunks that were never committed to the DB (or vice-versa).
-    # We remove orphaned FAISS entries so retrieval doesn't return ghost IDs.
-    await _reconcile_faiss_with_db(faiss_store)
-
-    # Clean up any stale export files left from previous runs so they don't
-    # accumulate on disk.  Export files are one-time downloads that are
-    # deleted after retrieval, but a crash or ungraceful shutdown may leave
-    # orphaned files behind.
-    _cleanup_stale_exports()
-
-    app.state.faiss_store = faiss_store
-
-    llm = FallbackChain()
-    app.state.llm = llm
-
-    paper_queue = create_paper_queue()
-    set_ws_manager(ws_manager)
-    # Share the single app-level FAISS instance with paper workers so
-    # concurrent jobs don't create independent copies that overwrite each other.
-    set_faiss_store(faiss_store)
-    await paper_queue.start()
-    app.state.paper_queue = paper_queue
-
+async def _requeue_stuck_papers(paper_queue) -> None:
     async with async_session_factory() as db:
         stuck = await get_stuck_papers(db)
         if stuck:
@@ -84,32 +47,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await paper_queue.enqueue(str(paper.id), str(paper.session_id))
             await db.commit()
 
-    logger.info("TraceLit backend ready ✓")
 
-    yield
-
+async def _shutdown_services(paper_queue, faiss_store: FAISSStore) -> None:
     logger.info("TraceLit backend shutting down …")
     await paper_queue.stop()
-    shutdown_export_pool()    # Persist FAISS to disk on shutdown so vectors indexed during this run
-    # survive restarts without relying solely on reconciliation.
+    shutdown_export_pool()
     try:
         faiss_store.save()
         logger.info("FAISS index saved on shutdown")
     except Exception as exc:
-        logger.warning(f"Could not save FAISS on shutdown: {exc}")    # Release lazily-loaded ML models from memory so the process exits cleanly
-    # without holding GPU/CPU allocations open (MINOR-001 fix).
+        logger.warning(f"Could not save FAISS on shutdown: {exc}")
     from domain.analysis.keyword_extractor import unload_kw_model
     unload_kw_model()
 
 
-async def _reconcile_faiss_with_db(faiss_store: FAISSStore) -> None:
-    """Remove FAISS entries whose paper_id has no matching chunks in the DB.
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    setup_logging()
+    logger.info("TraceLit backend starting …")
 
-    This handles the case where a previous run indexed vectors into FAISS but
-    the corresponding DB rows were never committed (crash, rollback, etc.).
-    Orphaned vectors would cause score_map KeyErrors in the retriever because
-    the DB lookup returns nothing for the ghost paper_id.
-    """
+    _validate_llm_providers()
+    ensure_directories()
+    await init_db()
+
+    faiss_store = FAISSStore()
+    faiss_store.load_or_create()
+    await _reconcile_faiss_with_db(faiss_store)
+    _cleanup_stale_exports()
+
+    app.state.faiss_store = faiss_store
+    app.state.llm = FallbackChain()
+
+    paper_queue = create_paper_queue()
+    set_ws_manager(ws_manager)
+    set_faiss_store(faiss_store)
+    await paper_queue.start()
+    app.state.paper_queue = paper_queue
+
+    await _requeue_stuck_papers(paper_queue)
+    logger.info("TraceLit backend ready ✓")
+
+    yield
+
+    await _shutdown_services(paper_queue, faiss_store)
+
+
+async def _reconcile_faiss_with_db(faiss_store: FAISSStore) -> None:
     if not faiss_store.is_ready() or faiss_store.total_vectors == 0:
         return
 
@@ -131,7 +114,6 @@ async def _reconcile_faiss_with_db(faiss_store: FAISSStore) -> None:
 
 
 async def _get_orphaned_paper_ids(faiss_store: FAISSStore) -> list[str]:
-    """Return paper IDs present in the FAISS id_map but absent from the DB."""
     faiss_paper_ids: set[str] = {
         cid.split("::", 1)[0] for cid in faiss_store._id_map
     }
@@ -145,7 +127,6 @@ async def _get_orphaned_paper_ids(faiss_store: FAISSStore) -> list[str]:
 
 
 def _cleanup_stale_exports() -> None:
-    """Remove export files older than 1 hour that were orphaned by crashes."""
     import time
     from pathlib import Path
     from shared.constants import EXPORTS_DIR
@@ -154,24 +135,43 @@ def _cleanup_stale_exports() -> None:
     if not exports_path.exists():
         return
 
-    cutoff = time.time() - 3600  # 1 hour ago
+    cutoff = time.time() - 3600
+    removed = _remove_stale_files(exports_path, cutoff)
+    _cleanup_empty_directories(exports_path)
+
+    if removed:
+        logger.info(f"Cleaned up {removed} stale export file(s) from previous run")
+
+
+def _remove_stale_files(exports_path, cutoff: float) -> int:
     removed = 0
     for session_dir in exports_path.iterdir():
         if not session_dir.is_dir():
             continue
         for export_file in session_dir.iterdir():
-            try:
-                if export_file.stat().st_mtime < cutoff:
+            if _is_stale_file(export_file, cutoff):
+                try:
                     export_file.unlink()
                     removed += 1
-            except Exception:
-                pass
-        # Remove the session directory if it is now empty.
+                except Exception:
+                    pass
+    return removed
+
+
+def _is_stale_file(file_path, cutoff: float) -> bool:
+    try:
+        return file_path.stat().st_mtime < cutoff
+    except Exception:
+        return False
+
+
+def _cleanup_empty_directories(exports_path) -> None:
+    for session_dir in exports_path.iterdir():
+        if not session_dir.is_dir():
+            continue
         try:
-            if session_dir.is_dir() and not any(session_dir.iterdir()):
+            if not any(session_dir.iterdir()):
                 session_dir.rmdir()
         except Exception:
             pass
 
-    if removed:
-        logger.info(f"Cleaned up {removed} stale export file(s) from previous run")

@@ -9,6 +9,7 @@ from api.v1.routes.export import router as export_router
 from api.v1.routes.analysis import router as analysis_router
 from api.v1.routes.verification import router as verification_router
 from api.v1.routes.health import router as health_router
+from api.v1.routes.settings import router as settings_router
 
 api_v1_router = APIRouter()
 
@@ -20,3 +21,5 @@ api_v1_router.include_router(export_router, prefix="/sessions/{session_id}/expor
 api_v1_router.include_router(analysis_router, prefix="/sessions/{session_id}/analysis", tags=["Analysis"])
 api_v1_router.include_router(verification_router, prefix="/verify", tags=["Verification"])
 api_v1_router.include_router(health_router, prefix="/health", tags=["Health"])
+api_v1_router.include_router(settings_router, prefix="/settings", tags=["Settings"])
+

@@ -24,9 +24,6 @@ def extract_pdf(file_path: str | Path) -> ExtractedDocument:
 
         doc = pymupdf.open(str(file_path))
 
-        # Detect password-protected PDFs before attempting extraction so we
-        # surface a clear, actionable message instead of a cryptic parse error
-        # (MED-002 fix).
         if doc.needs_pass:
             doc.close()
             raise PDFExtractionError(
@@ -57,3 +54,4 @@ def extract_pdf(file_path: str | Path) -> ExtractedDocument:
     except Exception as exc:
         logger.error(f"PDF extraction failed for {file_path.name}: {exc}")
         raise PDFExtractionError(file_path.name, str(exc))
+

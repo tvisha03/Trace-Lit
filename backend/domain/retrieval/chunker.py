@@ -66,20 +66,12 @@ def _build_chunk(
     paragraph_idx: int,
     paper_id: str | None = None,
 ) -> Chunk:
-    # Include a short paper_id prefix so paragraph IDs are globally unique
-    # across papers (HI-004 fix).  Without this, two different papers would
-    # both produce "P5", making FAISS composite keys the only disambiguation
-    # mechanism and causing display/UI confusion.
     if paper_id:
         paragraph_id = f"{paper_id[:8]}_P{paragraph_idx}"
     else:
         paragraph_id = f"P{paragraph_idx}"
     sentences = split_into_sentences(text)
 
-    # EDGE-CASE: If sentence splitting yields no sentences (e.g. text is only
-    # whitespace or special characters after splitting), log a warning and
-    # treat the entire text as a single sentence so the chunk still has a
-    # usable sentence_map for HAVF verification.
     if not sentences:
         logger.warning(
             f"Zero sentences extracted from chunk {paragraph_id} — "
@@ -155,3 +147,4 @@ def _split_large_paragraph(
         chunks.append(chunk)
 
     return chunks
+

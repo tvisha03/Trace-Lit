@@ -36,11 +36,6 @@ def get_file_size_mb(path: str | Path) -> float:
 
 
 def check_disk_space(path: str | Path = UPLOADS_DIR, min_mb: int = MIN_DISK_SPACE_MB) -> bool:
-    """Return True if there is sufficient free disk space at *path*.
-
-    GAP-6: Called before accepting uploads to avoid partial writes and
-    silent data corruption when the disk is nearly full.
-    """
     try:
         usage = shutil.disk_usage(str(path) if Path(path).exists() else ".")
         free_mb = usage.free / (1024 * 1024)
@@ -53,3 +48,4 @@ def check_disk_space(path: str | Path = UPLOADS_DIR, min_mb: int = MIN_DISK_SPAC
     except Exception as exc:
         logger.warning(f"Disk space check failed (assuming OK): {exc}")
         return True
+

@@ -1,8 +1,8 @@
 {
   "info": {
-    "_postman_id": "trace-lit-collection-004",
-    "name": "TraceLit API v2.2",
-    "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n## Request ID Tracking\n\nEvery response includes an `X-Request-ID` header. If you send an `X-Request-ID` header in your request, it is echoed back; otherwise a UUID is auto-generated. Use this for correlating logs and debugging.\n\n---\n\n## Request Timeout\n\nAll non-streaming, non-WebSocket requests have a **120-second server-side timeout**. If the request exceeds this limit, a `504 Gateway Timeout` response is returned.\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  POST /sessions/{id}/export               Export results\n10. POST /verify/{session_id}               Standalone HAVF verify\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## Paper Processing Stages\n\n`registered` → `queued` → `extracting` → `chunking` → `embedding` → `completed` | `failed`\n\n---\n\n## Limits\n\n| Resource | Limit |\n|---|---|\n| Sessions per instance | 50 |\n| Papers per session | 7 |\n| Max file size | 50 MB |\n| FAISS vectors | 500,000 |\n| Min free disk space | 500 MB |\n| Request timeout | 120 s |",
+    "_postman_id": "trace-lit-collection-006",
+    "name": "TraceLit API v2.4",
+    "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n### Changelog v2.4\n\n- Codebase cleanup: all comments and docstrings stripped (except `# noqa: F401`)\n- All Codacy/Pylance errors resolved (complexity, line-count)\n- 28 endpoints verified — no API contract changes from v2.3\n\n---\n\n## Request ID Tracking\n\nEvery response includes an `X-Request-ID` header. If you send an `X-Request-ID` header in your request, it is echoed back; otherwise a UUID is auto-generated. Use this for correlating logs and debugging.\n\n---\n\n## Request Timeout\n\nAll non-streaming, non-WebSocket requests have a **120-second server-side timeout**. If the request exceeds this limit, a `504 Gateway Timeout` response is returned.\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  GET  /sessions/{id}/analysis/review/stream  Streaming lit review (SSE)\n10. POST /sessions/{id}/export               Export results\n11. POST /verify/{session_id}               Standalone HAVF verify\n12. GET  /settings/ollama                    Check Ollama status\n13. PUT  /settings/ollama                    Toggle Ollama priority\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## Paper Processing Stages\n\n`registered` → `queued` → `extracting` → `chunking` → `embedding` → `completed` | `failed`\n\n---\n\n## Limits\n\n| Resource | Limit |\n|---|---|\n| Sessions per instance | 50 |\n| Papers per session | 7 |\n| Max file size | 50 MB |\n| Max export file size | 100 MB |\n| FAISS vectors | 500,000 |\n| Min free disk space | 500 MB |\n| Request timeout | 120 s |\n| WebSocket connections per session | 10 |\n| Export formats | pdf, excel, bibtex, docx, latex |",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -455,6 +455,19 @@
               "body": "{\n  \"detail\": \"File 'renamed.pdf' is not a valid PDF (magic-byte check failed)\"\n}"
             },
             {
+              "name": "409 Duplicate Content (SHA-256)",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"A file with identical content has already been uploaded to this session (SHA-256 match). Filename: attention_is_all_you_need.pdf\"\n}"
+            },
+            {
               "name": "507 Insufficient Disk Space",
               "status": "Insufficient Storage",
               "code": 507,
@@ -610,7 +623,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"query\": \"What are the main contributions of the uploaded papers?\",\n  \"stream\": false\n}",
+              "raw": "{\n  \"query\": \"What are the main contributions of the uploaded papers?\",\n  \"stream\": false,\n  \"keywords\": [\"attention\", \"transformer\"]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -622,7 +635,7 @@
               "host": ["{{base_url}}{{api_prefix}}"],
               "path": ["sessions", "{{session_id}}", "chat"]
             },
-            "description": "Send a natural-language query and receive a verified, cited answer as a single JSON response.\n\n**Pipeline per request:**\n1. Query is embedded → top-k sentence chunks retrieved from FAISS\n2. Context assembled → sent to LLM (Gemini → Groq → Ollama fallback)\n3. LLM must cite every sentence with `[P#]` paragraph tags\n4. Citation IDs validated against indexed paragraphs\n5. Each sentence passes HAVF (embedding similarity + optional cross-encoder)\n6. Message persisted to session chat history\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `query` | string | **Yes** | 1–5000 chars |\n| `stream` | bool | No | `false` for sync JSON (default) |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `content` | string | Full answer with `[P#]` citation tags |\n| `provider` | string | LLM used: `gemini` \\| `groq` \\| `ollama` |\n| `havf_results` | array | Per-sentence verification (see below) |\n| `token_count` | int | Tokens consumed by LLM |\n| `latency_ms` | float | End-to-end latency in ms |\n\n**HAVF result fields per sentence:**\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The verified sentence |\n| `confidence` | string | `HIGH` \\| `MEDIUM` \\| `LOW` |\n| `score` | float | Best cosine similarity score 0.0–1.0 |\n| `source_sentence` | string\\|null | Most similar source sentence |\n| `paragraph_id` | string\\|null | Cited paragraph ID, e.g. `P5` |\n| `sentence_key` | string\\|null | Internal sentence identifier |\n| `verification_method` | string\\|null | `EMBEDDING_SIMILARITY` \\| `CROSS_ENCODER_RERANK` \\| `SKIPPED` |\n\n> Requires at least one paper with `status = ready`."
+            "description": "Send a natural-language query and receive a verified, cited answer as a single JSON response.\n\n**Pipeline per request:**\n1. Query is embedded → top-k sentence chunks retrieved from FAISS\n2. If `keywords` provided, chunks are post-filtered to only those containing at least one keyword\n3. Context assembled → sent to LLM (Gemini → Groq → Ollama fallback)\n4. LLM must cite every sentence with `[P#]` paragraph tags\n5. Citation IDs validated against indexed paragraphs\n6. Each sentence passes HAVF (embedding similarity + optional cross-encoder)\n7. Message persisted to session chat history\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `query` | string | **Yes** | 1–5000 chars |\n| `stream` | bool | No | `false` for sync JSON (default) |\n| `keywords` | string[] | No | Max 10 items. Post-filter retrieved chunks to only those containing a keyword. |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `content` | string | Full answer with `[P#]` citation tags |\n| `provider` | string | LLM used: `gemini` \\| `groq` \\| `ollama` |\n| `havf_results` | array | Per-sentence verification (see below) |\n| `token_count` | int | Tokens consumed by LLM |\n| `latency_ms` | float | End-to-end latency in ms |\n\n**HAVF result fields per sentence:**\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The verified sentence |\n| `confidence` | string | `HIGH` \\| `MEDIUM` \\| `LOW` |\n| `score` | float | Best cosine similarity score 0.0–1.0 |\n| `source_sentence` | string\\|null | Most similar source sentence |\n| `paragraph_id` | string\\|null | Cited paragraph ID, e.g. `P5` |\n| `sentence_key` | string\\|null | Internal sentence identifier |\n| `verification_method` | string\\|null | `EMBEDDING_SIMILARITY` \\| `CROSS_ENCODER_RERANK` \\| `SKIPPED` |\n\n> Requires at least one paper with `status = ready`."
           },
           "response": [
             {
@@ -686,7 +699,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"query\": \"Summarize the key findings across all papers.\"\n}",
+              "raw": "{\n  \"query\": \"Summarize the key findings across all papers.\",\n  \"keywords\": []\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -876,7 +889,7 @@
     },
     {
       "name": "📤 Export",
-      "description": "Export chat history or comparison results to PDF or Excel. Files are stored server-side and retrieved via a separate download endpoint.",
+      "description": "Export chat history or comparison results to PDF, Excel, Word, LaTeX, or BibTeX. Files are stored server-side and retrieved via a separate download endpoint.",
       "item": [
         {
           "name": "Export Session Chat (PDF)",
@@ -917,7 +930,7 @@
               "host": ["{{base_url}}{{api_prefix}}"],
               "path": ["sessions", "{{session_id}}", "export"]
             },
-            "description": "Export the session chat history (all messages with citations and HAVF data) to a **PDF** document.\n\n**Request body:**\n\n| Field | Type | Required | Values |\n|---|---|---|---|\n| `format` | string | **Yes** | `\"pdf\"` or `\"excel\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment."
+            "description": "Export the session chat history (all messages with citations and HAVF data) to a **PDF** document.\n\n**Request body:**\n\n| Field | Type | Required | Values |\n|---|---|---|---|\n| `format` | string | **Yes** | `\"pdf\"` \\| `\"excel\"` \\| `\"bibtex\"` \\| `\"docx\"` \\| `\"latex\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment.\n> Maximum export file size: 100 MB."
           },
           "response": [
             {
@@ -993,6 +1006,177 @@
           ]
         },
         {
+          "name": "Export Session Chat (Word / DOCX)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"docx\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export the session chat history to a **Word (.docx)** document with HAVF confidence color-coding.\n\nHIGH confidence sentences are green, MEDIUM yellow, LOW red.\n\n> See **Export Session Chat (PDF)** for full field documentation."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.docx\",\n  \"filename\": \"export_2026-03-02_ca86d21e.docx\",\n  \"format\": \"docx\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export Session Chat (LaTeX)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"latex\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export the session chat history to a **LaTeX (.tex)** document with xcolor-based HAVF confidence highlighting.\n\nCompiles with any standard LaTeX distribution (pdflatex, xelatex, lualatex).\n\n> See **Export Session Chat (PDF)** for full field documentation."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.tex\",\n  \"filename\": \"export_2026-03-02_ca86d21e.tex\",\n  \"format\": \"latex\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export Session Chat (BibTeX)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"bibtex\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export cited papers as a **BibTeX (.bib)** bibliography file.\n\nExtracts metadata (title, authors, year) from all cited papers in the session.\n\n> See **Export Session Chat (PDF)** for full field documentation."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.bib\",\n  \"filename\": \"export_2026-03-02_ca86d21e.bib\",\n  \"format\": \"bibtex\"\n}"
+            }
+          ]
+        },
+        {
           "name": "Export Comparison (PDF or Excel)",
           "event": [
             {
@@ -1031,7 +1215,7 @@
               "host": ["{{base_url}}{{api_prefix}}"],
               "path": ["sessions", "{{session_id}}", "export", "comparison"]
             },
-            "description": "Run a paper comparison and export the result to a file in one combined request.\n\nEquivalent to `POST /compare` followed by `POST /export` but in a single call.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `paper_ids` | string[] | **Yes** | 2–7 UUIDs of `ready` papers |\n| `format` | string | No | `\"pdf\"` (default) or `\"excel\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment."
+            "description": "Run a paper comparison and export the result to a file in one combined request.\n\nEquivalent to `POST /compare` followed by `POST /export` but in a single call.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `paper_ids` | string[] | **Yes** | 2–7 UUIDs of `ready` papers |\n| `format` | string | No | `\"pdf\"` (default) \\| `\"excel\"` \\| `\"bibtex\"` \\| `\"docx\"` \\| `\"latex\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment.\n> Maximum export file size: 100 MB."
           },
           "response": [
             {
@@ -1065,7 +1249,7 @@
                 "{{export_filename}}"
               ]
             },
-            "description": "Download a previously generated export file by filename.\n\nSet `export_filename` in the environment first — the export requests do this automatically via their test scripts.\n\n**Path parameters:**\n- `session_id` — owning session UUID\n- `filename` — filename from the export response\n\n**Response:**\n- PDF → `Content-Type: application/pdf`\n- Excel → `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`\n- Body is the **raw binary file**\n\n**Errors:** `404 Not Found` if the file was not found on disk."
+            "description": "Download a previously generated export file by filename.\n\nSet `export_filename` in the environment first — the export requests do this automatically via their test scripts.\n\n**Path parameters:**\n- `session_id` — owning session UUID\n- `filename` — filename from the export response\n\n**Response:**\n- PDF → `Content-Type: application/pdf`\n- Excel → `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`\n- Word → `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`\n- LaTeX → `Content-Type: application/x-tex`\n- BibTeX → `Content-Type: application/x-bibtex`\n- Body is the **raw binary file**\n\n**Errors:** `404 Not Found` if the file was not found on disk."
           },
           "response": [
             {
@@ -1210,6 +1394,58 @@
           ]
         },
         {
+          "name": "Literature Review (Stream / SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/review/stream",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "analysis",
+                "review",
+                "stream"
+              ]
+            },
+            "description": "Streaming variant of the Literature Review endpoint. Returns **Server-Sent Events (SSE)** so the frontend can render the review incrementally as it is generated.\n\n**SSE event types:**\n\n| Event | Description |\n|---|---|\n| `token` | Incremental LLM text chunk |\n| `done` | Final event: provider used, completion signal |\n| `error` | Unrecoverable error |\n\n**SSE format example:**\n\n```\ndata: {\"type\": \"token\", \"content\": \"## Literature\"}\ndata: {\"type\": \"token\", \"content\": \" Review\"}\ndata: {\"type\": \"token\", \"content\": \"\\n\\n### Introduction\"}\n...\ndata: {\"type\": \"done\", \"provider\": \"gemini\"}\n```\n\n> ⚠️ Postman HTTP runner has limited SSE support. Use the browser `EventSource` API or `curl --no-buffer` for best results.\n\n> Requires at least one paper with `status = ready`."
+          },
+          "response": [
+            {
+              "name": "200 OK (SSE stream)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "text",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "text/event-stream"
+                }
+              ],
+              "body": "data: {\"type\": \"token\", \"content\": \"## Literature Review\"}\n\ndata: {\"type\": \"token\", \"content\": \"\\n\\n### Introduction\"}\n\ndata: {\"type\": \"token\", \"content\": \"\\nRecent advances in NLP...\"}\n\ndata: {\"type\": \"done\", \"provider\": \"gemini\"}"
+            },
+            {
+              "name": "404 No Completed Papers",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"No completed papers found in this session. Upload and process papers first.\"\n}"
+            }
+          ]
+        },
+        {
           "name": "Paper Summary",
           "request": {
             "method": "GET",
@@ -1345,7 +1581,7 @@
     },
     {
       "name": "🔌 WebSocket",
-      "description": "Real-time paper processing progress. Use Postman's WebSocket tab (New > WebSocket Request) to connect — standard HTTP requests cannot upgrade to WebSocket.",
+      "description": "Real-time paper processing progress. Use Postman's WebSocket tab (New > WebSocket Request) to connect — standard HTTP requests cannot upgrade to WebSocket.\n\n**Connection limit:** Maximum 10 concurrent WebSocket connections per session. Connections beyond the cap are closed with code `4029`.",
       "item": [
         {
           "name": "Paper Processing Progress (WS)",
@@ -1357,9 +1593,124 @@
               "host": ["{{ws_base_url}}"],
               "path": ["ws", "{{session_id}}"]
             },
-            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**⚠️ This is a WebSocket URL. Open Postman → New → WebSocket Request.**\n\nThe WebSocket is mounted at the app root (`/ws`), **not** under `/api/v1`.\n\n---\n\n## Connection Steps\n\n1. Call `GET /sessions/{session_id}/ws-url` to get the exact URL\n2. Open Postman → **New → WebSocket Request**\n3. Paste the returned `websocket_url` and click **Connect**\n\nOr use: `{{ws_base_url}}/ws/{{session_id}}`\n\n---\n\n## Incoming Events\n\n**Connected:**\n```json\n{ \"type\": \"connected\", \"connection_id\": \"...\" }\n```\n\n**Progress update:**\n```json\n{ \"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.42, \"stage\": \"embedding\", \"eta_seconds\": 18 }\n```\n\n**Paper ready:**\n```json\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n```\n\n**Paper failed:**\n```json\n{ \"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```\n\n**Paper deleted:**\n```json\n{ \"type\": \"paper_deleted\", \"paper_id\": \"...\", \"session_id\": \"...\" }\n```\n\n**Session deleted:**\n```json\n{ \"type\": \"session_deleted\", \"session_id\": \"...\" }\n```\n\n---\n\n## Session Validation\n\nThe server validates the `session_id` before accepting the connection. If the session does not exist, the connection is closed immediately with close code **4004** and reason `Session not found`.\n\n---\n\n## Heartbeat\n\nThe server sends a `ping` event every 30 seconds. Send the text message `ping` — the server replies with a JSON `pong`.\n\n---\n\n## Processing Stages\n\n| Stage | Description |\n|---|---|\n| `extraction` | Extracting text from PDF pages |\n| `chunking` | Splitting into sentence-aware chunks |\n| `embedding` | Generating sentence embeddings |\n| `completed` | Vectors written to FAISS index |"
+            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**⚠️ This is a WebSocket URL. Open Postman → New → WebSocket Request.**\n\nThe WebSocket is mounted at the app root (`/ws`), **not** under `/api/v1`.\n\n---\n\n## Connection Steps\n\n1. Call `GET /sessions/{session_id}/ws-url` to get the exact URL\n2. Open Postman → **New → WebSocket Request**\n3. Paste the returned `websocket_url` and click **Connect**\n\nOr use: `{{ws_base_url}}/ws/{{session_id}}`\n\n---\n\n## Incoming Events\n\n**Connected:**\n```json\n{ \"type\": \"connected\", \"connection_id\": \"...\" }\n```\n\n**Progress update:**\n```json\n{ \"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.42, \"stage\": \"embedding\", \"eta_seconds\": 18 }\n```\n\n**Paper ready:**\n```json\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n```\n\n**Paper failed:**\n```json\n{ \"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```\n\n**Paper deleted:**\n```json\n{ \"type\": \"paper_deleted\", \"paper_id\": \"...\", \"session_id\": \"...\" }\n```\n\n**Session deleted:**\n```json\n{ \"type\": \"session_deleted\", \"session_id\": \"...\" }\n```\n\n---\n\n## Session Validation\n\nThe server validates the `session_id` before accepting the connection. If the session does not exist, the connection is closed immediately with close code **4004** and reason `Session not found`.\n\n**Connection limit:** Maximum 10 concurrent WebSocket connections per session. Extra connections are closed with code **4029**.\n\n---\n\n## Heartbeat\n\nThe server sends a `ping` event every 30 seconds. Send the text message `ping` — the server replies with a JSON `pong`.\n\n---\n\n## Processing Stages\n\n| Stage | Description |\n|---|---|\n| `extraction` | Extracting text from PDF pages |\n| `chunking` | Splitting into sentence-aware chunks |\n| `embedding` | Generating sentence embeddings |\n| `completed` | Vectors written to FAISS index |"
           },
           "response": []
+        }
+      ]
+    },
+    {
+      "name": "⚙️ Settings",
+      "description": "Runtime configuration endpoints. Changes persist only for the lifetime of the running server — they do NOT modify the `.env` file.",
+      "item": [
+        {
+          "name": "Get Ollama Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/ollama",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["settings", "ollama"]
+            },
+            "description": "Return the current Ollama-first (local LLM) toggle state and active provider order.\n\nWhen `use_local_llm` is `true`, the provider chain is Ollama → Gemini → Groq.\nWhen `false`, it is Gemini → Groq → Ollama (default).\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `use_local_llm` | bool | Whether Ollama-first mode is active |\n| `provider_order` | string[] | Current LLM fallback order |"
+          },
+          "response": [
+            {
+              "name": "200 OK — default (cloud first)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": false,\n  \"provider_order\": [\n    \"gemini\",\n    \"groq\",\n    \"ollama\"\n  ]\n}"
+            },
+            {
+              "name": "200 OK — local first",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": true,\n  \"provider_order\": [\n    \"ollama\",\n    \"gemini\",\n    \"groq\"\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Toggle Ollama Priority",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"use_local_llm\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/ollama",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["settings", "ollama"]
+            },
+            "description": "Toggle local-first (Ollama) mode at runtime.\n\nWhen `use_local_llm` is `true`, the provider fallback order becomes:\n**Ollama → Gemini → Groq**\n\nWhen `false`, it reverts to the default:\n**Gemini → Groq → Ollama**\n\nThe change persists only for the lifetime of the running server; it does NOT modify the `.env` file.\n\n**Request body:**\n\n| Field | Type | Required | Description |\n|---|---|---|---|\n| `use_local_llm` | bool | **Yes** | `true` for Ollama-first, `false` for cloud-first |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `use_local_llm` | bool | Updated toggle state |\n| `provider_order` | string[] | New LLM fallback order |"
+          },
+          "response": [
+            {
+              "name": "200 OK — toggled to local",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": true,\n  \"provider_order\": [\n    \"ollama\",\n    \"gemini\",\n    \"groq\"\n  ]\n}"
+            },
+            {
+              "name": "200 OK — toggled to cloud",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": false,\n  \"provider_order\": [\n    \"gemini\",\n    \"groq\",\n    \"ollama\"\n  ]\n}"
+            },
+            {
+              "name": "422 Validation Error",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": [\n    {\n      \"loc\": [\n        \"body\",\n        \"use_local_llm\"\n      ],\n      \"msg\": \"field required\",\n      \"type\": \"value_error.missing\"\n    }\n  ]\n}"
+            }
+          ]
         }
       ]
     }

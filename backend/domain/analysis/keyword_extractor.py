@@ -16,12 +16,6 @@ def _get_kw_model():
 
 
 def unload_kw_model() -> None:
-    """Release the KeyBERT model from memory.
-
-    Call this from the application lifespan shutdown hook to prevent the
-    loaded transformer from leaking into test processes or keeping GPU/CPU
-    memory allocated after the server stops (MINOR-001 fix).
-    """
     global _kw_model
     if _kw_model is not None:
         _kw_model = None
@@ -60,3 +54,4 @@ def extract_keywords_per_paper(
         pid: extract_keywords(text, top_n=top_n)
         for pid, text in paper_texts.items()
     }
+

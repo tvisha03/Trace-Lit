@@ -95,3 +95,4 @@ def find_gaps(
 
     logger.info(f"Gap analysis: {len(themes)} themes, {len(underexplored)} underexplored")
     return GapAnalysis(themes=themes, underexplored=underexplored)
+

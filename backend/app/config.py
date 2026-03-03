@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     @field_validator("OLLAMA_BASE_URL")
     @classmethod
     def _validate_ollama_url(cls, v: str) -> str:  # noqa: N805
-        """Ensure the Ollama base URL is a valid HTTP(S) URL."""
         parsed = urlparse(v)
         if parsed.scheme not in ("http", "https"):
             raise ValueError(
@@ -48,14 +47,10 @@ class Settings(BaseSettings):
     MAX_UPLOAD_FILES: int = 7
     MAX_FILE_SIZE_MB: int = 50
 
-    # HAVF verification thresholds — override via environment variables to
-    # tune the confidence cutoffs without redeploying (HI-003 fix).
     HAVF_HIGH_THRESHOLD: float = 0.85
     HAVF_MEDIUM_THRESHOLD: float = 0.65
     HAVF_CROSS_ENCODER_THRESHOLD: float = 0.75
 
-    # Cross-encoder model — override via CROSS_ENCODER_MODEL env var to use
-    # a different model without changing code (Improvement fix).
     CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     model_config = {
@@ -65,13 +60,7 @@ class Settings(BaseSettings):
     }
 
     def validate_keys(self) -> list[str]:
-        """Return a list of missing cloud API key names.
-
-        When USE_LOCAL_LLM is True, Ollama requires no API credentials so
-        missing cloud keys are not considered errors in that mode.
-        """
         if self.USE_LOCAL_LLM:
-            # Ollama is the primary provider; cloud keys are optional fallbacks.
             return []
         missing = []
         if not self.GEMINI_API_KEY:
@@ -81,14 +70,10 @@ class Settings(BaseSettings):
         return missing
 
     def has_llm_provider(self) -> bool:
-        """Return True if at least one LLM provider is operational at startup.
-
-        Used by the lifespan hook to refuse to start when no provider is
-        configured at all, preventing silent 500s on the first chat request.
-        """
         return bool(self.GEMINI_API_KEY) or bool(self.GROQ_API_KEY) or self.USE_LOCAL_LLM
 
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+

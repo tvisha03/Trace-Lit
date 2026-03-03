@@ -17,8 +17,6 @@ class Paper(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    # Cascade: deleting a Session removes all its Papers at the DB level,
-    # serving as a safety net alongside the service-layer cleanup.
     session_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("sessions.id", ondelete="CASCADE"),
@@ -30,21 +28,24 @@ class Paper(Base):
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        SAEnum(PaperStatus), default=PaperStatus.REGISTERED, index=True  # MED-005: explicit initial state
+        SAEnum(PaperStatus), default=PaperStatus.REGISTERED, index=True
     )
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     file_path: Mapped[str] = mapped_column(String(1024))
     file_size_mb: Mapped[float] = mapped_column(Float, default=0.0)
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True,
+        comment="SHA-256 hex digest of the raw PDF bytes for duplicate detection.",
+    )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
 
-    # Composite index supports the common (session_id, status) filter used by
-    # get_papers_by_session with a status argument in paper_service and routes.
     __table_args__ = (
         Index("ix_papers_session_status", "session_id", "status"),
     )
+
