@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,10 @@ from app.dependencies import get_db, get_faiss_store
 from infrastructure.llm.fallback_chain import FallbackChain
 from services.chat_service import chat, chat_stream
 from infrastructure.db.crud.message_crud import get_messages_by_session
+from shared.errors import NotFoundError, InsufficientDataError
+from shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -30,7 +34,21 @@ async def send_message(
 ):
     """Non-streaming chat endpoint. Returns a fully-formed ChatResponse."""
     llm = _get_llm(request)
-    response = await chat(session_id, body.query, db, faiss_store, llm)
+    try:
+        response = await chat(session_id, body.query, db, faiss_store, llm)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except InsufficientDataError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        # Catch-all for LLM failures, FAISS errors, and unexpected exceptions.
+        # Log full details server-side; return a safe, generic message to the
+        # client so no internal state is leaked (MED-004 fix).
+        logger.error(f"Chat failed for session {session_id}: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while processing your request. Please try again.",
+        )
     return ChatResponse(
         content=response.content,
         provider=response.provider.value,

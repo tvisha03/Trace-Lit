@@ -163,6 +163,13 @@ class ReviewResponse(BaseModel):
     paper_count: int
     provider: str
 
+class SummaryResponse(BaseModel):
+    """Response for the on-demand single-paper summary endpoint."""
+    paper_id: str
+    title: Optional[str] = None
+    summary: str
+    provider: str
+
 class VerifyRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000)
     paper_ids: list[str] = Field(..., min_length=1)

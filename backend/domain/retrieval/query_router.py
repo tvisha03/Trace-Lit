@@ -118,6 +118,13 @@ def _compute_scores(
     _apply_contextual_boosts(scores, query, query_lower, history, paper_count)
     return scores
 
+# Minimum confidence required to trust a non-SIMPLE_QA classification.
+# When every pattern fires weakly and the winning score is still below this
+# threshold the classifier defaults to SIMPLE_QA so straightforward questions
+# receive broad retrieval rather than being silently mis-routed (MED-001 fix).
+_MIN_CLASSIFICATION_CONFIDENCE = 0.3
+
+
 def classify_query(
     query: str,
     history: list | None = None,
@@ -132,6 +139,16 @@ def classify_query(
 
     best_type = max(scores, key=lambda k: scores[k])
     best_score = scores[best_type]
+
+    # If confidence is too low for a specialised route, fall back to SIMPLE_QA
+    # so the query gets standard retrieval rather than a potentially wrong route.
+    if best_type != QueryType.SIMPLE_QA and best_score < _MIN_CLASSIFICATION_CONFIDENCE:
+        logger.info(
+            f"Query confidence {best_score:.2f} below threshold "
+            f"{_MIN_CLASSIFICATION_CONFIDENCE} — defaulting to SIMPLE_QA"
+        )
+        best_type = QueryType.SIMPLE_QA
+        best_score = scores[QueryType.SIMPLE_QA]
 
     classification = _build_classification(best_type, best_score, paper_count)
 

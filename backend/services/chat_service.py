@@ -29,11 +29,13 @@ async def validate_response_has_citations(response: str, context: list[dict]) ->
         # No citations - check if context was empty
         if not context:
             return "I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers."
-        # Context existed but model didn't cite - this is a hallucination risk
+        # Context existed but model didn't produce citations. Return a clear, user-facing
+        # apology rather than internal placeholder text (CRT-001 fix).
         return (
-            "I don't see specific citations in my response. "
-            "Let me reconsider...\n\n"
-            "[Model should regenerate with proper citations]"
+            "I apologize, but I was unable to properly attribute my response to specific "
+            "sections of the uploaded papers. The information provided may not be "
+            "accurately sourced. Please try rephrasing your question or verify the "
+            "information independently."
         )
 
     return response

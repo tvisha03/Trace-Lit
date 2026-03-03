@@ -14,6 +14,19 @@ def _get_kw_model():
             _kw_model = KeyBERT(model="all-MiniLM-L6-v2")
     return _kw_model
 
+
+def unload_kw_model() -> None:
+    """Release the KeyBERT model from memory.
+
+    Call this from the application lifespan shutdown hook to prevent the
+    loaded transformer from leaking into test processes or keeping GPU/CPU
+    memory allocated after the server stops (MINOR-001 fix).
+    """
+    global _kw_model
+    if _kw_model is not None:
+        _kw_model = None
+        logger.info("KeyBERT model unloaded from memory")
+
 def extract_keywords(
     text: str,
     top_n: int = 10,

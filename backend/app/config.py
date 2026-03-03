@@ -40,16 +40,28 @@ class Settings(BaseSettings):
     }
 
     def validate_keys(self) -> list[str]:
-        """Validate that at least one API key is configured.
+        """Return a list of missing cloud API key names.
 
-        Returns list of missing API key names.
+        When USE_LOCAL_LLM is True, Ollama requires no API credentials so
+        missing cloud keys are not considered errors in that mode.
         """
+        if self.USE_LOCAL_LLM:
+            # Ollama is the primary provider; cloud keys are optional fallbacks.
+            return []
         missing = []
         if not self.GEMINI_API_KEY:
             missing.append("GEMINI_API_KEY")
         if not self.GROQ_API_KEY:
             missing.append("GROQ_API_KEY")
         return missing
+
+    def has_llm_provider(self) -> bool:
+        """Return True if at least one LLM provider is operational at startup.
+
+        Used by the lifespan hook to refuse to start when no provider is
+        configured at all, preventing silent 500s on the first chat request.
+        """
+        return bool(self.GEMINI_API_KEY) or bool(self.GROQ_API_KEY) or self.USE_LOCAL_LLM
 
 
 @lru_cache()

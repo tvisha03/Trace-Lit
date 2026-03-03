@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from domain.analysis.keyword_extractor import extract_keywords, extract_keywords_per_paper
 from domain.analysis.gap_finder import find_gaps, GapAnalysis
 from domain.analysis.review_generator import generate_review
+from domain.generation.prompts import SYSTEM_PROMPT, SUMMARY_PROMPT_TEMPLATE, build_context_block
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
 from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.llm.fallback_chain import FallbackChain
@@ -81,5 +82,51 @@ async def generate_literature_review(
     return {
         "review": review_text,
         "paper_count": len(papers),
+        "provider": provider.value,
+    }
+
+
+async def generate_paper_summary(
+    paper_id: str,
+    db: AsyncSession,
+    llm: FallbackChain,
+    user_question: str = "Provide a structured summary of this paper.",
+) -> dict:
+    """Generate an on-demand summary for a single paper.
+
+    Uses SUMMARY_PROMPT_TEMPLATE to build a structured response covering
+    the paper's problem, approach, key findings, and contributions.
+    Each point must be cited with [P#] tags so HAVF can verify the output.
+    """
+    paper = await get_paper(db, paper_id)
+    if not paper:
+        raise NotFoundError("Paper", paper_id)
+
+    chunks = await get_chunks_by_paper(db, paper_id)
+    if not chunks:
+        raise InsufficientDataError(
+            f"Paper '{paper_id}' has no indexed chunks yet. "
+            "Please wait for processing to complete before requesting a summary."
+        )
+
+    # Use the first 20 chunks to stay within token budget while still
+    # covering the abstract, introduction, methodology, and conclusions.
+    context = build_context_block(chunks[:20])
+    user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
+        context=context, question=user_question
+    )
+
+    summary_text, provider, _ = await llm.generate(
+        system_prompt=SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+    )
+
+    logger.info(
+        f"Generated summary for paper {paper_id} using {provider.value}"
+    )
+    return {
+        "paper_id": paper_id,
+        "title": paper.title,
+        "summary": summary_text,
         "provider": provider.value,
     }

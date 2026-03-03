@@ -32,6 +32,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             f"Missing API keys: {missing_keys}. "
             "At least one LLM provider (Gemini or Groq) is required for chat functionality."
         )
+    # MED-002: Refuse to start when absolutely no LLM provider is reachable.
+    # This surfaces a clear startup error instead of a silent 500 on the first
+    # chat request.  USE_LOCAL_LLM=true (Ollama) is accepted without any key.
+    if not settings.has_llm_provider():
+        raise RuntimeError(
+            "No LLM provider is configured. "
+            "Set GEMINI_API_KEY, GROQ_API_KEY, or USE_LOCAL_LLM=true in the .env file."
+        )
 
     ensure_directories()
     await init_db()
@@ -69,3 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("TraceLit backend shutting down …")
     await paper_queue.stop()
     shutdown_export_pool()
+    # Release lazily-loaded ML models from memory so the process exits cleanly
+    # without holding GPU/CPU allocations open (MINOR-001 fix).
+    from domain.analysis.keyword_extractor import unload_kw_model
+    unload_kw_model()

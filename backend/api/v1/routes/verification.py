@@ -17,10 +17,16 @@ router = APIRouter()
 # HAVF is computationally expensive (embedding + cross-encoder reranking), so
 # we cap each client IP at _RATE_LIMIT_MAX calls per _RATE_LIMIT_WINDOW seconds
 # to prevent accidental or deliberate resource exhaustion.
+#
+# ⚠️  PRODUCTION NOTE (HI-002): This is a separate rate limiter from the
+# upload endpoint's _upload_rate_limit_calls.  Keep them distinct: upload
+# allows 5 req/min (expensive PDF pipeline), verification allows 10 req/min
+# (faster but still CPU/GPU intensive).  Do NOT merge them.
+# In multi-instance deployments replace with a shared Redis-backed limiter.
 # ---------------------------------------------------------------------------
 _RATE_LIMIT_MAX = 10
 _RATE_LIMIT_WINDOW_SECONDS = 60.0
-_rate_limit_calls: dict[str, list[float]] = defaultdict(list)
+_verify_rate_limit_calls: dict[str, list[float]] = defaultdict(list)
 
 
 def _enforce_rate_limit(request: Request) -> None:
@@ -29,10 +35,10 @@ def _enforce_rate_limit(request: Request) -> None:
     cutoff = now - _RATE_LIMIT_WINDOW_SECONDS
 
     # Evict timestamps that have fallen outside the sliding window.
-    calls = _rate_limit_calls[client_ip]
-    _rate_limit_calls[client_ip] = [t for t in calls if t > cutoff]
+    calls = _verify_rate_limit_calls[client_ip]
+    _verify_rate_limit_calls[client_ip] = [t for t in calls if t > cutoff]
 
-    if len(_rate_limit_calls[client_ip]) >= _RATE_LIMIT_MAX:
+    if len(_verify_rate_limit_calls[client_ip]) >= _RATE_LIMIT_MAX:
         raise HTTPException(
             status_code=429,
             detail=(
@@ -41,7 +47,7 @@ def _enforce_rate_limit(request: Request) -> None:
             ),
         )
 
-    _rate_limit_calls[client_ip].append(now)
+    _verify_rate_limit_calls[client_ip].append(now)
 
 
 @router.post("/{session_id}", response_model=VerifyResponse)

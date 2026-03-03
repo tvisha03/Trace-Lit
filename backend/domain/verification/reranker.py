@@ -12,6 +12,12 @@ logger = get_logger(__name__)
 _cross_encoder = None
 
 def _get_cross_encoder():
+    """Return the cross-encoder model, or None if it cannot be loaded.
+
+    Returning None instead of raising allows HAVF to degrade gracefully to
+    Level 1 (embedding similarity) rather than crashing the verification
+    pipeline entirely when the model is unavailable (CRT-003 fix).
+    """
     global _cross_encoder
     if _cross_encoder is None:
         try:
@@ -20,14 +26,11 @@ def _get_cross_encoder():
                 _cross_encoder = CrossEncoder(CROSS_ENCODER_MODEL)
         except Exception as exc:
             logger.error(
-                f"Failed to load cross-encoder model '{CROSS_ENCODER_MODEL}': {exc}. "
-                "Run scripts/download_models.py to pre-download required models."
+                f"Cross-encoder unavailable: {exc}. "
+                "HAVF will operate with Level 1 (embedding) verification only. "
+                "Run scripts/download_models.py to enable Level 2 reranking."
             )
-            raise RuntimeError(
-                f"Cross-encoder model '{CROSS_ENCODER_MODEL}' is not available. "
-                "Ensure the model is downloaded before starting the server "
-                "(run scripts/download_models.py)."
-            ) from exc
+            return None
     return _cross_encoder
 
 def _update_result_confidence(best_score: float) -> ConfidenceLevel:
@@ -98,6 +101,16 @@ def rerank_claims(
         return []
 
     cross_encoder = _get_cross_encoder()
+    # If the cross-encoder failed to load, skip Level 2 and return the
+    # uncertain results unchanged.  The caller already assigned MEDIUM
+    # confidence; this preserves that signal rather than crashing (CRT-003).
+    if cross_encoder is None:
+        logger.warning(
+            "Cross-encoder unavailable — skipping Level 2 reranking. "
+            f"{len(uncertain_results)} claim(s) remain at MEDIUM confidence."
+        )
+        return uncertain_results
+
     refined = [
         _process_result(result, cross_encoder, source_sentences, top_k_sources)
         for result in uncertain_results

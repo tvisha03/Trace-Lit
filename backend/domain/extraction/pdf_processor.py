@@ -23,6 +23,17 @@ def extract_pdf(file_path: str | Path) -> ExtractedDocument:
         import pymupdf
 
         doc = pymupdf.open(str(file_path))
+
+        # Detect password-protected PDFs before attempting extraction so we
+        # surface a clear, actionable message instead of a cryptic parse error
+        # (MED-002 fix).
+        if doc.needs_pass:
+            doc.close()
+            raise PDFExtractionError(
+                file_path.name,
+                "PDF is password-protected. Please provide an unlocked version of the file.",
+            )
+
         page_count = len(doc)
         doc.close()
 

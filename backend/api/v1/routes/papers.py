@@ -8,10 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.v1.schemas import PaperResponse, PaperListResponse, PaperUploadResponse
 from api.v1.routes.websocket import ws_manager
 from app.dependencies import get_db, get_faiss_store
+from infrastructure.db.crud.paper_crud import get_paper as db_get_paper
+from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
 from services.paper_service import register_paper, get_session_papers, delete_paper, mark_paper_failed
 from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB
-from shared.errors import FileValidationError
+from shared.errors import FileValidationError, ForbiddenError, NotFoundError
 from shared.utils.file_utils import get_file_size_mb
 from shared.logger import get_logger
 
@@ -23,7 +25,13 @@ router = APIRouter()
 # Sliding-window rate limiter for the paper upload endpoint.
 # Uploading triggers expensive PDF extraction, chunking, and embedding, so we
 # cap each client IP to _UPLOAD_RATE_LIMIT_MAX batches per window to prevent
-# resource exhaustion from rapid-fire uploads (HI-003 fix).
+# resource exhaustion from rapid-fire uploads.
+#
+# ⚠️  PRODUCTION NOTE (HI-001): This is an in-memory implementation and is
+# therefore NOT suitable for multi-instance / multi-worker deployments.  In
+# those environments counters are not shared between processes, so the window
+# can be exceeded by a factor equal to the worker count.  Migrate to a
+# Redis-backed or database-backed rate limiter before scaling horizontally.
 # ---------------------------------------------------------------------------
 _UPLOAD_RATE_LIMIT_MAX = 5
 _UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 60.0
@@ -57,6 +65,13 @@ async def upload_papers(
     db: AsyncSession = Depends(get_db),
 ):
     _enforce_upload_rate_limit(request)
+
+    # CRT-002/BUG-001: Validate that the target session exists before creating
+    # any paper records.  Without this check a user could register papers under
+    # a non-existent session_id, causing FK violations or orphaned data.
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
 
     if len(files) > MAX_UPLOAD_FILES:
         raise FileValidationError(f"Maximum {MAX_UPLOAD_FILES} files allowed per upload")
@@ -113,6 +128,13 @@ async def list_papers(
     session_id: str,
     db: AsyncSession = Depends(get_db),
 ):
+    # Return a structured 404 instead of an empty list when the session does
+    # not exist so clients can distinguish 'session has no papers' from 'session
+    # never existed'.
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
+
     papers = await get_session_papers(db, session_id)
     items = [
         PaperResponse(
@@ -141,11 +163,14 @@ async def get_paper(
     paper_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    from infrastructure.db.crud.paper_crud import get_paper as db_get_paper
     paper = await db_get_paper(db, paper_id)
     if not paper:
-        from shared.errors import NotFoundError
         raise NotFoundError("Paper", paper_id)
+
+    # CRT-003: Validate ownership — a paper retrieved by ID must belong to the
+    # provided session to prevent cross-session data exposure.
+    if str(paper.session_id) != session_id:
+        raise ForbiddenError("Paper", paper_id)
 
     return PaperResponse(
         id=str(paper.id),
@@ -171,9 +196,17 @@ async def remove_paper(
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
+    # MINOR-001/CRT-004: Verify the paper exists AND belongs to the caller's
+    # session before deletion so that a user cannot remove another session's
+    # papers by guessing paper IDs.
+    paper = await db_get_paper(db, paper_id)
+    if not paper:
+        raise NotFoundError("Paper", paper_id)
+    if str(paper.session_id) != session_id:
+        raise ForbiddenError("Paper", paper_id)
+
     deleted = await delete_paper(paper_id, db, faiss_store)
     if not deleted:
-        from shared.errors import NotFoundError
         raise NotFoundError("Paper", paper_id)
     await db.commit()
 

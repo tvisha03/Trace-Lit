@@ -2,8 +2,22 @@ import re
 
 _ABBREV = re.compile(
     # Academic abbreviations that end with a period but do NOT terminate a sentence.
-    # "No." (number), "pp." (pages), "Ch." (chapter) are common in citations.
-    r"\b(?:et al|Fig|fig|Eq|eq|e\.g|i\.e|vs|Dr|Mr|Mrs|Ms|Prof|Jr|Sr|Inc|Ltd|Corp|Dept|Vol|No|pp|Ch|Rev)\.$",
+    # Expanded list covers common in-text abbreviations, titles, and citation
+    # shorthand to reduce false sentence-boundary splits (MINOR-002 fix).
+    r"\b(?:"
+    # Typical citation / reference abbreviations
+    r"et al|Fig|fig|Eq|eq|cf|viz|nb|"
+    # Common Latin abbreviations
+    r"e\.g|i\.e|vs|i\.e\.?|e\.g\.?|et seq|op cit|ibid|"
+    # Titles and honorifics
+    r"Dr|Mr|Mrs|Ms|Prof|Jr|Sr|Rev|Gen|Sgt|Cpl|Lt|Col|Maj|"
+    # Org / legal suffixes
+    r"Inc|Ltd|Corp|Dept|Assoc|Univ|Inst|"
+    # Measurement / publication
+    r"Vol|No|pp|Ch|Sec|approx|est|avg|"
+    # Generic informal
+    r"etc|vs\.?"
+    r")\.$",
     re.IGNORECASE,
 )
 

@@ -1,13 +1,31 @@
 
+import json
 import time
 from dataclasses import dataclass, field
 from collections import deque
+from pathlib import Path
 from threading import Lock
 
 from shared.enums import LLMProvider
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Persistence (HI-004 fix)
+# ---------------------------------------------------------------------------
+# Rate-usage state is saved to a JSON file so the 60-second sliding window
+# survives server restarts.  Only entries that are still within their window
+# are written/read, so stale data is never resurrected.
+# The file path can be changed via the RATE_MONITOR_STATE_FILE env variable.
+# ---------------------------------------------------------------------------
+import os as _os
+_PERSISTENCE_PATH = Path(
+    _os.environ.get(
+        "RATE_MONITOR_STATE_FILE",
+        str(Path(__file__).parent.parent.parent / "data" / ".rate_monitor_state.json"),
+    )
+)
 
 _PROVIDER_LIMITS: dict[str, dict[str, int]] = {
     LLMProvider.GEMINI.value: {
@@ -28,6 +46,8 @@ _SAFETY_MARGIN: float = 0.90
 
 @dataclass
 class _UsageEntry:
+    # Wall-clock UNIX timestamp (time.time()) so entries can be persisted and
+    # compared correctly after a server restart (HI-004 fix).
     timestamp: float
     tokens: int
 
@@ -42,22 +62,41 @@ class _ProviderUsage:
             self.entries.popleft()
 
     def record(self, tokens: int) -> None:
-        now = time.monotonic()
+        # Use wall-clock time so timestamps survive serialisation (HI-004).
+        now = time.time()
         with self.lock:
             self._prune(now)
             self.entries.append(_UsageEntry(timestamp=now, tokens=tokens))
 
     def current_tpm(self) -> int:
-        now = time.monotonic()
+        now = time.time()
         with self.lock:
             self._prune(now)
             return sum(e.tokens for e in self.entries)
 
     def current_rpm(self) -> int:
-        now = time.monotonic()
+        now = time.time()
         with self.lock:
             self._prune(now)
             return len(self.entries)
+
+    def to_dict(self) -> list[dict]:
+        """Serialise non-expired entries for persistence."""
+        now = time.time()
+        with self.lock:
+            self._prune(now)
+            return [{"ts": e.timestamp, "tok": e.tokens} for e in self.entries]
+
+    def load_dict(self, data: list[dict]) -> None:
+        """Restore entries from a previously persisted snapshot."""
+        now = time.time()
+        cutoff = now - 60.0
+        with self.lock:
+            self.entries.clear()
+            for e in data:
+                ts = e.get("ts", 0.0)
+                if ts > cutoff:  # discard already-expired entries
+                    self.entries.append(_UsageEntry(timestamp=ts, tokens=e.get("tok", 0)))
 
 class RateLimitMonitor:
 
@@ -66,6 +105,37 @@ class RateLimitMonitor:
             provider: _ProviderUsage()
             for provider in _PROVIDER_LIMITS
         }
+        # Attempt to restore token-usage state from the previous run so the
+        # 60-second sliding window is honoured across server restarts (HI-004).
+        self._load_state()
+
+    # ------------------------------------------------------------------
+    # Persistence helpers (HI-004 fix)
+    # ------------------------------------------------------------------
+
+    def _save_state(self) -> None:
+        """Persist current sliding-window entries to disk (best-effort)."""
+        try:
+            _PERSISTENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            snapshot = {name: usage.to_dict() for name, usage in self._usage.items()}
+            _PERSISTENCE_PATH.write_text(json.dumps(snapshot), encoding="utf-8")
+        except Exception as exc:
+            # Non-fatal — rate limiting degrades to stateless on I/O errors.
+            logger.debug(f"Rate-monitor state save failed (non-fatal): {exc}")
+
+    def _load_state(self) -> None:
+        """Restore persisted entries, ignoring any that are already expired."""
+        if not _PERSISTENCE_PATH.exists():
+            return
+        try:
+            snapshot: dict = json.loads(_PERSISTENCE_PATH.read_text(encoding="utf-8"))
+            for provider_name, entries in snapshot.items():
+                usage = self._usage.get(provider_name)
+                if usage and isinstance(entries, list):
+                    usage.load_dict(entries)
+            logger.info("Rate-monitor usage state restored from previous run")
+        except Exception as exc:
+            logger.warning(f"Could not restore rate-monitor state (will start fresh): {exc}")
 
     def can_make_request(
         self,
@@ -107,6 +177,8 @@ class RateLimitMonitor:
                 f"Tracked {tokens_used} tokens for {provider.value} "
                 f"(window TPM: {usage.current_tpm()}, RPM: {usage.current_rpm()})"
             )
+            # Persist after every update so the state survives sudden restarts.
+            self._save_state()
 
     def get_available_provider(
         self,

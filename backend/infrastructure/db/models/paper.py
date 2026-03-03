@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Integer, Float, DateTime, Text, Enum as SAEnum, ForeignKey
+from sqlalchemy import String, Integer, Float, DateTime, Text, Enum as SAEnum, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.database import Base
@@ -30,7 +30,7 @@ class Paper(Base):
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        SAEnum(PaperStatus), default=PaperStatus.QUEUED
+        SAEnum(PaperStatus), default=PaperStatus.QUEUED, index=True  # MINOR-003: indexed for status-filter queries
     )
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -41,4 +41,10 @@ class Paper(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    # Composite index supports the common (session_id, status) filter used by
+    # get_papers_by_session with a status argument in paper_service and routes.
+    __table_args__ = (
+        Index("ix_papers_session_status", "session_id", "status"),
     )

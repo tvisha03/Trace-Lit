@@ -143,6 +143,14 @@ async def process_paper(
         if progress_callback:
             await progress_callback(-1.0)
 
+        # Commit the FAILED status *before* attempting file cleanup so the
+        # status change is durable regardless of cleanup outcome (MED-003 fix).
+        # A failed commit is non-fatal here — the queue worker will retry.
+        try:
+            await db.commit()
+        except Exception as commit_exc:
+            logger.warning(f"Could not persist FAILED status for {paper_id}: {commit_exc}")
+
         # Clean up the uploaded file when processing fails mid-way so orphaned
         # files do not accumulate in the uploads directory.
         try:

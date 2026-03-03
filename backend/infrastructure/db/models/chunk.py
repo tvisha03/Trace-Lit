@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Integer, DateTime, Text, JSON, ForeignKey
+from sqlalchemy import String, Integer, DateTime, Text, JSON, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.database import Base
@@ -23,7 +23,7 @@ class Chunk(Base):
         ForeignKey("papers.id", ondelete="CASCADE"),
         index=True,
     )
-    paragraph_id: Mapped[str] = mapped_column(String(32))
+    paragraph_id: Mapped[str] = mapped_column(String(32), index=True)  # MINOR-003: indexed for HAVF lookups
     text: Mapped[str] = mapped_column(Text)
     enriched_text: Mapped[str] = mapped_column(Text)
     section_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -31,3 +31,9 @@ class Chunk(Base):
     sentence_map: Mapped[dict] = mapped_column(JSON, default=dict)
     token_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    # Composite index supports the common (paper_id, paragraph_id) lookup
+    # used by get_chunk_by_paragraph_id and the HAVF verification pipeline.
+    __table_args__ = (
+        Index("ix_chunks_paper_paragraph", "paper_id", "paragraph_id"),
+    )
