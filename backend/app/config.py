@@ -2,8 +2,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings
 
-class Settings(BaseSettings):
 
+class Settings(BaseSettings):
     APP_NAME: str = "TraceLit"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
@@ -38,6 +38,19 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
     }
+
+    def validate_keys(self) -> list[str]:
+        """Validate that at least one API key is configured.
+
+        Returns list of missing API key names.
+        """
+        missing = []
+        if not self.GEMINI_API_KEY:
+            missing.append("GEMINI_API_KEY")
+        if not self.GROQ_API_KEY:
+            missing.append("GROQ_API_KEY")
+        return missing
+
 
 @lru_cache()
 def get_settings() -> Settings:

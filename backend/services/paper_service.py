@@ -8,7 +8,12 @@ from domain.extraction.section_parser import parse_sections
 from domain.extraction.metadata_extractor import extract_metadata
 from domain.retrieval.chunker import create_chunks
 from domain.retrieval.indexer import index_chunks
-from infrastructure.db.crud.paper_crud import create_paper, update_paper_status, get_paper, get_papers_by_session
+from infrastructure.db.crud.paper_crud import (
+    create_paper,
+    update_paper_status,
+    get_paper,
+    get_papers_by_session,
+)
 from infrastructure.db.crud.chunk_crud import create_chunks_bulk
 from infrastructure.db.models.chunk import Chunk as ChunkModel
 from infrastructure.vector_store.faiss_store import FAISSStore
@@ -17,6 +22,7 @@ from shared.logger import get_logger
 from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
+
 
 async def register_paper(
     db: AsyncSession,
@@ -33,6 +39,7 @@ async def register_paper(
         file_size_mb=file_size_mb,
     )
     return str(paper.id)
+
 
 async def process_paper(
     paper_id: str,
@@ -54,7 +61,9 @@ async def process_paper(
             extracted = extract_pdf(paper.file_path)
 
         await update_paper_status(
-            db, paper_id, PaperStatus.EXTRACTING,
+            db,
+            paper_id,
+            PaperStatus.EXTRACTING,
             progress=0.3,
             page_count=extracted.page_count,
         )
@@ -65,7 +74,9 @@ async def process_paper(
         metadata = extract_metadata(extracted.markdown_text)
 
         await update_paper_status(
-            db, paper_id, PaperStatus.CHUNKING,
+            db,
+            paper_id,
+            PaperStatus.CHUNKING,
             progress=0.4,
             title=metadata.title,
             authors=metadata.authors,
@@ -76,7 +87,9 @@ async def process_paper(
             await progress_callback(0.4)
 
         with timer(f"Chunk {paper.filename}"):
-            chunks = create_chunks(sections, paper_title=metadata.title, paper_id=paper_id)
+            chunks = create_chunks(
+                sections, paper_title=metadata.title, paper_id=paper_id
+            )
 
         chunk_records = [
             {
@@ -93,9 +106,12 @@ async def process_paper(
             for c in chunks
         ]
         await create_chunks_bulk(db, chunk_records)
+        await db.flush()  # Flush to get IDs
 
         await update_paper_status(
-            db, paper_id, PaperStatus.EMBEDDING,
+            db,
+            paper_id,
+            PaperStatus.EMBEDDING,
             progress=0.6,
             chunk_count=len(chunks),
         )
@@ -107,6 +123,9 @@ async def process_paper(
             # index_chunks handles FAISS persistence internally (with rollback
             # on failure), so no additional save call is required here.
 
+        # CRITICAL: Commit the transaction after successful chunk creation and indexing
+        await db.commit()
+
         await update_paper_status(db, paper_id, PaperStatus.COMPLETED, progress=1.0)
         if progress_callback:
             await progress_callback(1.0)
@@ -116,7 +135,9 @@ async def process_paper(
     except Exception as exc:
         logger.error(f"Paper processing failed for {paper_id}: {exc}")
         await update_paper_status(
-            db, paper_id, PaperStatus.FAILED,
+            db,
+            paper_id,
+            PaperStatus.FAILED,
             error_message=str(exc)[:500],
         )
         if progress_callback:
@@ -128,14 +149,20 @@ async def process_paper(
             paper = await get_paper(db, paper_id)
             if paper and paper.file_path:
                 from pathlib import Path as _Path
+
                 _file = _Path(paper.file_path)
                 if _file.exists():
                     _file.unlink()
                     logger.info(f"Cleaned up orphaned upload after failure: {_file}")
         except Exception as cleanup_exc:
-            logger.warning(f"Could not clean up upload for paper {paper_id}: {cleanup_exc}")
+            logger.warning(
+                f"Could not clean up upload for paper {paper_id}: {cleanup_exc}"
+            )
 
-async def get_session_papers(db: AsyncSession, session_id: str, status: PaperStatus | None = None):
+
+async def get_session_papers(
+    db: AsyncSession, session_id: str, status: PaperStatus | None = None
+):
     return await get_papers_by_session(db, session_id, status=status)
 
 
@@ -145,6 +172,7 @@ async def mark_paper_failed(db: AsyncSession, paper_id: str, reason: str) -> Non
     await update_paper_status(
         db, paper_id, PaperStatus.FAILED, error_message=reason[:500]
     )
+
 
 async def delete_paper(
     paper_id: str,

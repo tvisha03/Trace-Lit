@@ -14,14 +14,24 @@ from api.v1.routes.websocket import ws_manager
 from infrastructure.db.crud.paper_crud import get_stuck_papers, update_paper_status
 from infrastructure.db.database import async_session_factory
 from shared.enums import PaperStatus
+from app.config import get_settings
 
 logger = get_logger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-
     setup_logging()
     logger.info("TraceLit backend starting …")
+
+    # Validate API keys at startup
+    settings = get_settings()
+    missing_keys = settings.validate_keys()
+    if missing_keys:
+        logger.warning(
+            f"Missing API keys: {missing_keys}. "
+            "At least one LLM provider (Gemini or Groq) is required for chat functionality."
+        )
 
     ensure_directories()
     await init_db()
@@ -46,7 +56,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if stuck:
             logger.info(f"Re-queueing {len(stuck)} stuck paper(s) from previous run")
             for paper in stuck:
-                await update_paper_status(db, str(paper.id), PaperStatus.QUEUED, progress=0.0)
+                await update_paper_status(
+                    db, str(paper.id), PaperStatus.QUEUED, progress=0.0
+                )
                 await paper_queue.enqueue(str(paper.id), str(paper.session_id))
             await db.commit()
 

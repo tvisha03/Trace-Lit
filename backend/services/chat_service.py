@@ -1,3 +1,4 @@
+import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.generation.chat_engine import generate_response, ChatResponse
@@ -12,6 +13,31 @@ from shared.errors import NotFoundError
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+async def validate_response_has_citations(response: str, context: list[dict]) -> str:
+    """Validate that response has proper citations or indicate not found.
+
+    This is Layer 2 of HAVF hallucination prevention - ensuring the model
+    actually cites sources for its claims.
+    """
+    # Check if response has any [P#] citations
+    citation_pattern = r"\[P\d+\]"
+    citations_found = re.findall(citation_pattern, response)
+
+    if not citations_found:
+        # No citations - check if context was empty
+        if not context:
+            return "I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers."
+        # Context existed but model didn't cite - this is a hallucination risk
+        return (
+            "I don't see specific citations in my response. "
+            "Let me reconsider...\n\n"
+            "[Model should regenerate with proper citations]"
+        )
+
+    return response
+
 
 async def _format_havf_data(response: ChatResponse) -> list[dict]:
     # All keys must match the VerificationItem schema so historical messages
@@ -28,7 +54,10 @@ async def _format_havf_data(response: ChatResponse) -> list[dict]:
         for r in response.havf_results
     ]
 
-async def _prepare_chat_context(session_id: str, db: AsyncSession) -> tuple[list[str], list]:
+
+async def _prepare_chat_context(
+    session_id: str, db: AsyncSession
+) -> tuple[list[str], list]:
     session = await get_session(db, session_id)
     if not session:
         raise NotFoundError("Session", session_id)
@@ -40,6 +69,7 @@ async def _prepare_chat_context(session_id: str, db: AsyncSession) -> tuple[list
     paper_ids = [str(p.id) for p in papers]
     history = await get_recent_messages(db, session_id, max_turns=4)
     return paper_ids, history
+
 
 async def chat(
     session_id: str,
@@ -66,6 +96,11 @@ async def chat(
         llm=llm,
         db_session=db,
     )
+    # Validate response has citations - Layer 2 of HAVF hallucination prevention
+    validated_content = await validate_response_has_citations(
+        response.content, [{"paper_id": pid} for pid in paper_ids]
+    )
+    response.content = validated_content
     await create_message(
         db,
         session_id=session_id,
@@ -77,6 +112,7 @@ async def chat(
         latency_ms=response.latency_ms,
     )
     return response
+
 
 async def chat_stream(
     session_id: str,

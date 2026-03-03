@@ -1,4 +1,3 @@
-
 from collections import defaultdict
 from time import monotonic
 
@@ -66,12 +65,13 @@ async def verify_text(
     # one user from verifying content against another session's papers.
     for paper_id in body.paper_ids:
         paper = await get_paper(db, paper_id)
-        if not paper or str(paper.session_id) != session_id:
-            # Intentionally opaque — do not confirm whether the paper exists
-            # outside this session to avoid cross-session enumeration.
+        if not paper:
+            raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+        # CRITICAL FIX: Verify paper belongs to this session
+        if str(paper.session_id) != session_id:
             raise HTTPException(
-                status_code=404,
-                detail="One or more paper IDs were not found in this session.",
+                status_code=403,
+                detail=f"Paper {paper_id} does not belong to session {session_id}",
             )
 
     results = await verify_text_against_papers(

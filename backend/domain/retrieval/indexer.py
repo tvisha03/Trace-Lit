@@ -10,12 +10,30 @@ logger = get_logger(__name__)
 
 _encoder: SentenceTransformer | None = None
 
+
+def _mps_available() -> bool:
+    """Check if MPS (Apple Silicon GPU) is available."""
+    try:
+        import torch
+
+        return torch.backends.mps.is_available()
+    except ImportError:
+        return False
+
+
 def _get_encoder() -> SentenceTransformer:
     global _encoder
     if _encoder is None:
         with timer("Load embedding model"):
-            _encoder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+            # Check for MPS (Apple Silicon) availability
+            device = "mps" if _mps_available() else "cpu"
+            _encoder = SentenceTransformer(EMBEDDING_MODEL_NAME, device=device)
+            if device == "mps":
+                logger.info("Using MPS (Apple Silicon GPU) for embeddings")
+            else:
+                logger.info("Using CPU for embeddings")
     return _encoder
+
 
 def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
     encoder = _get_encoder()
@@ -28,6 +46,7 @@ def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
         )
     return embeddings.astype(np.float32)
 
+
 def encode_query(text: str) -> np.ndarray:
     encoder = _get_encoder()
     vec: np.ndarray = encoder.encode(
@@ -35,6 +54,7 @@ def encode_query(text: str) -> np.ndarray:
         normalize_embeddings=True,
     )
     return vec.astype(np.float32)
+
 
 async def index_chunks(
     chunks: list,
