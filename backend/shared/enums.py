@@ -6,7 +6,6 @@ class PaperStatus(str, Enum):
     EXTRACTING = "extracting"
     CHUNKING = "chunking"
     EMBEDDING = "embedding"
-    INDEXING = "indexing"
     COMPLETED = "completed"
     FAILED = "failed"
 

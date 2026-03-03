@@ -7,7 +7,7 @@ import httpx
 
 from infrastructure.llm.base import BaseLLMProvider
 from shared.enums import LLMProvider
-from shared.errors import ProviderTimeoutError, EmptyResponseError
+from shared.errors import ProviderTimeoutError, EmptyResponseError, RateLimitError
 from shared.logger import get_logger
 from app.config import get_settings
 
@@ -39,10 +39,14 @@ class OllamaProvider(BaseLLMProvider):
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(f"{self._base_url}/api/generate", json=payload)
+                if resp.status_code == 429:
+                    raise RateLimitError("ollama")
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.TimeoutException:
             raise ProviderTimeoutError("ollama", self._timeout)
+        except RateLimitError:
+            raise
         except Exception:
             raise
 
@@ -70,6 +74,8 @@ class OllamaProvider(BaseLLMProvider):
                 async with client.stream(
                     "POST", f"{self._base_url}/api/generate", json=payload
                 ) as resp:
+                    if resp.status_code == 429:
+                        raise RateLimitError("ollama")
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
                         if line:
@@ -80,6 +86,8 @@ class OllamaProvider(BaseLLMProvider):
                                 yield token
         except httpx.TimeoutException:
             raise ProviderTimeoutError("ollama", self._timeout)
+        except RateLimitError:
+            raise
 
     async def health_check(self) -> bool:
         """Check that Ollama is reachable AND the configured model is pulled.

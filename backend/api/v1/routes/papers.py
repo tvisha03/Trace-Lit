@@ -2,6 +2,8 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import asyncio
+
 from api.v1.schemas import PaperResponse, PaperListResponse, PaperUploadResponse
 from api.v1.routes.websocket import ws_manager
 from app.dependencies import get_db, get_faiss_store
@@ -12,6 +14,7 @@ from services.paper_service import register_paper, get_session_papers, delete_pa
 from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB, MAX_PAPERS_PER_SESSION
 from shared.errors import FileValidationError, ForbiddenError, NotFoundError, TraceLitError
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
+from shared.utils.file_utils import check_disk_space
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,6 +26,15 @@ router = APIRouter()
 _upload_limiter = SlidingWindowRateLimiter(
     max_calls=5, window_seconds=60.0, resource_name="upload requests",
 )
+
+# GAP-4: Serialize the paper-count check + register sequence per session so
+# two concurrent uploads cannot both pass the MAX_PAPERS_PER_SESSION guard.
+_session_upload_locks: dict[str, asyncio.Lock] = {}
+
+def _get_session_lock(session_id: str) -> asyncio.Lock:
+    if session_id not in _session_upload_locks:
+        _session_upload_locks[session_id] = asyncio.Lock()
+    return _session_upload_locks[session_id]
 
 @router.post("", response_model=PaperUploadResponse, status_code=201)
 async def upload_papers(
@@ -43,89 +55,113 @@ async def upload_papers(
     if len(files) > MAX_UPLOAD_FILES:
         raise FileValidationError(f"Maximum {MAX_UPLOAD_FILES} files allowed per upload")
 
-    # BUG-9 fix: enforce a total paper count cap per session so users
-    # cannot overwhelm FAISS or the queue by gradually uploading dozens.
-    existing_papers = await get_session_papers(db, session_id)
-    if len(existing_papers) + len(files) > MAX_PAPERS_PER_SESSION:
-        allowed = MAX_PAPERS_PER_SESSION - len(existing_papers)
-        raise FileValidationError(
-            f"Session already has {len(existing_papers)} paper(s). "
-            f"Maximum {MAX_PAPERS_PER_SESSION} papers per session; "
-            f"you can upload at most {max(0, allowed)} more."
+    # GAP-6: Reject uploads early when disk space is critically low to avoid
+    # partial writes and silent data corruption.
+    if not check_disk_space():
+        raise TraceLitError(
+            message="Insufficient disk space to accept new uploads. "
+                    "Please free up storage and try again.",
+            status_code=507,
         )
 
-    # EDGE-CASE: Detect duplicate filenames within the same session to prevent
-    # users from accidentally re-uploading the same paper.  Comparing by
-    # filename is a lightweight heuristic — not a content hash — but catches
-    # the most common accidental duplicates without adding latency.
-    existing_filenames = {p.filename for p in existing_papers}
-    incoming_filenames = [f.filename for f in files if f.filename]
-    duplicates = [fn for fn in incoming_filenames if fn in existing_filenames]
-    if duplicates:
-        dup_list = ", ".join(duplicates[:5])
-        raise FileValidationError(
-            f"Duplicate file(s) already exist in this session: {dup_list}. "
-            "Please rename the file or remove the existing paper first."
-        )
-
-    file_storage = FileStorage()
-    paper_ids = []
-
-    for upload_file in files:
-        if not upload_file.filename or not upload_file.filename.lower().endswith(".pdf"):
-            raise FileValidationError(f"Only PDF files are accepted: {upload_file.filename}")
-
-        # Read the file in chunks to avoid loading huge PDFs into memory
-        # all at once.  We still need the full content for storage, but we
-        # abort early if the size limit is exceeded.
-        chunks: list[bytes] = []
-        total_bytes = 0
-        max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
-        while True:
-            chunk = await upload_file.read(1024 * 1024)  # 1 MB chunks
-            if not chunk:
-                break
-            total_bytes += len(chunk)
-            if total_bytes > max_bytes:
-                raise FileValidationError(
-                    f"{upload_file.filename} exceeds {MAX_FILE_SIZE_MB}MB limit "
-                    f"({total_bytes / (1024 * 1024):.1f}MB+)"
-                )
-            chunks.append(chunk)
-        content = b"".join(chunks)
-        size_mb = total_bytes / (1024 * 1024)
-        if size_mb > MAX_FILE_SIZE_MB:
+    # GAP-4: Acquire a per-session lock to serialize the paper-count check
+    # and paper registration, preventing two concurrent uploads from both
+    # passing the MAX_PAPERS_PER_SESSION guard via a TOCTOU race.
+    session_lock = _get_session_lock(session_id)
+    async with session_lock:
+        # BUG-9 fix: enforce a total paper count cap per session so users
+        # cannot overwhelm FAISS or the queue by gradually uploading dozens.
+        existing_papers = await get_session_papers(db, session_id)
+        if len(existing_papers) + len(files) > MAX_PAPERS_PER_SESSION:
+            allowed = MAX_PAPERS_PER_SESSION - len(existing_papers)
             raise FileValidationError(
-                f"{upload_file.filename} exceeds {MAX_FILE_SIZE_MB}MB limit ({size_mb:.1f}MB)"
+                f"Session already has {len(existing_papers)} paper(s). "
+                f"Maximum {MAX_PAPERS_PER_SESSION} papers per session; "
+                f"you can upload at most {max(0, allowed)} more."
             )
 
-        file_path = file_storage.save_upload(content, upload_file.filename, session_id)
-
-        paper_id = await register_paper(
-            db,
-            session_id=session_id,
-            filename=upload_file.filename,
-            file_path=str(file_path),
-            file_size_mb=round(size_mb, 2),
-        )
-        paper_ids.append(paper_id)
-
-        paper_queue = request.app.state.paper_queue
-        try:
-            await paper_queue.enqueue(paper_id, session_id)
-        except Exception as enqueue_exc:
-            # Paper was successfully registered in DB but failed to enter the
-            # processing queue.  Mark it FAILED immediately so it is not left
-            # stranded in REGISTERED state with no worker ever picking it up.
-            logger.error(f"Failed to enqueue paper {paper_id}: {enqueue_exc}")
-            await mark_paper_failed(
-                db, paper_id, reason=f"Processing queue unavailable: {enqueue_exc}"
+        # EDGE-CASE: Detect duplicate filenames within the same session to prevent
+        # users from accidentally re-uploading the same paper.  Comparing by
+        # filename is a lightweight heuristic — not a content hash — but catches
+        # the most common accidental duplicates without adding latency.
+        existing_filenames = {p.filename for p in existing_papers}
+        incoming_filenames = [f.filename for f in files if f.filename]
+        duplicates = [fn for fn in incoming_filenames if fn in existing_filenames]
+        if duplicates:
+            dup_list = ", ".join(duplicates[:5])
+            raise FileValidationError(
+                f"Duplicate file(s) already exist in this session: {dup_list}. "
+                "Please rename the file or remove the existing paper first."
             )
-            raise TraceLitError(
-                message=f"Processing queue unavailable for '{upload_file.filename}'. "
-                        "Please try again later.",
-                status_code=503,
+
+        file_storage = FileStorage()
+        paper_ids = []
+
+        for upload_file in files:
+            if not upload_file.filename or not upload_file.filename.lower().endswith(".pdf"):
+                raise FileValidationError(f"Only PDF files are accepted: {upload_file.filename}")
+
+            # Read the file in chunks to avoid loading huge PDFs into memory
+            # all at once.  We still need the full content for storage, but we
+            # abort early if the size limit is exceeded.
+            chunks: list[bytes] = []
+            total_bytes = 0
+            max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+            while True:
+                chunk = await upload_file.read(1024 * 1024)  # 1 MB chunks
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    raise FileValidationError(
+                        f"{upload_file.filename} exceeds {MAX_FILE_SIZE_MB}MB limit "
+                        f"({total_bytes / (1024 * 1024):.1f}MB+)"
+                    )
+                chunks.append(chunk)
+            content = b"".join(chunks)
+
+            # GAP-1: Verify PDF magic bytes (%PDF-) to catch non-PDF files that
+            # were renamed with a .pdf extension.  This runs after reading content
+            # so we can validate the actual file header, not just the filename.
+            if not content[:5].startswith(b"%PDF-"):
+                raise FileValidationError(
+                    f"{upload_file.filename} is not a valid PDF file "
+                    "(missing %PDF- header). Please upload a genuine PDF document."
+                )
+
+            size_mb = total_bytes / (1024 * 1024)
+            if size_mb > MAX_FILE_SIZE_MB:
+                raise FileValidationError(
+                    f"{upload_file.filename} exceeds {MAX_FILE_SIZE_MB}MB limit ({size_mb:.1f}MB)"
+                )
+
+            file_path = file_storage.save_upload(content, upload_file.filename, session_id)
+
+            paper_id = await register_paper(
+                db,
+                session_id=session_id,
+                filename=upload_file.filename,
+                file_path=str(file_path),
+                file_size_mb=round(size_mb, 2),
             )
+            paper_ids.append(paper_id)
+
+            paper_queue = request.app.state.paper_queue
+            try:
+                await paper_queue.enqueue(paper_id, session_id)
+            except Exception as enqueue_exc:
+                # Paper was successfully registered in DB but failed to enter the
+                # processing queue.  Mark it FAILED immediately so it is not left
+                # stranded in REGISTERED state with no worker ever picking it up.
+                logger.error(f"Failed to enqueue paper {paper_id}: {enqueue_exc}")
+                await mark_paper_failed(
+                    db, paper_id, reason=f"Processing queue unavailable: {enqueue_exc}"
+                )
+                raise TraceLitError(
+                    message=f"Processing queue unavailable for '{upload_file.filename}'. "
+                            "Please try again later.",
+                    status_code=503,
+                )
 
     return PaperUploadResponse(
         paper_ids=paper_ids,

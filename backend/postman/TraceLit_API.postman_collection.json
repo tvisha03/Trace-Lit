@@ -1,8 +1,8 @@
 {
   "info": {
-    "_postman_id": "trace-lit-collection-003",
-    "name": "TraceLit API v2.1",
-    "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n## Request ID Tracking\n\nEvery response includes an `X-Request-ID` header. If you send an `X-Request-ID` header in your request, it is echoed back; otherwise a UUID is auto-generated. Use this for correlating logs and debugging.\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  POST /sessions/{id}/export               Export results\n10. POST /verify/{session_id}               Standalone HAVF verify\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## Paper Processing Stages\n\n`pending` → `processing` → `ready` | `failed`\n\nStages: `extraction` → `chunking` → `embedding` → `indexing`",
+    "_postman_id": "trace-lit-collection-004",
+    "name": "TraceLit API v2.2",
+    "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n## Request ID Tracking\n\nEvery response includes an `X-Request-ID` header. If you send an `X-Request-ID` header in your request, it is echoed back; otherwise a UUID is auto-generated. Use this for correlating logs and debugging.\n\n---\n\n## Request Timeout\n\nAll non-streaming, non-WebSocket requests have a **120-second server-side timeout**. If the request exceeds this limit, a `504 Gateway Timeout` response is returned.\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  POST /sessions/{id}/export               Export results\n10. POST /verify/{session_id}               Standalone HAVF verify\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## Paper Processing Stages\n\n`registered` → `queued` → `extracting` → `chunking` → `embedding` → `completed` | `failed`\n\n---\n\n## Limits\n\n| Resource | Limit |\n|---|---|\n| Sessions per instance | 50 |\n| Papers per session | 7 |\n| Max file size | 50 MB |\n| FAISS vectors | 500,000 |\n| Min free disk space | 500 MB |\n| Request timeout | 120 s |",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -34,7 +34,7 @@
               "host": ["{{base_url}}{{api_prefix}}"],
               "path": ["health"]
             },
-            "description": "Returns live health status of the service and reachability of each configured LLM provider.\n\n**Response headers:**\n\n| Header | Description |\n|---|---|\n| `X-Request-ID` | Auto-generated UUID for request tracing (or echoed from request) |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `status` | string | Always `\"ok\"` when the service is up |\n| `version` | string | API version, e.g. `\"0.1.0\"` |\n| `providers` | object | Map of provider name → `true` (reachable) / `false` |\n| `db` | bool | Database connectivity |\n| `faiss` | bool | FAISS index loaded |\n| `cross_encoder` | bool | Cross-encoder model available |"
+            "description": "Returns live health status of the service and reachability of each configured LLM provider.\n\n**Response headers:**\n\n| Header | Description |\n|---|---|\n| `X-Request-ID` | Auto-generated UUID for request tracing (or echoed from request) |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `status` | string | Always `\"ok\"` when the service is up |\n| `version` | string | API version, e.g. `\"0.1.0\"` |\n| `providers` | object | Map of provider name → `true` (reachable) / `false` |\n| `db` | bool | Database connectivity |\n| `faiss` | bool | FAISS index loaded |\n| `cross_encoder` | bool | Cross-encoder model available |\n| `faiss_stats` | object\\|null | FAISS index statistics: `total_vectors`, `max_vectors`, `utilization_pct`, `memory_mb` (null when FAISS not ready) |"
           },
           "response": [
             {
@@ -52,7 +52,7 @@
                   "value": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
                 }
               ],
-              "body": "{\n  \"status\": \"ok\",\n  \"version\": \"0.1.0\",\n  \"providers\": {\n    \"GeminiProvider\": true,\n    \"GroqProvider\": true,\n    \"OllamaProvider\": false\n  },\n  \"db\": true,\n  \"faiss\": true,\n  \"cross_encoder\": true\n}"
+              "body": "{\n  \"status\": \"ok\",\n  \"version\": \"0.1.0\",\n  \"providers\": {\n    \"GeminiProvider\": true,\n    \"GroqProvider\": true,\n    \"OllamaProvider\": false\n  },\n  \"db\": true,\n  \"faiss\": true,\n  \"cross_encoder\": true,\n  \"faiss_stats\": {\n    \"total_vectors\": 12480,\n    \"max_vectors\": 500000,\n    \"utilization_pct\": 2.5,\n    \"memory_mb\": 18.2\n  }\n}"
             }
           ]
         }
@@ -101,7 +101,7 @@
               "host": ["{{base_url}}{{api_prefix}}"],
               "path": ["sessions"]
             },
-            "description": "Create a new research session. Both fields are optional.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `title` | string | No | max 200 chars |\n| `description` | string | No | max 1000 chars |\n\n**Response:** `SessionResponse` — `201 Created`\n\n> The test script automatically stores `session_id` in the environment."
+            "description": "Create a new research session. Both fields are optional.\n\nMaximum of 50 sessions allowed. Returns `409 Conflict` when limit reached.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `title` | string | No | max 200 chars |\n| `description` | string | No | max 1000 chars |\n\n**Response:** `SessionResponse` — `201 Created`\n\n> The test script automatically stores `session_id` in the environment."
           },
           "response": [
             {
@@ -129,6 +129,19 @@
                 }
               ],
               "body": "{\n  \"detail\": [\n    {\n      \"loc\": [\n        \"body\",\n        \"title\"\n      ],\n      \"msg\": \"ensure this value has at most 200 characters\",\n      \"type\": \"value_error.any_str.max_length\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "409 Max Sessions Reached",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Maximum number of sessions (50) reached. Please delete unused sessions before creating new ones.\"\n}"
             }
           ]
         },
@@ -360,7 +373,7 @@
               "host": ["{{base_url}}{{api_prefix}}"],
               "path": ["sessions", "{{session_id}}", "papers"]
             },
-            "description": "Upload 1–7 PDF files to the session. Each file is validated, saved to disk, and queued for async background processing.\n\n**Processing pipeline per paper:**\n1. PDF text extraction (page-by-page)\n2. Section detection and sentence-aware chunking\n3. Sentence embedding (local model)\n4. FAISS vector indexing\n5. Metadata extraction (title, authors, year, abstract)\n\n**Constraints:**\n- `Content-Type: multipart/form-data`\n- Form field name must be `files` (repeat field for multiple files)\n- Only `.pdf` extension accepted\n- Maximum 7 files per request\n- Maximum 50 MB per file\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_ids` | string[] | UUIDs for all registered papers |\n| `message` | string | Human-readable confirmation |\n\n> The test script stores the first two paper IDs as `paper_id` and `second_paper_id`."
+            "description": "Upload 1–7 PDF files to the session. Each file is validated (extension, size, PDF magic bytes), saved to disk, and queued for async background processing.\n\nThe server checks available disk space before accepting files (minimum 500 MB free) and validates that the file begins with `%PDF-` magic bytes to prevent disguised non-PDFs.\n\n**Processing pipeline per paper:**\n1. PDF text extraction (page-by-page)\n2. Section detection and sentence-aware chunking\n3. Sentence embedding (local model)\n4. FAISS vector indexing\n5. Metadata extraction (title, authors, year, abstract)\n\n**Constraints:**\n- `Content-Type: multipart/form-data`\n- Form field name must be `files` (repeat field for multiple files)\n- Only `.pdf` extension accepted (+ valid PDF magic bytes)\n- Maximum 7 files per request (and per session)\n- Maximum 50 MB per file\n- Minimum 500 MB free disk space required\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_ids` | string[] | UUIDs for all registered papers |\n| `message` | string | Human-readable confirmation |\n\n> The test script stores the first two paper IDs as `paper_id` and `second_paper_id`."
           },
           "response": [
             {
@@ -427,6 +440,32 @@
                 }
               ],
               "body": "{\n  \"detail\": \"These files have already been uploaded to this session: attention_is_all_you_need.pdf\"\n}"
+            },
+            {
+              "name": "400 Invalid PDF (not a real PDF)",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"File 'renamed.pdf' is not a valid PDF (magic-byte check failed)\"\n}"
+            },
+            {
+              "name": "507 Insufficient Disk Space",
+              "status": "Insufficient Storage",
+              "code": 507,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Insufficient disk space. Please free up storage and try again.\"\n}"
             }
           ]
         },
@@ -1318,7 +1357,7 @@
               "host": ["{{ws_base_url}}"],
               "path": ["ws", "{{session_id}}"]
             },
-            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**⚠️ This is a WebSocket URL. Open Postman → New → WebSocket Request.**\n\nThe WebSocket is mounted at the app root (`/ws`), **not** under `/api/v1`.\n\n---\n\n## Connection Steps\n\n1. Call `GET /sessions/{session_id}/ws-url` to get the exact URL\n2. Open Postman → **New → WebSocket Request**\n3. Paste the returned `websocket_url` and click **Connect**\n\nOr use: `{{ws_base_url}}/ws/{{session_id}}`\n\n---\n\n## Incoming Events\n\n**Connected:**\n```json\n{ \"type\": \"connected\", \"connection_id\": \"...\" }\n```\n\n**Progress update:**\n```json\n{ \"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.42, \"stage\": \"embedding\", \"eta_seconds\": 18 }\n```\n\n**Paper ready:**\n```json\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n```\n\n**Paper failed:**\n```json\n{ \"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```\n\n**Paper deleted:**\n```json\n{ \"type\": \"paper_deleted\", \"paper_id\": \"...\", \"session_id\": \"...\" }\n```\n\n**Session deleted:**\n```json\n{ \"type\": \"session_deleted\", \"session_id\": \"...\" }\n```\n\n---\n\n## Session Validation\n\nThe server validates the `session_id` before accepting the connection. If the session does not exist, the connection is closed immediately with close code **4004** and reason `Session not found`.\n\n---\n\n## Heartbeat\n\nThe server sends a `ping` event every 30 seconds. Send the text message `ping` — the server replies with a JSON `pong`.\n\n---\n\n## Processing Stages\n\n| Stage | Description |\n|---|---|\n| `extraction` | Extracting text from PDF pages |\n| `chunking` | Splitting into sentence-aware chunks |\n| `embedding` | Generating sentence embeddings |\n| `indexing` | Writing vectors to FAISS index |"
+            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**⚠️ This is a WebSocket URL. Open Postman → New → WebSocket Request.**\n\nThe WebSocket is mounted at the app root (`/ws`), **not** under `/api/v1`.\n\n---\n\n## Connection Steps\n\n1. Call `GET /sessions/{session_id}/ws-url` to get the exact URL\n2. Open Postman → **New → WebSocket Request**\n3. Paste the returned `websocket_url` and click **Connect**\n\nOr use: `{{ws_base_url}}/ws/{{session_id}}`\n\n---\n\n## Incoming Events\n\n**Connected:**\n```json\n{ \"type\": \"connected\", \"connection_id\": \"...\" }\n```\n\n**Progress update:**\n```json\n{ \"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.42, \"stage\": \"embedding\", \"eta_seconds\": 18 }\n```\n\n**Paper ready:**\n```json\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n```\n\n**Paper failed:**\n```json\n{ \"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```\n\n**Paper deleted:**\n```json\n{ \"type\": \"paper_deleted\", \"paper_id\": \"...\", \"session_id\": \"...\" }\n```\n\n**Session deleted:**\n```json\n{ \"type\": \"session_deleted\", \"session_id\": \"...\" }\n```\n\n---\n\n## Session Validation\n\nThe server validates the `session_id` before accepting the connection. If the session does not exist, the connection is closed immediately with close code **4004** and reason `Session not found`.\n\n---\n\n## Heartbeat\n\nThe server sends a `ping` event every 30 seconds. Send the text message `ping` — the server replies with a JSON `pong`.\n\n---\n\n## Processing Stages\n\n| Stage | Description |\n|---|---|\n| `extraction` | Extracting text from PDF pages |\n| `chunking` | Splitting into sentence-aware chunks |\n| `embedding` | Generating sentence embeddings |\n| `completed` | Vectors written to FAISS index |"
           },
           "response": []
         }

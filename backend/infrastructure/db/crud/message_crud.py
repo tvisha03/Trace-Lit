@@ -63,3 +63,43 @@ async def delete_messages_by_session(db: AsyncSession, session_id: str) -> None:
     from sqlalchemy import delete as sa_delete
     await db.execute(sa_delete(Message).where(Message.session_id == session_id))
     await db.flush()
+
+
+async def prune_old_messages(
+    db: AsyncSession,
+    session_id: str,
+    keep_recent: int = 50,
+) -> int:
+    """Delete messages beyond the *keep_recent* most-recent ones for a session.
+
+    IMP-7: Prevents conversation tables from growing unbounded in long-lived
+    sessions.  Returns the number of pruned rows.
+    """
+    # Identify the IDs to keep (most recent N messages).
+    keep_stmt = (
+        select(Message.id)
+        .where(Message.session_id == session_id)
+        .order_by(Message.created_at.desc())
+        .limit(keep_recent)
+    )
+    keep_result = await db.execute(keep_stmt)
+    keep_ids = {row[0] for row in keep_result.all()}
+
+    if not keep_ids:
+        return 0
+
+    # Count total to determine how many will be pruned.
+    total = await count_messages_by_session(db, session_id)
+    to_prune = max(0, total - keep_recent)
+    if to_prune == 0:
+        return 0
+
+    from sqlalchemy import delete as sa_delete
+    del_stmt = (
+        sa_delete(Message)
+        .where(Message.session_id == session_id)
+        .where(Message.id.notin_(keep_ids))
+    )
+    await db.execute(del_stmt)
+    await db.flush()
+    return to_prune

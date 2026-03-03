@@ -2,13 +2,20 @@ import uuid
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+import asyncio
 
 from app.config import get_settings
 from app.exceptions import register_exception_handlers
 from app.lifespan import lifespan
 from api.v1.router import api_v1_router
 from api.v1.routes.websocket import router as ws_router
+
+# IMP-9: Default request timeout (seconds).  Streaming and WebSocket requests
+# are excluded because they are long-lived by design.
+_REQUEST_TIMEOUT_SECONDS: float = 120.0
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -25,6 +32,39 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         return response
+
+
+class TimeoutMiddleware(BaseHTTPMiddleware):
+    """IMP-9: Abort requests that exceed a hard time limit.
+
+    Streaming (SSE) and WebSocket upgrades are excluded because they are
+    inherently long-lived.  All other endpoints get a configurable timeout
+    to prevent slow LLM calls or runaway DB queries from tying up workers.
+    """
+
+    def __init__(self, app, timeout: float = _REQUEST_TIMEOUT_SECONDS):
+        super().__init__(app)
+        self.timeout = timeout
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip timeout for WebSocket upgrades and streaming endpoints.
+        if (
+            request.url.path.startswith("/ws")
+            or "text/event-stream" in request.headers.get("accept", "")
+            or request.query_params.get("stream") == "true"
+        ):
+            return await call_next(request)
+
+        try:
+            return await asyncio.wait_for(call_next(request), timeout=self.timeout)
+        except asyncio.TimeoutError:
+            return JSONResponse(
+                status_code=504,
+                content={
+                    "detail": f"Request timed out after {self.timeout:.0f}s. "
+                              "Please try again or simplify your query."
+                },
+            )
 
 
 def create_app() -> FastAPI:
@@ -47,6 +87,10 @@ def create_app() -> FastAPI:
 
     # Request-ID middleware — adds X-Request-ID for end-to-end tracing.
     app.add_middleware(RequestIDMiddleware)
+
+    # IMP-9: Timeout middleware — aborts requests exceeding the time limit.
+    # Added after RequestID so the timeout fires inside the request-id scope.
+    app.add_middleware(TimeoutMiddleware)
 
     register_exception_handlers(app)
 

@@ -13,6 +13,8 @@ from api.v1.routes.websocket import ws_manager
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.storage.file_storage import FileStorage
 from services import session_service
+from shared.constants import MAX_SESSIONS
+from shared.errors import TraceLitError
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,6 +25,18 @@ async def create_session(
     body: SessionCreate,
     db: AsyncSession = Depends(get_db),
 ):
+    # GAP-2: Enforce a maximum number of sessions to prevent unbounded
+    # resource growth (DB rows, FAISS indexes, uploaded files).
+    existing = await session_service.list_all_sessions(db)
+    if len(existing) >= MAX_SESSIONS:
+        raise TraceLitError(
+            message=(
+                f"Maximum session limit ({MAX_SESSIONS}) reached. "
+                "Please delete an existing session before creating a new one."
+            ),
+            status_code=409,
+        )
+
     result = await session_service.create_new_session(
         db, title=body.title, description=body.description
     )

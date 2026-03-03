@@ -2,6 +2,7 @@ MAX_UPLOAD_FILES: int = 7
 MAX_FILE_SIZE_MB: int = 50
 MAX_FILE_SIZE_BYTES: int = MAX_FILE_SIZE_MB * 1024 * 1024
 MAX_PAPERS_PER_SESSION: int = 20
+MAX_SESSIONS: int = 50
 
 MAX_PARALLEL_PAPERS: int = 3
 MEMORY_PRESSURE_THRESHOLD: float = 0.75
@@ -25,13 +26,13 @@ HISTORY_TOKEN_BUDGET: int = 2_000
 SYSTEM_PROMPT_TOKEN_BUDGET: int = 500
 RESPONSE_TOKEN_BUDGET: int = 1_000
 MAX_CONVERSATION_TURNS: int = 5
-TOKENS_PER_CHAR: float = 0.25
 
 CHUNK_TARGET_TOKENS: int = 512
 CHUNK_MAX_TOKENS: int = 1024
 
 FAISS_TOP_K_PER_PAPER: int = 4
 FAISS_INDEX_DIR: str = "data/faiss_indexes"
+FAISS_MAX_VECTORS: int = 500_000  # Safety cap to prevent unbounded memory growth
 
 LLM_TIMEOUT_SECONDS: int = 30
 LLM_MAX_RETRIES: int = 2
@@ -40,6 +41,8 @@ LLM_TEMPERATURE: float = 0.3
 
 UPLOADS_DIR: str = "data/uploads"
 EXPORTS_DIR: str = "data/exports"
+
+MIN_DISK_SPACE_MB: int = 500  # Minimum free disk space before rejecting uploads
 
 COMPARISON_TOKEN_BUDGET_PER_PAPER: int = 3_000
 

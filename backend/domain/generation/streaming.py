@@ -209,9 +209,18 @@ async def stream_chat_response(
             full_text, chunks, session_id,
         )
         if not has_citations:
+            # IMP-8: Replace the entire response with a safe disclaimer when
+            # the LLM failed to cite any sources, matching the non-streaming
+            # chat_service behaviour.  This prevents uncheckable content from
+            # reaching the user.
+            full_text = (
+                "I was unable to provide a properly cited response based on "
+                "the uploaded papers. Please try rephrasing your question or "
+                "ensure the relevant papers have been uploaded."
+            )
             yield sse_event(
                 "warning",
-                json.dumps({"detail": "Response contains no citations. Confidence scores may be unreliable."}),
+                json.dumps({"detail": "Response replaced — no citations found. Confidence scores may be unreliable."}),
             )
 
         havf_data = await _emit_havf_results(full_text, chunks)

@@ -1,21 +1,12 @@
 
 from pathlib import Path
 from html import escape
-from jinja2 import Environment, FileSystemLoader
 
 from shared.logger import get_logger
 from shared.errors import PDFExportError
 from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
-
-_TEMPLATE_DIR = Path(__file__).parent / "templates"
-
-def _get_jinja_env() -> Environment:
-    return Environment(
-        loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-        autoescape=True,
-    )
 
 def _truncate_text(text: str, max_chars: int = 10000) -> str:
     """Soft-truncate extremely long text as a safety net (10 000 chars default).

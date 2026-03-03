@@ -105,7 +105,8 @@ def build_history_block(messages: list, max_turns: int = 4) -> str:
     the context window and crowding out retrieved source paragraphs.
     """
     from enum import Enum
-    from shared.constants import HISTORY_TOKEN_BUDGET, TOKENS_PER_CHAR
+    from shared.constants import HISTORY_TOKEN_BUDGET
+    from shared.utils.text_utils import estimate_tokens
 
     if not messages:
         return "(No conversation history)"
@@ -120,7 +121,7 @@ def build_history_block(messages: list, max_turns: int = 4) -> str:
     for msg in reversed(recent):
         role = msg.role.value if isinstance(msg.role, Enum) else msg.role
         line = f"{role}: {msg.content}"
-        estimated_tokens = int(len(line) * TOKENS_PER_CHAR)
+        estimated_tokens = estimate_tokens(line)
         if estimated_tokens > remaining_budget:
             # No room for this (older) message — stop including history.
             break

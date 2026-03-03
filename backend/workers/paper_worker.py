@@ -39,7 +39,7 @@ def _progress_to_stage(progress: float) -> str:
         return "chunking"
     if progress < 1.0:
         return "embedding"
-    return "indexing"
+    return "completed"
 
 async def paper_job_processor(job: PaperJob):
     if _faiss_store is None:
@@ -91,7 +91,9 @@ async def paper_job_processor(job: PaperJob):
                 faiss_store=_faiss_store,
                 progress_callback=progress_callback,
             )
-            await db.commit()
+            # NOTE: process_paper() commits the transaction internally on
+            # success and on failure, so no additional db.commit() is needed
+            # here.  A redundant commit could mask transaction boundary issues.
         except Exception:
             await db.rollback()
             raise

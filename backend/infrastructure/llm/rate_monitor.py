@@ -100,11 +100,18 @@ class _ProviderUsage:
 
 class RateLimitMonitor:
 
+    # Batch persistence: save to disk at most every _SAVE_INTERVAL seconds or
+    # every _SAVE_EVERY_N_CALLS track_usage invocations, whichever comes first.
+    _SAVE_INTERVAL: float = 30.0
+    _SAVE_EVERY_N_CALLS: int = 10
+
     def __init__(self) -> None:
         self._usage: dict[str, _ProviderUsage] = {
             provider: _ProviderUsage()
             for provider in _PROVIDER_LIMITS
         }
+        self._calls_since_save: int = 0
+        self._last_save_time: float = time.time()
         # Attempt to restore token-usage state from the previous run so the
         # 60-second sliding window is honoured across server restarts (HI-004).
         self._load_state()
@@ -177,8 +184,17 @@ class RateLimitMonitor:
                 f"Tracked {tokens_used} tokens for {provider.value} "
                 f"(window TPM: {usage.current_tpm()}, RPM: {usage.current_rpm()})"
             )
-            # Persist after every update so the state survives sudden restarts.
-            self._save_state()
+            # BUG-F fix: batch persistence — save to disk only when the call
+            # count or elapsed-time threshold is exceeded, not on every call.
+            self._calls_since_save += 1
+            now = time.time()
+            if (
+                self._calls_since_save >= self._SAVE_EVERY_N_CALLS
+                or (now - self._last_save_time) >= self._SAVE_INTERVAL
+            ):
+                self._save_state()
+                self._calls_since_save = 0
+                self._last_save_time = now
 
     def get_available_provider(
         self,

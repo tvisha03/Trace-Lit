@@ -15,7 +15,7 @@ else:
         np = None  # type: ignore
         faiss = None  # type: ignore
 
-from shared.constants import FAISS_INDEX_DIR, EMBEDDING_DIMENSIONS, FAISS_TOP_K_PER_PAPER
+from shared.constants import FAISS_INDEX_DIR, EMBEDDING_DIMENSIONS, FAISS_TOP_K_PER_PAPER, FAISS_MAX_VECTORS
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -72,6 +72,16 @@ class FAISSStore:
 
         if vectors.shape[0] != len(ids):
             raise ValueError("vectors and ids must have the same length")
+
+        # GAP-5: Refuse to grow the index beyond FAISS_MAX_VECTORS to prevent
+        # unbounded memory consumption on resource-constrained hardware.
+        current_total = self._index.ntotal if self._index else 0
+        if current_total + vectors.shape[0] > FAISS_MAX_VECTORS:
+            raise ValueError(
+                f"FAISS index would exceed maximum capacity ({FAISS_MAX_VECTORS} vectors). "
+                f"Current: {current_total}, adding: {vectors.shape[0]}. "
+                "Delete unused papers to free space."
+            )
 
         # CRT-003: Guarantee L2-normalised vectors for IndexFlatIP (cosine sim).
         # encode_texts already passes normalize_embeddings=True, but this is a
@@ -231,6 +241,18 @@ class FAISSStore:
     @property
     def total_vectors(self) -> int:
         return self._index.ntotal if self._index else 0
+
+    def get_stats(self) -> dict:
+        """Return index statistics for health/monitoring endpoints."""
+        total = self.total_vectors
+        # Each float32 vector occupies EMBEDDING_DIMENSIONS * 4 bytes.
+        memory_bytes = total * EMBEDDING_DIMENSIONS * 4
+        return {
+            "total_vectors": total,
+            "max_vectors": FAISS_MAX_VECTORS,
+            "utilization_pct": round((total / FAISS_MAX_VECTORS) * 100, 2) if FAISS_MAX_VECTORS else 0.0,
+            "memory_mb": round(memory_bytes / (1024 * 1024), 2),
+        }
 
     def _backup_index(self) -> None:
         """Write a .bak copy of the FAISS index files before a destructive operation.

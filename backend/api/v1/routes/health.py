@@ -50,10 +50,15 @@ async def health_check(request: Request):
 
     # Verify the FAISS index is loaded and contains at least 0 vectors.
     faiss_ok = False
+    faiss_stats = None
     faiss_store = getattr(request.app.state, "faiss_store", None)
     if faiss_store is not None:
         try:
             faiss_ok = faiss_store.is_ready()
+            # IMP-3: Surface vector count, memory usage, and utilization in the
+            # health response so operators can monitor index growth.
+            if faiss_ok:
+                faiss_stats = faiss_store.get_stats()
         except Exception as exc:
             logger.warning(f"Health check: FAISS status check failed: {exc}")
 
@@ -77,5 +82,6 @@ async def health_check(request: Request):
         providers=providers,
         db=db_ok,
         faiss=faiss_ok,
+        faiss_stats=faiss_stats,
         cross_encoder=cross_encoder_ok,
     )

@@ -232,6 +232,7 @@ class HealthResponse(BaseModel):
     providers: dict[str, bool] = {}
     db: bool = False
     faiss: bool = False
+    faiss_stats: Optional[dict] = None
     cross_encoder: bool = False
 
 
