@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from shared.logger import get_logger
 from shared.utils.text_utils import split_into_sentences, estimate_tokens
 from shared.constants import CHUNK_TARGET_TOKENS, CHUNK_MAX_TOKENS
+from shared.enums import ChunkType
 
 logger = get_logger(__name__)
 
@@ -16,6 +17,8 @@ class Chunk:
     page_number: int | None
     token_count: int
     sentence_map: dict = field(default_factory=dict)
+    chunk_type: ChunkType = ChunkType.TEXT
+    image_path: str | None = None
 
 def create_chunks(
     sections: list,
@@ -146,5 +149,56 @@ def _split_large_paragraph(
         chunk = _build_chunk(combined, section_title, paper_title, start_idx + idx_offset, paper_id)
         chunks.append(chunk)
 
+    return chunks
+
+
+def create_figure_chunks(
+    analyzed_figures: list,
+    paper_title: str | None = None,
+    paper_id: str | None = None,
+    start_idx: int = 0,
+) -> list[Chunk]:
+    chunks: list[Chunk] = []
+
+    for offset, fig in enumerate(analyzed_figures):
+        idx = start_idx + offset
+
+        if paper_id:
+            paragraph_id = f"{paper_id[:8]}_F{idx}"
+        else:
+            paragraph_id = f"F{idx}"
+
+        text = fig.description
+        fig_type = getattr(fig, "figure_type", "figure")
+
+        prefix_parts = []
+        if paper_title:
+            prefix_parts.append(f"[Paper: {paper_title}]")
+        prefix_parts.append(f"[Figure on page {fig.page_number}, type: {fig_type}]")
+        prefix = " ".join(prefix_parts)
+        enriched_text = f"{prefix} {text}"
+
+        sentence_map = {
+            f"{paragraph_id}_S0": {
+                "text": text,
+                "start": 0,
+                "end": len(text),
+                "tokens": estimate_tokens(text),
+            }
+        }
+
+        chunks.append(Chunk(
+            paragraph_id=paragraph_id,
+            text=text,
+            enriched_text=enriched_text,
+            section_title=f"Figure (page {fig.page_number})",
+            page_number=fig.page_number,
+            token_count=estimate_tokens(text),
+            sentence_map=sentence_map,
+            chunk_type=ChunkType.FIGURE,
+            image_path=fig.image_path,
+        ))
+
+    logger.info(f"Created {len(chunks)} figure chunks")
     return chunks
 

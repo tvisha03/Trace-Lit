@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from domain.extraction.pdf_processor import extract_pdf
 from domain.extraction.section_parser import parse_sections
 from domain.extraction.metadata_extractor import extract_metadata
-from domain.retrieval.chunker import create_chunks
+from domain.extraction.figure_analyzer import analyze_figures
+from domain.retrieval.chunker import create_chunks, create_figure_chunks
 from domain.retrieval.indexer import index_chunks
 from infrastructure.db.crud.paper_crud import (
     create_paper,
@@ -15,6 +16,7 @@ from infrastructure.db.crud.paper_crud import (
 )
 from infrastructure.db.crud.chunk_crud import create_chunks_bulk
 from infrastructure.vector_store.faiss_store import FAISSStore
+from infrastructure.llm.fallback_chain import FallbackChain
 from shared.enums import PaperStatus
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
@@ -64,6 +66,14 @@ async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
     return extracted, sections, metadata
 
 
+async def _analyze_paper_figures(extracted, llm_chain: FallbackChain | None):
+    if not extracted.figures or llm_chain is None:
+        return []
+
+    analyzed = await analyze_figures(extracted.figures, llm_chain)
+    return analyzed
+
+
 async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
     chunk_records = [
         {
@@ -76,6 +86,8 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
             "page_number": c.page_number,
             "sentence_map": c.sentence_map,
             "token_count": c.token_count,
+            "chunk_type": c.chunk_type.value if hasattr(c.chunk_type, "value") else str(c.chunk_type),
+            "image_path": getattr(c, "image_path", None),
         }
         for c in chunks
     ]
@@ -118,11 +130,21 @@ async def _chunk_and_index_paper(
     paper,
     sections,
     metadata,
+    analyzed_figures=None,
 ) -> int:
     with timer(f"Chunk {paper.filename}"):
         chunks = create_chunks(
             sections, paper_title=metadata.title, paper_id=paper_id
         )
+
+    if analyzed_figures:
+        figure_chunks = create_figure_chunks(
+            analyzed_figures,
+            paper_title=metadata.title,
+            paper_id=paper_id,
+            start_idx=len(chunks),
+        )
+        chunks.extend(figure_chunks)
 
     await _persist_chunks_with_retry(db, chunks, paper_id)
 
@@ -133,17 +155,13 @@ async def _chunk_and_index_paper(
     return len(chunks)
 
 
-async def _execute_paper_processing(
+async def _run_extraction_phase(
     paper_id: str,
     db: AsyncSession,
-    faiss_store: FAISSStore,
     paper,
-    progress_callback=None,
-) -> None:
-    await _update_status_with_progress(
-        db, paper_id, PaperStatus.QUEUED, 0.0, progress_callback
-    )
-
+    progress_callback,
+    llm_chain,
+):
     await _update_status_with_progress(
         db, paper_id, PaperStatus.EXTRACTING, 0.1, progress_callback
     )
@@ -153,43 +171,75 @@ async def _execute_paper_processing(
     )
 
     await _update_status_with_progress(
-        db,
-        paper_id,
-        PaperStatus.EXTRACTING,
-        0.3,
-        progress_callback,
-        page_count=extracted.page_count,
+        db, paper_id, PaperStatus.EXTRACTING, 0.25,
+        progress_callback, page_count=extracted.page_count,
     )
 
     await _update_status_with_progress(
-        db,
-        paper_id,
-        PaperStatus.CHUNKING,
-        0.4,
+        db, paper_id, PaperStatus.ANALYZING_FIGURES, 0.3,
         progress_callback,
-        title=metadata.title,
-        authors=metadata.authors,
-        year=metadata.year,
-        abstract=metadata.abstract,
+        title=metadata.title, authors=metadata.authors,
+        year=metadata.year, abstract=metadata.abstract,
+    )
+
+    analyzed_figures = await _analyze_paper_figures(extracted, llm_chain)
+    return sections, metadata, analyzed_figures
+
+
+async def _run_chunking_phase(
+    paper_id: str,
+    db: AsyncSession,
+    faiss_store: FAISSStore,
+    paper,
+    progress_callback,
+    sections,
+    metadata,
+    analyzed_figures,
+) -> int:
+    await _update_status_with_progress(
+        db, paper_id, PaperStatus.CHUNKING, 0.45, progress_callback,
     )
 
     await _update_status_with_progress(
-        db,
-        paper_id,
-        PaperStatus.EMBEDDING,
-        0.6,
-        progress_callback,
+        db, paper_id, PaperStatus.EMBEDDING, 0.6, progress_callback,
     )
 
     chunk_count = await _chunk_and_index_paper(
-        db, faiss_store, paper_id, paper, sections, metadata
+        db, faiss_store, paper_id, paper, sections, metadata, analyzed_figures
     )
 
     await _update_status_with_progress(
         db, paper_id, PaperStatus.COMPLETED, 1.0, progress_callback
     )
 
-    logger.info(f"Paper {paper.filename} processed: {chunk_count} chunks indexed")
+    return chunk_count
+
+
+async def _execute_paper_processing(
+    paper_id: str,
+    db: AsyncSession,
+    faiss_store: FAISSStore,
+    paper,
+    progress_callback=None,
+    llm_chain: FallbackChain | None = None,
+) -> None:
+    await _update_status_with_progress(
+        db, paper_id, PaperStatus.QUEUED, 0.0, progress_callback
+    )
+
+    sections, metadata, analyzed_figures = await _run_extraction_phase(
+        paper_id, db, paper, progress_callback, llm_chain
+    )
+
+    chunk_count = await _run_chunking_phase(
+        paper_id, db, faiss_store, paper, progress_callback,
+        sections, metadata, analyzed_figures
+    )
+
+    logger.info(
+        f"Paper {paper.filename} processed: {chunk_count} chunks indexed "
+        f"({len(analyzed_figures)} figures analysed)"
+    )
 
 
 async def process_paper(
@@ -197,6 +247,7 @@ async def process_paper(
     db: AsyncSession,
     faiss_store: FAISSStore,
     progress_callback=None,
+    llm_chain: FallbackChain | None = None,
 ) -> None:
     paper = await get_paper(db, paper_id)
     if not paper:
@@ -205,7 +256,8 @@ async def process_paper(
 
     try:
         await _execute_paper_processing(
-            paper_id, db, faiss_store, paper, progress_callback
+            paper_id, db, faiss_store, paper, progress_callback,
+            llm_chain=llm_chain,
         )
     except Exception as exc:
         logger.error(f"Paper processing failed for {paper_id}: {exc}")

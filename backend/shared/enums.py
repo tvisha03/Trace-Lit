@@ -4,6 +4,7 @@ class PaperStatus(str, Enum):
     REGISTERED = "registered"
     QUEUED = "queued"
     EXTRACTING = "extracting"
+    ANALYZING_FIGURES = "analyzing_figures"
     CHUNKING = "chunking"
     EMBEDDING = "embedding"
     COMPLETED = "completed"
@@ -43,4 +44,9 @@ class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+
+class ChunkType(str, Enum):
+    TEXT = "text"
+    FIGURE = "figure"
+    TABLE = "table"
 

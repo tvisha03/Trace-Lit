@@ -35,3 +35,15 @@ class BaseLLMProvider(ABC):
     async def health_check(self) -> bool:
         ...
 
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ) -> str:
+        raise NotImplementedError(
+            f"{self.provider.value} does not support image analysis"
+        )
+

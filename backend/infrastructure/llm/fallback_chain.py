@@ -178,3 +178,36 @@ class FallbackChain:
         logger.error(f"All providers failed for streaming: {errors}")
         raise AllProvidersFailedError()
 
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ) -> tuple[str, LLMProvider]:
+        errors: list[str] = []
+
+        for provider in self._providers:
+            try:
+                result = await provider.analyze_image(
+                    image_data, mime_type, prompt, temperature, max_tokens,
+                )
+                logger.info(f"Image analysis from {provider.provider.value}")
+                return result, provider.provider
+
+            except NotImplementedError:
+                errors.append(f"{provider.provider.value}: no_vision_support")
+                continue
+
+            except RateLimitError:
+                errors.append(f"{provider.provider.value}: rate_limited")
+                continue
+
+            except Exception as exc:
+                errors.append(f"{provider.provider.value}: {exc}")
+                continue
+
+        logger.error(f"All providers failed for image analysis: {errors}")
+        raise AllProvidersFailedError()
+

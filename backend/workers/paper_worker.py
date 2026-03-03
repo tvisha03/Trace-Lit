@@ -2,6 +2,7 @@ from workers.paper_queue import PaperJob, SmartPaperQueue
 from services.paper_service import process_paper
 from infrastructure.db.database import async_session_factory
 from infrastructure.vector_store.faiss_store import FAISSStore
+from infrastructure.llm.fallback_chain import FallbackChain
 from shared.logger import get_logger
 
 import time
@@ -10,6 +11,7 @@ logger = get_logger(__name__)
 
 _ws_manager = None
 _faiss_store: FAISSStore | None = None
+_llm_chain: FallbackChain | None = None
 
 def set_ws_manager(manager):
     global _ws_manager
@@ -19,12 +21,18 @@ def set_faiss_store(faiss_store: FAISSStore) -> None:
     global _faiss_store
     _faiss_store = faiss_store
 
+def set_llm_chain(llm_chain: FallbackChain) -> None:
+    global _llm_chain
+    _llm_chain = llm_chain
+
 def _progress_to_stage(progress: float) -> str:
     if progress < 0:
         return "failed"
-    if progress <= 0.3:
+    if progress <= 0.25:
         return "extracting"
     if progress <= 0.4:
+        return "analyzing_figures"
+    if progress <= 0.5:
         return "chunking"
     if progress < 1.0:
         return "embedding"
@@ -73,6 +81,7 @@ async def paper_job_processor(job: PaperJob):
                 db=db,
                 faiss_store=_faiss_store,
                 progress_callback=progress_callback,
+                llm_chain=_llm_chain,
             )
         except Exception:
             await db.rollback()

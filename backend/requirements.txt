@@ -9,8 +9,9 @@ sqlalchemy[asyncio]
 aiosqlite
 
 # ─── PDF Extraction ────────────────────────────────────────────────
-pymupdf4llm
+pymupdf4llm[layout]
 pymupdf
+Pillow
 
 # ─── Vector Store & Embeddings ─────────────────────────────────────
 faiss-cpu

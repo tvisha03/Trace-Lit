@@ -101,3 +101,36 @@ class GeminiProvider(BaseLLMProvider):
         except Exception:
             return False
 
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ) -> str:
+        client = self._get_client()
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+        try:
+            response = await client.aio.models.generate_content(
+                model=_MODEL,
+                contents=[prompt, image_part],
+                config=config,
+            )
+        except Exception as exc:
+            exc_str = str(exc)
+            if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+                raise RateLimitError("gemini")
+            if "timeout" in exc_str.lower() or "deadline" in exc_str.lower():
+                raise ProviderTimeoutError("gemini", self._timeout)
+            raise
+
+        text = (response.text or "").strip()
+        if not text:
+            raise EmptyResponseError("gemini")
+        return text
+

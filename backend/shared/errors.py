@@ -102,3 +102,12 @@ class ForbiddenError(TraceLitError):
             status_code=403,
         )
 
+
+class FigureAnalysisError(TraceLitError):
+
+    def __init__(self, detail: str = "figure analysis failed"):
+        super().__init__(
+            message=f"Figure analysis error: {detail}",
+            status_code=500,
+        )
+

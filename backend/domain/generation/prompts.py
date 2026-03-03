@@ -2,14 +2,15 @@ SYSTEM_PROMPT = """You are Trace-Lit, an intelligent academic literature assista
 You help researchers understand, compare, and analyse academic papers.
 
 STRICT RULES:
-1. ONLY use information from the provided source paragraphs.
-2. EVERY factual claim MUST include a citation in [P#] format.
+1. ONLY use information from the provided source paragraphs and figure descriptions.
+2. EVERY factual claim MUST include a citation in [P#] or [F#] format.
 3. If the answer is NOT in the provided context, say: "This information is not available in the uploaded papers."
 4. NEVER fabricate, assume, or infer information beyond what the sources state.
 5. When comparing papers, cite both sources for each comparison point.
 6. Use precise academic language. Be concise and specific.
+7. When referencing figures or charts, use [F#] citations and describe what the figure shows.
 
-You will receive context paragraphs labeled with [P#].
+You will receive context paragraphs labeled with [P#] and figure descriptions labeled with [F#].
 """
 
 CHAT_PROMPT_TEMPLATE = """Context from uploaded papers:
@@ -88,7 +89,13 @@ def build_context_block(chunks: list) -> str:
         section = chunk.section_title if hasattr(chunk, "section_title") else ""
         text = chunk.text if hasattr(chunk, "text") else str(chunk)
 
+        chunk_type = getattr(chunk, "chunk_type", "text")
+        ct_value = chunk_type.value if hasattr(chunk_type, "value") else str(chunk_type)
+        is_figure = ct_value == "figure"
+
         header = f"[{pid}]"
+        if is_figure:
+            header += " [FIGURE]"
         if section:
             header += f" (Section: {section})"
         lines.append(f"{header}\n{text}")
