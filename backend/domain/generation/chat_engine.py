@@ -164,12 +164,16 @@ async def generate_comparison(
     paper_ids: list[str],
     paper_contexts: dict[str, str],
     llm: FallbackChain,
+    question: str = "Compare these papers across all dimensions.",
 ) -> tuple[str, LLMProvider]:
     formatted_contexts = "\n\n---\n\n".join(
         f"Paper: {pid}\n{ctx}" for pid, ctx in paper_contexts.items()
     )
 
-    user_prompt = COMPARISON_PROMPT_TEMPLATE.format(paper_contexts=formatted_contexts)
+    user_prompt = COMPARISON_PROMPT_TEMPLATE.format(
+        paper_contexts=formatted_contexts,
+        question=question,
+    )
 
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
@@ -180,8 +184,12 @@ async def generate_comparison(
 async def generate_summary(
     context: str,
     llm: FallbackChain,
+    question: str = "Summarize this paper.",
 ) -> tuple[str, LLMProvider]:
-    user_prompt = SUMMARY_PROMPT_TEMPLATE.format(context=context)
+    user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
+        context=context,
+        question=question,
+    )
 
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,

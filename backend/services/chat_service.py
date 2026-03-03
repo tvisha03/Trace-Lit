@@ -123,10 +123,11 @@ async def chat(
         db_session=db,
     )
     # Validate response has citations - Layer 2 of HAVF hallucination prevention.
-    # Pass retrieved paragraph IDs so the validator can flag invalid citations.
+    # Build valid paragraph IDs from the actually retrieved chunks (not HAVF
+    # results) so every cited [P#] can be checked regardless of its HAVF score.
     retrieved_para_ids = [
         str(r.paragraph_id)
-        for r in (response.havf_results or [])
+        for r in (response.retrieved_chunks or [])
         if r.paragraph_id
     ]
     validated_content = await validate_response_has_citations(

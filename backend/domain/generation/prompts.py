@@ -68,6 +68,18 @@ Analyse the research landscape represented by these papers:
 Cite every observation with [P#].
 """
 
+LITERATURE_REVIEW_PROMPT_TEMPLATE = """Context from multiple papers:
+{context}
+
+Write a structured literature review covering the papers above:
+1. **Introduction**: Briefly describe the research area and scope of the reviewed papers. [P#]
+2. **Thematic Analysis**: Group papers by theme or methodology, discussing each paper's contribution. [P#]
+3. **Comparative Discussion**: Highlight agreements, contradictions, and complementary findings across papers. [P#]
+4. **Synthesis**: Summarise the overall state of knowledge and remaining open questions. [P#]
+
+Cite every claim with [P#]. Write in formal academic prose.
+"""
+
 
 def build_context_block(chunks: list) -> str:
     lines = []

@@ -38,7 +38,11 @@ async def get_recent_messages(
     return messages
 
 async def delete_messages_by_session(db: AsyncSession, session_id: str) -> None:
-    msgs = await get_messages_by_session(db, session_id)
-    for m in msgs:
-        await db.delete(m)
+    """Delete all messages for a session in a single SQL statement.
+
+    Uses a bulk DELETE instead of loading-then-deleting each row individually
+    to avoid O(N) roundtrips on sessions with many messages.
+    """
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(Message).where(Message.session_id == session_id))
     await db.flush()

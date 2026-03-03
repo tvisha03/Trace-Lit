@@ -11,20 +11,36 @@ logger = get_logger(__name__)
 _MEMORY_BACKOFF_SECONDS: float = 1.0
 _MAX_MEMORY_WAITS: int = 6
 
-@dataclass
+@dataclass(order=False)
 class PaperJob:
+    """Represents a paper processing job in the priority queue.
+
+    Uses a monotonic counter as tiebreaker so that PriorityQueue can compare
+    tuples without requiring PaperJob to implement ``__lt__``.  This avoids
+    TypeError when two jobs share the same priority.
+    """
     paper_id: str
     session_id: str
     priority: int = 0
+    _seq: int = 0  # monotonic tiebreaker — set by SmartPaperQueue.enqueue()
+
+    def __lt__(self, other: "PaperJob") -> bool:
+        """Compare by priority first, then by insertion order (FIFO)."""
+        if not isinstance(other, PaperJob):
+            return NotImplemented
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self._seq < other._seq
 
 class SmartPaperQueue:
 
     def __init__(self):
-        self._queue: asyncio.PriorityQueue[tuple[int, PaperJob]] = asyncio.PriorityQueue()
+        self._queue: asyncio.PriorityQueue[tuple[int, int, PaperJob]] = asyncio.PriorityQueue()
         self._semaphore = asyncio.Semaphore(MAX_PARALLEL_PAPERS)
         self._active_jobs: set[str] = set()
         self._process_fn: Callable[[PaperJob], Awaitable[None]] | None = None
         self._running = False
+        self._seq_counter: int = 0  # monotonic tiebreaker for equal priorities
 
     def set_processor(self, fn: Callable[[PaperJob], Awaitable[None]]):
         self._process_fn = fn
@@ -39,8 +55,14 @@ class SmartPaperQueue:
             )
             return
 
-        job = PaperJob(paper_id=paper_id, session_id=session_id, priority=priority)
-        await self._queue.put((priority, job))
+        self._seq_counter += 1
+        job = PaperJob(
+            paper_id=paper_id,
+            session_id=session_id,
+            priority=priority,
+            _seq=self._seq_counter,
+        )
+        await self._queue.put((priority, self._seq_counter, job))
         logger.info(f"Enqueued paper {paper_id} (queue size: {self._queue.qsize()})")
 
     async def start(self):
@@ -57,7 +79,7 @@ class SmartPaperQueue:
     async def _consumer_loop(self):
         while self._running:
             try:
-                _, job = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+                _, _seq, job = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
             except Exception:

@@ -38,13 +38,19 @@ async def _build_chunks(
         for chunk in chunks:
             if chunk.paragraph_id in para_set:
                 cid = f"{paper_id}::{chunk.paragraph_id}"
+                score = score_map.get(cid, 0.0)
+                if cid not in score_map:
+                    logger.warning(
+                        f"Score map miss for {cid} — using 0.0. "
+                        "Possible ID format mismatch between FAISS and DB."
+                    )
                 retrieved.append(RetrievedChunk(
                     paragraph_id=chunk.paragraph_id,
                     paper_id=str(chunk.paper_id),
                     text=chunk.text,
                     enriched_text=chunk.enriched_text,
                     section_title=chunk.section_title,
-                    score=score_map[cid],
+                    score=score,
                     sentence_map=chunk.sentence_map or {},
                 ))
     retrieved.sort(key=lambda r: r.score, reverse=True)

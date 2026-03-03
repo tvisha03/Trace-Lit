@@ -1,7 +1,7 @@
 {
   "info": {
-    "_postman_id": "trace-lit-collection-002",
-    "name": "TraceLit API v2",
+    "_postman_id": "trace-lit-collection-003",
+    "name": "TraceLit API v2.1",
     "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  POST /sessions/{id}/export               Export results\n10. POST /verify/{session_id}               Standalone HAVF verify\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## Paper Processing Stages\n\n`pending` → `processing` → `ready` | `failed`\n\nStages: `extraction` → `chunking` → `embedding` → `indexing`",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -581,6 +581,23 @@
                 }
               ],
               "body": "{\n  \"detail\": \"No papers are ready for querying in session ca86d21e-eb4a-49a3-9beb-073a47ae7cf4. Upload and wait for processing to complete.\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
             }
           ]
         },
@@ -716,6 +733,23 @@
                 }
               ],
               "body": "{\n  \"detail\": \"At least 2 papers are required for comparison\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
             }
           ]
         },
@@ -1055,7 +1089,7 @@
               "host": ["{{base_url}}{{api_prefix}}"],
               "path": ["sessions", "{{session_id}}", "analysis", "review"]
             },
-            "description": "Generate a coherent mini literature review synthesising all ready papers in the session.\n\nThe LLM receives each paper's contributions and keywords and writes a structured review: background, methodological landscape, comparative findings, and open questions.\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `review` | string | Full literature review text (markdown) |\n| `paper_count` | int | Number of papers included |\n| `provider` | string | LLM provider used |"
+            "description": "Generate a structured literature review synthesising all ready papers in the session.\n\nThe LLM receives each paper's indexed chunks and produces a formal academic review covering: introduction, thematic analysis, comparative discussion, and synthesis of open questions.\n\nUses a dedicated literature-review prompt template (distinct from gap analysis).\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `review` | string | Full literature review text (markdown) |\n| `paper_count` | int | Number of papers included |\n| `provider` | string | LLM provider used |"
           },
           "response": [
             {
@@ -1069,7 +1103,24 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"review\": \"## Literature Review\\n\\n### Introduction\\nRecent advances in NLP have been driven by attention-based architectures...\\n\\n### Transformer Architecture (Vaswani et al., 2017)\\nThe seminal work introduced self-attention, removing recurrence entirely...\\n\\n### Bidirectional Representations (Devlin et al., 2018)\\nBERT demonstrated that bidirectional pre-training significantly improves...\\n\\n### Open Questions\\nInterpretability of attention heads and scaling laws remain underexplored...\",\n  \"paper_count\": 2,\n  \"provider\": \"gemini\"\n}"
+              "body": "{\n  \"review\": \"## Literature Review\\n\\n### Introduction\\nRecent advances in NLP have been driven by attention-based architectures...\\n\\n### Thematic Analysis\\nThe reviewed papers cluster into two major themes: self-attention mechanisms (Vaswani et al., 2017) [P1] and bidirectional pre-training (Devlin et al., 2018) [P3]...\\n\\n### Comparative Discussion\\nBoth approaches demonstrate that attention is the critical driver; however they differ on directionality...\\n\\n### Synthesis\\nInterpretability of attention heads and scaling laws remain underexplored...\",\n  \"paper_count\": 2,\n  \"provider\": \"gemini\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
             }
           ]
         },
@@ -1124,6 +1175,23 @@
                 }
               ],
               "body": "{\n  \"detail\": \"Paper a1b2c3d4-0000-0000-0000-111111111111 not found\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
             }
           ]
         }

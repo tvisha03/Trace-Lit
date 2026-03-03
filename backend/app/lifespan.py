@@ -12,6 +12,7 @@ from workers.paper_worker import create_paper_queue, set_ws_manager, set_faiss_s
 from workers.export_worker import shutdown_export_pool
 from api.v1.routes.websocket import ws_manager
 from infrastructure.db.crud.paper_crud import get_stuck_papers, update_paper_status
+from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.db.database import async_session_factory
 from shared.enums import PaperStatus
 from app.config import get_settings
@@ -46,6 +47,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     faiss_store = FAISSStore()
     faiss_store.load_or_create()
+
+    # IMP-05: Reconcile FAISS id_map against DB chunks on startup.
+    # If a previous run crashed mid-indexing the FAISS index may reference
+    # papers/chunks that were never committed to the DB (or vice-versa).
+    # We remove orphaned FAISS entries so retrieval doesn't return ghost IDs.
+    await _reconcile_faiss_with_db(faiss_store)
+
     app.state.faiss_store = faiss_store
 
     llm = FallbackChain()
@@ -81,3 +89,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # without holding GPU/CPU allocations open (MINOR-001 fix).
     from domain.analysis.keyword_extractor import unload_kw_model
     unload_kw_model()
+
+
+async def _reconcile_faiss_with_db(faiss_store: FAISSStore) -> None:
+    """Remove FAISS entries whose paper_id has no matching chunks in the DB.
+
+    This handles the case where a previous run indexed vectors into FAISS but
+    the corresponding DB rows were never committed (crash, rollback, etc.).
+    Orphaned vectors would cause score_map KeyErrors in the retriever because
+    the DB lookup returns nothing for the ghost paper_id.
+    """
+    if not faiss_store.is_ready() or faiss_store.total_vectors == 0:
+        return
+
+    orphaned = await _get_orphaned_paper_ids(faiss_store)
+    if not orphaned:
+        logger.info("FAISS reconciliation: all entries have matching DB chunks ✓")
+        return
+
+    for pid in orphaned:
+        logger.warning(
+            f"FAISS reconciliation: removing orphaned vectors for paper {pid}"
+        )
+        faiss_store.remove_paper(pid)
+    faiss_store.save()
+    logger.info(
+        f"FAISS reconciliation complete — removed {len(orphaned)} orphaned paper(s), "
+        f"{faiss_store.total_vectors} vectors remain."
+    )
+
+
+async def _get_orphaned_paper_ids(faiss_store: FAISSStore) -> list[str]:
+    """Return paper IDs present in the FAISS id_map but absent from the DB."""
+    faiss_paper_ids: set[str] = {
+        cid.split("::", 1)[0] for cid in faiss_store._id_map
+    }
+    orphaned: list[str] = []
+    async with async_session_factory() as db:
+        for pid in faiss_paper_ids:
+            chunks = await get_chunks_by_paper(db, pid)
+            if not chunks:
+                orphaned.append(pid)
+    return orphaned
