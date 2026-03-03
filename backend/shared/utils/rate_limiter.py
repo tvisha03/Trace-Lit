@@ -15,7 +15,6 @@ Redis-backed rate limiter before scaling horizontally.
 
 from collections import defaultdict
 from time import monotonic
-from typing import Optional
 
 from fastapi import HTTPException, Request
 
@@ -61,7 +60,7 @@ class SlidingWindowRateLimiter:
 
     def enforce(self, request: Request) -> None:
         """Raise HTTP 429 if the caller has exceeded the rate limit."""
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = _resolve_client_ip(request)
         now = monotonic()
         cutoff = now - self._window_seconds
 
@@ -79,6 +78,19 @@ class SlidingWindowRateLimiter:
             )
 
         self._calls[client_ip].append(now)
+
+        # Periodic cleanup: every 100 enforce() calls, evict stale IPs that
+        # have no timestamps inside the current window.  This prevents the
+        # _calls dict from growing unboundedly when many unique IPs hit the
+        # server (EDGE-7 fix).
+        total_entries = sum(len(v) for v in self._calls.values())
+        if total_entries > 100:
+            stale_ips = [
+                ip for ip, ts in self._calls.items()
+                if not ts or ts[-1] <= cutoff
+            ]
+            for ip in stale_ips:
+                del self._calls[ip]
 
     def reset(self) -> None:
         """Clear all tracked calls — useful for testing."""

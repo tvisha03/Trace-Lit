@@ -15,6 +15,7 @@ from domain.retrieval.retriever import retrieve, RetrievedChunk
 from domain.verification.havf import verify_response, VerificationResult
 from infrastructure.llm.fallback_chain import FallbackChain
 from infrastructure.vector_store.faiss_store import FAISSStore
+from app.config import get_settings
 from shared.enums import LLMProvider, QueryType
 from shared.logger import get_logger
 from shared.utils.text_utils import estimate_tokens
@@ -93,7 +94,14 @@ async def generate_response(
             user_prompt=user_prompt,
         )
 
-    havf_results = await verify_response(response_text, chunks)
+    settings = get_settings()
+    havf_results = await verify_response(
+        response_text,
+        chunks,
+        high_threshold=settings.HAVF_HIGH_THRESHOLD,
+        medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
+        cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
+    )
 
     latency_ms = (time.perf_counter() - start) * 1000
 

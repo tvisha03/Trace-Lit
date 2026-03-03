@@ -106,8 +106,18 @@ async def download_export(
     filename: str,
     background_tasks: BackgroundTasks,
 ):
+    # EDGE-8: Reject filenames that attempt path traversal (e.g. "../../etc/passwd").
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise NotFoundError("Export file", filename)
+
     file_storage = FileStorage()
     file_path = file_storage.get_export_path(filename, session_id)
+
+    # Double check the resolved path is still inside the expected export directory.
+    try:
+        file_path.resolve().relative_to(file_storage._exports.resolve())
+    except ValueError:
+        raise NotFoundError("Export file", filename)
 
     if not file_path.exists():
         raise NotFoundError("Export file", filename)

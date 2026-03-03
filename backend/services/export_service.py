@@ -14,6 +14,7 @@ from infrastructure.storage.file_storage import FileStorage
 from shared.enums import ExportFormat
 from shared.errors import NotFoundError
 from shared.logger import get_logger
+from workers.export_worker import run_export_in_thread
 
 logger = get_logger(__name__)
 
@@ -41,14 +42,16 @@ async def export_chat(
 
     if export_format == ExportFormat.PDF:
         output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
-        return export_chat_to_pdf(
+        return await run_export_in_thread(
+            export_chat_to_pdf,
             session_title=session.title or "Chat Export",
             messages=messages,
             output_path=output_path,
         )
     elif export_format == ExportFormat.EXCEL:
         output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
-        return export_citations_to_excel(
+        return await run_export_in_thread(
+            export_citations_to_excel,
             citations=_flatten_citations(messages),
             output_path=output_path,
         )
@@ -69,9 +72,32 @@ async def export_chat(
             for p in papers_db
         ]
         output_path = file_storage.get_export_path(f"{filename}.bib", session_id)
-        return export_papers_to_bibtex(papers=paper_dicts, output_path=output_path)
+        return await run_export_in_thread(
+            export_papers_to_bibtex,
+            papers=paper_dicts,
+            output_path=output_path,
+        )
     else:
         raise ValueError(f"Unsupported export format: {export_format.value}")
+
+async def _collect_paper_dicts(paper_ids: list[str], db: AsyncSession) -> list[dict]:
+    """Fetch paper metadata dicts for BibTeX export."""
+    paper_dicts = []
+    for pid in paper_ids:
+        paper = await get_paper(db, pid)
+        if paper:
+            paper_dicts.append(
+                {
+                    "id": paper.id,
+                    "title": paper.title,
+                    "authors": paper.authors,
+                    "year": paper.year,
+                    "abstract": paper.abstract,
+                    "filename": paper.filename,
+                }
+            )
+    return paper_dicts
+
 
 async def export_comparison(
     session_id: str,
@@ -86,7 +112,8 @@ async def export_comparison(
 
     if export_format == ExportFormat.PDF:
         output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
-        return export_comparison_to_pdf(
+        return await run_export_in_thread(
+            export_comparison_to_pdf,
             title="Paper Comparison",
             comparison_content=comparison_content,
             paper_titles=paper_titles,
@@ -94,44 +121,25 @@ async def export_comparison(
         )
     elif export_format == ExportFormat.EXCEL:
         output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
-        # Build structured rows with all required fields; fields not available
-        # from the comparison context default to empty strings.
         paper_data = [
-            {
-                "title": title,
-                "problem": "",
-                "method": "",
-                "dataset": "",
-                "metrics": "",
-                "results": "",
-            }
-            for title in paper_titles
+            {"title": t, "problem": "", "method": "", "dataset": "", "metrics": "", "results": ""}
+            for t in paper_titles
         ]
-        return export_comparison_to_excel(
+        return await run_export_in_thread(
+            export_comparison_to_excel,
             paper_data=paper_data,
             output_path=output_path,
         )
     elif export_format == ExportFormat.BIBTEX:
         if not paper_ids or not db:
-            raise ValueError(
-                "paper_ids and db are required for BibTeX comparison export."
-            )
-        paper_dicts = []
-        for pid in paper_ids:
-            paper = await get_paper(db, pid)
-            if paper:
-                paper_dicts.append(
-                    {
-                        "id": paper.id,
-                        "title": paper.title,
-                        "authors": paper.authors,
-                        "year": paper.year,
-                        "abstract": paper.abstract,
-                        "filename": paper.filename,
-                    }
-                )
+            raise ValueError("paper_ids and db are required for BibTeX comparison export.")
+        paper_dicts = await _collect_paper_dicts(paper_ids, db)
         output_path = file_storage.get_export_path(f"{filename}.bib", session_id)
-        return export_papers_to_bibtex(papers=paper_dicts, output_path=output_path)
+        return await run_export_in_thread(
+            export_papers_to_bibtex,
+            papers=paper_dicts,
+            output_path=output_path,
+        )
     else:
         raise ValueError(f"Unsupported export format for comparison: {export_format.value}")
 

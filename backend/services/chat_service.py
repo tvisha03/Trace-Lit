@@ -41,15 +41,21 @@ async def validate_response_has_citations(
         )
 
     # MED-006: Validate that cited paragraph IDs actually exist in retrieved context.
+    # Strip invalid citations (Layer 3 defence) so the user never sees [P#] tags
+    # pointing to non-existent paragraphs — not just warn about them.
     if retrieved_paragraph_ids:
         cited_ids = set(re.findall(r"\[P(\d+)\]", response))
         valid_ids = set(retrieved_paragraph_ids)
         invalid_ids = cited_ids - valid_ids
         if invalid_ids:
             logger.warning(
-                f"Citations reference non-existent paragraphs: {invalid_ids}. "
+                f"Stripping citations referencing non-existent paragraphs: {invalid_ids}. "
                 f"Valid IDs: {valid_ids}"
             )
+            for bad_id in invalid_ids:
+                response = response.replace(f"[P{bad_id}]", "")
+            # Clean up any double-spaces left after stripping.
+            response = re.sub(r"  +", " ", response).strip()
 
     return response
 

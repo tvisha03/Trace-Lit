@@ -22,6 +22,13 @@ def create_chunks(
     paper_title: str | None = None,
     paper_id: str | None = None,
 ) -> list[Chunk]:
+    if not sections:
+        logger.warning(
+            f"No sections provided to create_chunks for paper {paper_id or 'unknown'}. "
+            "The PDF may be empty or extraction yielded no usable text."
+        )
+        return []
+
     chunks: list[Chunk] = []
     paragraph_idx = 0
 

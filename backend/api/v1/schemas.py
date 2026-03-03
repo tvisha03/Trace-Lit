@@ -94,6 +94,7 @@ class VerificationItem(BaseModel):
     source_sentence: Optional[str] = None
     paragraph_id: Optional[str] = None
     sentence_key: Optional[str] = None
+    verification_method: Optional[str] = None
 
 class ChatResponse(BaseModel):
     content: str

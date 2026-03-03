@@ -82,6 +82,10 @@ def truncate_text(text: str, max_tokens: int) -> str:
     return text[:max_chars].rsplit(" ", 1)[0] + "…"
 
 def sanitize_filename(name: str) -> str:
+    # Normalize Unicode (e.g. accented chars) to ASCII-safe representation,
+    # then strip filesystem-unsafe characters.
+    import unicodedata
+    name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(". ")
 
 def extract_paragraph_ids(text: str) -> list[str]:

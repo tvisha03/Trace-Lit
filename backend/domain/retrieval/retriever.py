@@ -8,9 +8,10 @@ from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from shared.constants import (
     FAISS_TOP_K_PER_PAPER,
     MAX_CONTEXT_TOKENS,
+    MAX_QUERY_TOKENS,
 )
 from shared.enums import QueryType
-from shared.utils.text_utils import estimate_tokens
+from shared.utils.text_utils import estimate_tokens, truncate_text
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -71,7 +72,16 @@ async def retrieve(
         logger.info("Metadata query — skipping vector retrieval")
         return []
 
+    # EDGE-6: Guard against querying a FAISS index that hasn't been populated.
+    if not faiss_store.is_ready():
+        logger.warning("FAISS store not ready — returning empty results")
+        return []
+
     effective_top_k = classification.retrieval_top_k or top_k
+
+    # EDGE-2: Truncate extremely long queries before embedding to avoid
+    # silent transformer truncation that could distort the vector.
+    query = truncate_text(query, MAX_QUERY_TOKENS)
 
     query_vector = encode_query(query)
     results = faiss_store.search(query_vector[0], paper_ids, effective_top_k)

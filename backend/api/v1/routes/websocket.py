@@ -14,6 +14,23 @@ router = APIRouter()
 # Heartbeat interval in seconds for detecting stale WebSocket connections.
 _WS_HEARTBEAT_INTERVAL: float = 30.0
 
+
+async def _session_exists(session_id: str) -> bool:
+    """Return True if the session_id corresponds to an existing DB session.
+
+    Uses a short-lived DB session so the check doesn't hold a connection for
+    the entire WebSocket lifetime.
+    """
+    try:
+        from app.dependencies import async_session_factory
+        from infrastructure.db.crud.session_crud import get_session
+        async with async_session_factory() as db:
+            session = await get_session(db, session_id)
+            return session is not None
+    except Exception as exc:
+        logger.warning(f"Session validation failed for WS {session_id}: {exc}")
+        return False
+
 class ConnectionManager:
     """Manages WebSocket connections keyed by (session_id, connection_id).
 
@@ -104,6 +121,13 @@ ws_manager = ConnectionManager()
 
 @router.websocket("/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    # INT-5: Validate that the session actually exists before accepting the
+    # WebSocket so arbitrary clients cannot connect to arbitrary session IDs.
+    if not await _session_exists(session_id):
+        await websocket.close(code=4004, reason="Session not found")
+        logger.warning(f"WS rejected: session {session_id} does not exist")
+        return
+
     # Each browser tab/device generates a unique connection_id so the server
     # can send targeted messages when needed while still broadcasting shared
     # events (e.g. paper progress) to all connections in the session.

@@ -20,9 +20,52 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+import re as _re
+from shared.utils.text_utils import extract_paragraph_ids
+
+
+def _validate_and_strip_citations(
+    full_text: str,
+    chunks: list,
+    session_id: str,
+) -> tuple[str, bool]:
+    """Strip invalid [P#] citations from the accumulated LLM output.
+
+    Returns the cleaned text and a boolean indicating whether any valid
+    citations remain (False means the response has no citations at all).
+    """
+    valid_pids = {c.paragraph_id for c in chunks}
+    cited_ids = set(extract_paragraph_ids(full_text))
+    invalid_ids = cited_ids - valid_pids
+    if invalid_ids:
+        logger.warning(
+            f"Streaming response for session {session_id} cites non-existent "
+            f"paragraphs {invalid_ids}. Stripping them before HAVF."
+        )
+        for bad_id in invalid_ids:
+            full_text = full_text.replace(f"[P{bad_id}]", "")
+        full_text = _re.sub(r"  +", " ", full_text).strip()
+
+    has_citations = bool(extract_paragraph_ids(full_text))
+    if not has_citations:
+        logger.warning(
+            f"LLM response for session {session_id} contains no [P#] citations. "
+            "HAVF will have no citation targets — confidence scores may be unreliable."
+        )
+    return full_text, has_citations
+
+
 async def _emit_havf_results(full_text: str, chunks: list):
     from domain.verification.havf import verify_response
-    havf_results = await verify_response(full_text, chunks)
+    from app.config import get_settings
+    settings = get_settings()
+    havf_results = await verify_response(
+        full_text,
+        chunks,
+        high_threshold=settings.HAVF_HIGH_THRESHOLD,
+        medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
+        cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
+    )
     return [
         {
             "claim": r.claim,
@@ -31,6 +74,7 @@ async def _emit_havf_results(full_text: str, chunks: list):
             "source_sentence": r.source_sentence,
             "paragraph_id": r.paragraph_id,
             "sentence_key": r.sentence_key,
+            "verification_method": r.verification_method.value if r.verification_method else None,
         }
         for r in havf_results
     ]
@@ -151,17 +195,12 @@ async def stream_chat_response(
         # inside the fallback chain) so the done event always names a provider.
         resolved_provider = provider or "unknown"
 
-        # Validate that the LLM produced at least one [P#] citation before
-        # running HAVF.  Without citation targets every sentence defaults to
-        # LOW confidence — technically correct, but the caller deserves an
-        # explicit warning so the frontend can surface it to the user.
-        from shared.utils.text_utils import extract_paragraph_ids
-        citations_found = extract_paragraph_ids(full_text)
-        if not citations_found:
-            logger.warning(
-                f"LLM response for session {session_id} contains no [P#] citations. "
-                "HAVF will have no citation targets — confidence scores may be unreliable."
-            )
+        # INT-2: Validate and strip invalid citations from the accumulated
+        # stream text before running HAVF (mirrors chat_service behaviour).
+        full_text, has_citations = _validate_and_strip_citations(
+            full_text, chunks, session_id,
+        )
+        if not has_citations:
             yield sse_event(
                 "warning",
                 json.dumps({"detail": "Response contains no citations. Confidence scores may be unreliable."}),

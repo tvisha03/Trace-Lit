@@ -9,7 +9,7 @@ from shared.constants import (
     HAVF_MEDIUM_THRESHOLD,
     HAVF_CROSS_ENCODER_THRESHOLD,
 )
-from shared.enums import ConfidenceLevel
+from shared.enums import ConfidenceLevel, VerificationMethod
 from shared.utils.text_utils import split_into_sentences
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
@@ -24,6 +24,7 @@ class VerificationResult:
     source_sentence: str | None
     paragraph_id: str | None
     sentence_key: str | None
+    verification_method: "VerificationMethod | None" = None
 
 def build_source_sentences(chunks: list) -> list[dict]:
     sources = []
@@ -72,6 +73,7 @@ async def verify_response(
                     source_sentence=None,
                     paragraph_id=None,
                     sentence_key=None,
+                    verification_method=VerificationMethod.SKIPPED,
                 )
                 for c in claims
             ]
@@ -100,8 +102,18 @@ async def verify_response(
         result_map = {r["claim"]: r for r in resolved}
         final: list[VerificationResult] = []
 
+        # Build a set of claims that went through Level 2 reranking so we
+        # can tag each result with the correct VerificationMethod.
+        reranked_claims = {r["claim"] for r in uncertain}
+
         for claim in claims:
             r = result_map.get(claim, {})
+            if claim in reranked_claims:
+                method = VerificationMethod.CROSS_ENCODER_RERANK
+            elif r:
+                method = VerificationMethod.EMBEDDING_SIMILARITY
+            else:
+                method = VerificationMethod.SKIPPED
             final.append(VerificationResult(
                 claim=claim,
                 confidence=r.get("confidence", ConfidenceLevel.LOW),
@@ -109,6 +121,7 @@ async def verify_response(
                 source_sentence=r.get("source_sentence"),
                 paragraph_id=r.get("paragraph_id"),
                 sentence_key=r.get("sentence_key"),
+                verification_method=method,
             ))
 
         counts = {level: 0 for level in ConfidenceLevel}
