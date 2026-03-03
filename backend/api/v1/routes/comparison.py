@@ -9,8 +9,15 @@ from infrastructure.db.crud.session_crud import get_session
 from infrastructure.llm.fallback_chain import FallbackChain
 from services.comparison_service import compare_papers, extract_paper_contributions
 from shared.errors import NotFoundError
+from shared.utils.rate_limiter import SlidingWindowRateLimiter
 
 router = APIRouter()
+
+# Comparison calls the LLM with large multi-paper context — cap each client
+# IP to 10 requests per minute to prevent quota exhaustion.
+_comparison_limiter = SlidingWindowRateLimiter(
+    max_calls=10, window_seconds=60.0, resource_name="comparison requests",
+)
 
 def _get_llm(request: Request) -> FallbackChain:
     return request.app.state.llm
@@ -39,6 +46,7 @@ async def compare(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _comparison_limiter.enforce(request)
     await _verify_session_exists(session_id, db)
     await _verify_papers_belong_to_session(body.paper_ids, session_id, db)
     llm = _get_llm(request)
@@ -52,6 +60,7 @@ async def get_contributions(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _comparison_limiter.enforce(request)
     # Validate the session exists before checking paper ownership so that an
     # invalid session_id surfaces a clear 404 rather than a confusing paper
     # not-found error (CRT-006 fix).

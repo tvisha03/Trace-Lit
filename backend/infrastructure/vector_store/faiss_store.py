@@ -161,9 +161,17 @@ class FAISSStore:
             })
 
     def remove_paper(self, paper_id: str) -> None:
-        """Remove all vectors associated with a paper from the FAISS index."""
+        """Remove all vectors associated with a paper from the FAISS index.
+
+        Saves a backup of the index before rebuilding so that a crash
+        mid-rebuild does not permanently corrupt the index.
+        """
         if not self._is_initialized():
             return
+
+        # Safety: save a backup before destructive rebuild so the index
+        # can be recovered if the process crashes mid-operation.
+        self._backup_index()
 
         with self._lock:
             self._remove_paper_from_index(paper_id)
@@ -223,3 +231,22 @@ class FAISSStore:
     @property
     def total_vectors(self) -> int:
         return self._index.ntotal if self._index else 0
+
+    def _backup_index(self) -> None:
+        """Write a .bak copy of the FAISS index files before a destructive operation.
+
+        Best-effort: failures are logged but do not block the caller because
+        the primary index file is still intact at this point.
+        """
+        try:
+            index_path = self._index_dir / "index.faiss"
+            map_path = self._index_dir / "id_map.npy"
+            if index_path.exists():
+                import shutil
+                shutil.copy2(index_path, self._index_dir / "index.faiss.bak")
+            if map_path.exists():
+                import shutil
+                shutil.copy2(map_path, self._index_dir / "id_map.npy.bak")
+            logger.info("FAISS backup created before rebuild")
+        except Exception as exc:
+            logger.warning(f"Could not create FAISS backup: {exc}")

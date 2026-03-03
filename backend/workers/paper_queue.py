@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Callable, Awaitable
 
-from shared.constants import MAX_PARALLEL_PAPERS
+from shared.constants import MAX_PARALLEL_PAPERS, PAPER_PROCESSING_TIMEOUT_SECONDS
 from shared.utils.memory_monitor import is_memory_pressure_high
 from shared.logger import get_logger
 
@@ -73,8 +73,36 @@ class SmartPaperQueue:
         asyncio.create_task(self._consumer_loop())
 
     async def stop(self):
+        """Gracefully stop the queue, marking in-progress papers as QUEUED.
+
+        Papers that were actively being processed when the shutdown signal
+        arrives are re-set to QUEUED so the startup re-queue logic in
+        lifespan.py picks them up on the next run.
+        """
         self._running = False
         logger.info("SmartPaperQueue stopping")
+
+        if self._active_jobs:
+            logger.info(
+                f"Marking {len(self._active_jobs)} active paper(s) back to QUEUED for retry"
+            )
+            try:
+                from infrastructure.db.database import async_session_factory
+                from infrastructure.db.crud.paper_crud import update_paper_status
+                from shared.enums import PaperStatus
+                async with async_session_factory() as db:
+                    for paper_id in list(self._active_jobs):
+                        try:
+                            await update_paper_status(
+                                db, paper_id, PaperStatus.QUEUED, progress=0.0
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                f"Could not reset paper {paper_id} to QUEUED: {exc}"
+                            )
+                    await db.commit()
+            except Exception as exc:
+                logger.warning(f"Graceful queue shutdown DB update failed: {exc}")
 
     async def _consumer_loop(self):
         while self._running:
@@ -122,7 +150,30 @@ class SmartPaperQueue:
             self._active_jobs.add(job.paper_id)
             try:
                 logger.info(f"Processing paper {job.paper_id} (active: {len(self._active_jobs)})")
-                await self._process_fn(job)
+                # EDGE-CASE: enforce a hard timeout so a single paper cannot
+                # block a semaphore slot indefinitely (e.g. hung PDF extraction
+                # or infinite LLM retry loop).
+                await asyncio.wait_for(
+                    self._process_fn(job),
+                    timeout=PAPER_PROCESSING_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Paper {job.paper_id} timed out after "
+                    f"{PAPER_PROCESSING_TIMEOUT_SECONDS}s — marking as failed"
+                )
+                # Mark paper failed in DB so the user sees an actionable error.
+                try:
+                    from infrastructure.db.database import async_session_factory
+                    from services.paper_service import mark_paper_failed
+                    async with async_session_factory() as db:
+                        await mark_paper_failed(
+                            db, job.paper_id,
+                            reason=f"Processing timed out after {PAPER_PROCESSING_TIMEOUT_SECONDS}s",
+                        )
+                        await db.commit()
+                except Exception as db_exc:
+                    logger.warning(f"Could not persist timeout failure for {job.paper_id}: {db_exc}")
             except Exception as exc:
                 logger.error(f"Paper queue job failed for {job.paper_id}: {exc}")
             finally:

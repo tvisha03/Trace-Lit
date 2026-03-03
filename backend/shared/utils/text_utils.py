@@ -89,7 +89,41 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(". ")
 
 def extract_paragraph_ids(text: str) -> list[str]:
-    return re.findall(r"\[P(\d+)\]", text)
+    """Extract full paragraph IDs from citation tags.
+
+    Matches both prefixed (``[a2349a01_P5]``) and bare (``[P5]``) formats.
+    Returns the inner ID string (e.g. ``'a2349a01_P5'`` or ``'P5'``).
+    """
+    return re.findall(r"\[((?:[a-f0-9]{1,8}_)?P\d+)\]", text)
+
+
+def normalize_paragraph_ids(
+    cited_ids: set[str], valid_ids: set[str]
+) -> tuple[set[str], dict[str, str]]:
+    """Resolve short-form paragraph IDs (``P5``) to prefixed equivalents.
+
+    Returns ``(resolved_ids, replacement_map)`` where *replacement_map* maps
+    short-form IDs to their prefixed counterpart for text substitution.
+    IDs that already appear in *valid_ids* (or have no unambiguous match)
+    are kept as-is.
+    """
+    resolved: set[str] = set()
+    replacements: dict[str, str] = {}
+    for cid in cited_ids:
+        if cid in valid_ids:
+            resolved.add(cid)
+        elif "_" not in cid:
+            # Short form like "P5" — find an unambiguous prefixed match.
+            matches = [vid for vid in valid_ids if vid.endswith(f"_{cid}")]
+            if len(matches) == 1:
+                resolved.add(matches[0])
+                replacements[cid] = matches[0]
+            else:
+                # Ambiguous or no match — flag as-is for invalid detection.
+                resolved.add(cid)
+        else:
+            resolved.add(cid)
+    return resolved, replacements
 
 def clean_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()

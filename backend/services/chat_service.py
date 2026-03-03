@@ -11,6 +11,7 @@ from infrastructure.vector_store.faiss_store import FAISSStore
 from shared.enums import PaperStatus, MessageRole
 from shared.errors import NotFoundError
 from shared.logger import get_logger
+from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_ids
 
 logger = get_logger(__name__)
 
@@ -23,8 +24,8 @@ async def validate_response_has_citations(
     This is Layer 2 of HAVF hallucination prevention - ensuring the model
     actually cites sources for its claims.
     """
-    # Check if response has any [P#] citations
-    citation_pattern = r"\[P\d+\]"
+    # Check if response has any [P#] or [prefix_P#] citations
+    citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?P\d+)\]"
     citations_found = re.findall(citation_pattern, response)
 
     if not citations_found:
@@ -44,8 +45,15 @@ async def validate_response_has_citations(
     # Strip invalid citations (Layer 3 defence) so the user never sees [P#] tags
     # pointing to non-existent paragraphs — not just warn about them.
     if retrieved_paragraph_ids:
-        cited_ids = set(re.findall(r"\[P(\d+)\]", response))
+        raw_cited = set(extract_paragraph_ids(response))
         valid_ids = set(retrieved_paragraph_ids)
+
+        # Normalise short-form citations ([P5]) to prefixed form so
+        # they match the full paragraph IDs from the chunker.
+        cited_ids, short_to_long = normalize_paragraph_ids(raw_cited, valid_ids)
+        for short_id, long_id in short_to_long.items():
+            response = response.replace(f"[{short_id}]", f"[{long_id}]")
+
         invalid_ids = cited_ids - valid_ids
         if invalid_ids:
             logger.warning(
@@ -53,7 +61,7 @@ async def validate_response_has_citations(
                 f"Valid IDs: {valid_ids}"
             )
             for bad_id in invalid_ids:
-                response = response.replace(f"[P{bad_id}]", "")
+                response = response.replace(f"[{bad_id}]", "")
             # Clean up any double-spaces left after stripping.
             response = re.sub(r"  +", " ", response).strip()
 
@@ -71,6 +79,7 @@ async def _format_havf_data(response: ChatResponse) -> list[dict]:
             "source_sentence": r.source_sentence,
             "paragraph_id": r.paragraph_id,
             "sentence_key": r.sentence_key,
+            "verification_method": r.verification_method.value if r.verification_method else None,
         }
         for r in response.havf_results
     ]

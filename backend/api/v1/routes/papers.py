@@ -9,7 +9,7 @@ from infrastructure.db.crud.paper_crud import get_paper as db_get_paper
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
 from services.paper_service import register_paper, get_session_papers, delete_paper, mark_paper_failed
-from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB
+from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB, MAX_PAPERS_PER_SESSION
 from shared.errors import FileValidationError, ForbiddenError, NotFoundError, TraceLitError
 from shared.utils.file_utils import get_file_size_mb
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
@@ -43,6 +43,17 @@ async def upload_papers(
 
     if len(files) > MAX_UPLOAD_FILES:
         raise FileValidationError(f"Maximum {MAX_UPLOAD_FILES} files allowed per upload")
+
+    # BUG-9 fix: enforce a total paper count cap per session so users
+    # cannot overwhelm FAISS or the queue by gradually uploading dozens.
+    existing_papers = await get_session_papers(db, session_id)
+    if len(existing_papers) + len(files) > MAX_PAPERS_PER_SESSION:
+        allowed = MAX_PAPERS_PER_SESSION - len(existing_papers)
+        raise FileValidationError(
+            f"Session already has {len(existing_papers)} paper(s). "
+            f"Maximum {MAX_PAPERS_PER_SESSION} papers per session; "
+            f"you can upload at most {max(0, allowed)} more."
+        )
 
     file_storage = FileStorage()
     paper_ids = []
@@ -178,6 +189,7 @@ async def get_paper(
 async def remove_paper(
     session_id: str,
     paper_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     faiss_store=Depends(get_faiss_store),
 ):
@@ -189,6 +201,20 @@ async def remove_paper(
         raise NotFoundError("Paper", paper_id)
     if str(paper.session_id) != session_id:
         raise ForbiddenError("Paper", paper_id)
+
+    # EDGE-CASE: Prevent deletion of papers that are actively being processed.
+    # Removing a paper mid-indexing would leave the FAISS index in an
+    # inconsistent state and crash the worker.
+    _processing_statuses = {"EXTRACTING", "CHUNKING", "EMBEDDING", "QUEUED"}
+    status_val = paper.status.value if hasattr(paper.status, "value") else paper.status
+    if status_val in _processing_statuses:
+        paper_queue = getattr(request.app.state, "paper_queue", None)
+        if paper_queue and paper_id in paper_queue._active_jobs:
+            raise TraceLitError(
+                message=f"Paper '{paper_id}' is currently being processed and cannot be deleted. "
+                        "Please wait for processing to complete or fail before deleting.",
+                status_code=409,
+            )
 
     deleted = await delete_paper(paper_id, db, faiss_store)
     if not deleted:

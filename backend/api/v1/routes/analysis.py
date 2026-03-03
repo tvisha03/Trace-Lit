@@ -22,8 +22,15 @@ from services.analysis_service import (
 )
 from shared.enums import PaperStatus
 from shared.errors import ForbiddenError, InsufficientDataError, NotFoundError
+from shared.utils.rate_limiter import SlidingWindowRateLimiter
 
 router = APIRouter()
+
+# Analysis endpoints invoke LLM + ML pipelines — rate-limit to prevent
+# accidental quota exhaustion and CPU saturation.
+_analysis_limiter = SlidingWindowRateLimiter(
+    max_calls=10, window_seconds=60.0, resource_name="analysis requests",
+)
 
 def _get_llm(request: Request) -> FallbackChain:
     return request.app.state.llm
@@ -32,8 +39,10 @@ def _get_llm(request: Request) -> FallbackChain:
 async def paper_keywords(
     session_id: str,
     paper_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _analysis_limiter.enforce(request)
     # Validate the paper exists before invoking the keyword extractor so the
     # caller receives a structured 404 instead of a silent empty response or
     # an opaque service-layer error (HI-005 fix).
@@ -55,8 +64,10 @@ async def paper_keywords(
 @router.get("/gaps", response_model=GapAnalysisResponse)
 async def gap_analysis(
     session_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _analysis_limiter.enforce(request)
     # Validate session exists before running gap analysis (HI-005 fix).
     session = await get_session(db, session_id)
     if not session:
@@ -90,6 +101,7 @@ async def literature_review(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    _analysis_limiter.enforce(request)
     # Validate session exists before generating the review (HI-005 fix).
     session = await get_session(db, session_id)
     if not session:
@@ -142,6 +154,7 @@ async def paper_summary(
             "Please wait for processing to complete before requesting a summary."
         )
 
+    _analysis_limiter.enforce(request)
     llm = _get_llm(request)
     result = await generate_paper_summary(paper_id, db, llm, user_question=question)
     return SummaryResponse(**result)

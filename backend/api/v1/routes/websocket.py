@@ -22,7 +22,7 @@ async def _session_exists(session_id: str) -> bool:
     the entire WebSocket lifetime.
     """
     try:
-        from app.dependencies import async_session_factory
+        from infrastructure.db.database import async_session_factory
         from infrastructure.db.crud.session_crud import get_session
         async with async_session_factory() as db:
             session = await get_session(db, session_id)

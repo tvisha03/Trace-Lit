@@ -54,6 +54,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # We remove orphaned FAISS entries so retrieval doesn't return ghost IDs.
     await _reconcile_faiss_with_db(faiss_store)
 
+    # Clean up any stale export files left from previous runs so they don't
+    # accumulate on disk.  Export files are one-time downloads that are
+    # deleted after retrieval, but a crash or ungraceful shutdown may leave
+    # orphaned files behind.
+    _cleanup_stale_exports()
+
     app.state.faiss_store = faiss_store
 
     llm = FallbackChain()
@@ -84,8 +90,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("TraceLit backend shutting down …")
     await paper_queue.stop()
-    shutdown_export_pool()
-    # Release lazily-loaded ML models from memory so the process exits cleanly
+    shutdown_export_pool()    # Persist FAISS to disk on shutdown so vectors indexed during this run
+    # survive restarts without relying solely on reconciliation.
+    try:
+        faiss_store.save()
+        logger.info("FAISS index saved on shutdown")
+    except Exception as exc:
+        logger.warning(f"Could not save FAISS on shutdown: {exc}")    # Release lazily-loaded ML models from memory so the process exits cleanly
     # without holding GPU/CPU allocations open (MINOR-001 fix).
     from domain.analysis.keyword_extractor import unload_kw_model
     unload_kw_model()
@@ -131,3 +142,36 @@ async def _get_orphaned_paper_ids(faiss_store: FAISSStore) -> list[str]:
             if not chunks:
                 orphaned.append(pid)
     return orphaned
+
+
+def _cleanup_stale_exports() -> None:
+    """Remove export files older than 1 hour that were orphaned by crashes."""
+    import time
+    from pathlib import Path
+    from shared.constants import EXPORTS_DIR
+
+    exports_path = Path(EXPORTS_DIR)
+    if not exports_path.exists():
+        return
+
+    cutoff = time.time() - 3600  # 1 hour ago
+    removed = 0
+    for session_dir in exports_path.iterdir():
+        if not session_dir.is_dir():
+            continue
+        for export_file in session_dir.iterdir():
+            try:
+                if export_file.stat().st_mtime < cutoff:
+                    export_file.unlink()
+                    removed += 1
+            except Exception:
+                pass
+        # Remove the session directory if it is now empty.
+        try:
+            if session_dir.is_dir() and not any(session_dir.iterdir()):
+                session_dir.rmdir()
+        except Exception:
+            pass
+
+    if removed:
+        logger.info(f"Cleaned up {removed} stale export file(s) from previous run")

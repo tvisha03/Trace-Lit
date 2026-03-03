@@ -60,20 +60,25 @@ async def paper_job_processor(job: PaperJob):
                 # progress (linear extrapolation).  Clamped to avoid nonsensical
                 # values when progress is near-zero or already at 100%.
                 elapsed = time.monotonic() - _start_time
-                clamped_progress = max(0.01, min(progress, 1.0))
-                if clamped_progress >= 1.0:
+                # BUG-6 fix: preserve negative progress for failure signalling
+                # instead of clamping to 0.0 which hides the error state.
+                if progress < 0:
                     eta_seconds = 0.0
                 else:
-                    eta_seconds = round(
-                        elapsed * (1.0 - clamped_progress) / clamped_progress, 1
-                    )
+                    clamped_progress = max(0.01, min(progress, 1.0))
+                    if clamped_progress >= 1.0:
+                        eta_seconds = 0.0
+                    else:
+                        eta_seconds = round(
+                            elapsed * (1.0 - clamped_progress) / clamped_progress, 1
+                        )
 
                 await _ws_manager.send_event(
                     session_id=job.session_id,
                     event_type="paper_progress",
                     data={
                         "paper_id": job.paper_id,
-                        "progress": max(0.0, progress),
+                        "progress": progress,
                         "stage": stage,
                         "eta_seconds": eta_seconds,
                     },

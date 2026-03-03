@@ -28,6 +28,7 @@ async def verify_text_against_papers(
             "source_sentence": r.source_sentence,
             "paragraph_id": r.paragraph_id,
             "sentence_key": r.sentence_key,
+            "verification_method": r.verification_method.value if r.verification_method else None,
         }
         for r in havf_results
     ]

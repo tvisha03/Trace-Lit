@@ -121,10 +121,17 @@ async def export_comparison(
         )
     elif export_format == ExportFormat.EXCEL:
         output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
-        paper_data = [
-            {"title": t, "problem": "", "method": "", "dataset": "", "metrics": "", "results": ""}
-            for t in paper_titles
-        ]
+        # BUG-5 fix: populate comparison rows with actual paper metadata
+        # instead of empty placeholder strings.
+        paper_data = []
+        for i, title in enumerate(paper_titles):
+            entry: dict = {"title": title, "authors": "", "year": "", "problem": "", "method": "", "results": "", "keywords": ""}
+            if paper_ids and db and i < len(paper_ids):
+                paper_obj = await get_paper(db, paper_ids[i])
+                if paper_obj:
+                    entry["authors"] = paper_obj.authors or ""
+                    entry["year"] = paper_obj.year or ""
+            paper_data.append(entry)
         return await run_export_in_thread(
             export_comparison_to_excel,
             paper_data=paper_data,

@@ -21,7 +21,7 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 import re as _re
-from shared.utils.text_utils import extract_paragraph_ids
+from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_ids
 
 
 def _validate_and_strip_citations(
@@ -35,7 +35,15 @@ def _validate_and_strip_citations(
     citations remain (False means the response has no citations at all).
     """
     valid_pids = {c.paragraph_id for c in chunks}
-    cited_ids = set(extract_paragraph_ids(full_text))
+    raw_cited = set(extract_paragraph_ids(full_text))
+
+    # Normalise short-form citations (e.g. [P5]) to their prefixed
+    # equivalents (e.g. [a2349a01_P5]) so validation matches correctly.
+    cited_ids, short_to_long = normalize_paragraph_ids(raw_cited, valid_pids)
+    # Replace short-form tags in the text with full IDs before HAVF.
+    for short_id, long_id in short_to_long.items():
+        full_text = full_text.replace(f"[{short_id}]", f"[{long_id}]")
+
     invalid_ids = cited_ids - valid_pids
     if invalid_ids:
         logger.warning(
@@ -43,7 +51,7 @@ def _validate_and_strip_citations(
             f"paragraphs {invalid_ids}. Stripping them before HAVF."
         )
         for bad_id in invalid_ids:
-            full_text = full_text.replace(f"[P{bad_id}]", "")
+            full_text = full_text.replace(f"[{bad_id}]", "")
         full_text = _re.sub(r"  +", " ", full_text).strip()
 
     has_citations = bool(extract_paragraph_ids(full_text))
@@ -189,7 +197,7 @@ async def stream_chat_response(
         async for token, provider_obj in _stream_tokens(llm, user_prompt):
             full_text += token
             provider = provider_obj.value
-            yield sse_event("token", token)
+            yield sse_event("token", {"token": token})
 
         # Guard against providers that yield no tokens (e.g. immediate failure
         # inside the fallback chain) so the done event always names a provider.
