@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     MAX_UPLOAD_FILES: int = 7
     MAX_FILE_SIZE_MB: int = 50
 
+    # HAVF verification thresholds — override via environment variables to
+    # tune the confidence cutoffs without redeploying (HI-003 fix).
+    HAVF_HIGH_THRESHOLD: float = 0.85
+    HAVF_MEDIUM_THRESHOLD: float = 0.65
+    HAVF_CROSS_ENCODER_THRESHOLD: float = 0.75
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

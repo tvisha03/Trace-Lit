@@ -8,10 +8,19 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-def _determine_confidence(best_score: float) -> tuple[ConfidenceLevel, bool]:
-    if best_score >= HAVF_HIGH_THRESHOLD:
+def _determine_confidence(
+    best_score: float,
+    high_threshold: float = HAVF_HIGH_THRESHOLD,
+    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
+) -> tuple[ConfidenceLevel, bool]:
+    """Map an embedding similarity score to a confidence level.
+
+    Thresholds default to the constants but can be overridden at call time
+    so the HAVF pipeline can forward runtime-configurable values (HI-003).
+    """
+    if best_score >= high_threshold:
         return ConfidenceLevel.HIGH, False
-    elif best_score >= HAVF_MEDIUM_THRESHOLD:
+    elif best_score >= medium_threshold:
         return ConfidenceLevel.MEDIUM, True
     else:
         return ConfidenceLevel.LOW, False
@@ -21,10 +30,14 @@ def _build_result(
     claim: str,
     scores: np.ndarray,
     source_sentences: list[dict],
+    high_threshold: float = HAVF_HIGH_THRESHOLD,
+    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
 ) -> dict:
     best_idx = int(np.argmax(scores))
     best_score = float(scores[best_idx])
-    confidence, needs_reranking = _determine_confidence(best_score)
+    confidence, needs_reranking = _determine_confidence(
+        best_score, high_threshold, medium_threshold
+    )
     best_source = source_sentences[best_idx]
     return {
         "claim": claim,
@@ -40,15 +53,23 @@ def _process_claims(
     claims: list[str],
     similarity_matrix: np.ndarray,
     source_sentences: list[dict],
+    high_threshold: float = HAVF_HIGH_THRESHOLD,
+    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
 ) -> list[dict]:
     return [
-        _build_result(i, claim, similarity_matrix[i], source_sentences)
+        _build_result(
+            i, claim, similarity_matrix[i], source_sentences,
+            high_threshold, medium_threshold,
+        )
         for i, claim in enumerate(claims)
     ]
 
 def verify_claims_embedding(
     claims: list[str],
     source_sentences: list[dict],
+    *,
+    high_threshold: float = HAVF_HIGH_THRESHOLD,
+    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
 ) -> list[dict]:
     if not claims or not source_sentences:
         return [
@@ -69,7 +90,10 @@ def verify_claims_embedding(
     source_vecs = encode_texts(source_texts)
     similarity_matrix = claim_vecs @ source_vecs.T
 
-    results = _process_claims(claims, similarity_matrix, source_sentences)
+    results = _process_claims(
+        claims, similarity_matrix, source_sentences,
+        high_threshold, medium_threshold,
+    )
 
     high_count = sum(1 for r in results if r["confidence"] == ConfidenceLevel.HIGH)
     logger.info(

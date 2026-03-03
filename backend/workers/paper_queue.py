@@ -73,8 +73,13 @@ class SmartPaperQueue:
             logger.error("No processor function set on SmartPaperQueue")
             return
 
+        # MED-008: Check memory pressure BEFORE acquiring the semaphore so a
+        # high-memory situation doesn't waste a concurrency slot while waiting
+        # for RAM to free up.  This keeps the semaphore available for jobs
+        # that are already in-flight and just need to finish.
+        await self._wait_for_memory()
+
         async with self._semaphore:
-            await self._wait_for_memory()
 
             self._active_jobs.add(job.paper_id)
             try:

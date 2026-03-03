@@ -30,7 +30,7 @@ class Paper(Base):
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        SAEnum(PaperStatus), default=PaperStatus.QUEUED, index=True  # MINOR-003: indexed for status-filter queries
+        SAEnum(PaperStatus), default=PaperStatus.REGISTERED, index=True  # MED-005: explicit initial state
     )
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -11,6 +11,21 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
+
+def _check_cross_encoder() -> bool:
+    """Return True if the cross-encoder model is loadable.
+
+    BUG-001/MED-006: Surface cross-encoder availability in the health
+    endpoint so operators and monitoring dashboards can detect when HAVF
+    is running in degraded (Level 1 only) mode.
+    """
+    try:
+        from domain.verification.reranker import _get_cross_encoder
+        return _get_cross_encoder() is not None
+    except Exception:
+        return False
+
+
 @router.get("", response_model=HealthResponse)
 async def health_check(request: Request):
     settings = get_settings()
@@ -44,10 +59,23 @@ async def health_check(request: Request):
 
     overall = "ok" if db_ok else "degraded"
 
+    # BUG-001/MED-006: Report cross-encoder availability so the frontend and
+    # monitoring can warn users that HAVF is operating in degraded mode.
+    cross_encoder_ok = _check_cross_encoder()
+    if not cross_encoder_ok:
+        logger.warning(
+            "Health check: cross-encoder model unavailable — "
+            "HAVF verification will use Level 1 (embedding) only. "
+            "Run scripts/download_models.py to enable Level 2 reranking."
+        )
+        if overall == "ok":
+            overall = "degraded"
+
     return HealthResponse(
         status=overall,
         version=settings.APP_VERSION,
         providers=providers,
         db=db_ok,
         faiss=faiss_ok,
+        cross_encoder=cross_encoder_ok,
     )

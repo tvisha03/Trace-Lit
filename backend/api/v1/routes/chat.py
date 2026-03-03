@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,12 +14,20 @@ from app.dependencies import get_db, get_faiss_store
 from infrastructure.llm.fallback_chain import FallbackChain
 from services.chat_service import chat, chat_stream
 from infrastructure.db.crud.message_crud import get_messages_by_session
-from shared.errors import NotFoundError, InsufficientDataError
+from shared.errors import NotFoundError, InsufficientDataError, TraceLitError
+from shared.utils.rate_limiter import SlidingWindowRateLimiter
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+# CRT-003/MED-004: Chat calls the LLM + HAVF verification pipeline which is
+# both expensive and quota-limited.  Cap each client IP to 15 requests/min to
+# prevent accidental DoS or rapid API-quota exhaustion.
+_chat_limiter = SlidingWindowRateLimiter(
+    max_calls=15, window_seconds=60.0, resource_name="chat requests",
+)
 
 def _get_llm(request: Request) -> FallbackChain:
     return request.app.state.llm
@@ -33,21 +41,22 @@ async def send_message(
     faiss_store=Depends(get_faiss_store),
 ):
     """Non-streaming chat endpoint. Returns a fully-formed ChatResponse."""
+    _chat_limiter.enforce(request)
     llm = _get_llm(request)
     try:
         response = await chat(session_id, body.query, db, faiss_store, llm)
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except InsufficientDataError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except TraceLitError:
+        # TraceLitError subclasses (NotFoundError, InsufficientDataError, etc.)
+        # are handled by the global exception handler in app/exceptions.py.
+        raise
     except Exception as exc:
         # Catch-all for LLM failures, FAISS errors, and unexpected exceptions.
         # Log full details server-side; return a safe, generic message to the
-        # client so no internal state is leaked (MED-004 fix).
+        # client so no internal state is leaked (MINOR-002 fix).
         logger.error(f"Chat failed for session {session_id}: {exc}", exc_info=True)
-        raise HTTPException(
+        raise TraceLitError(
+            message="An error occurred while processing your request. Please try again.",
             status_code=500,
-            detail="An error occurred while processing your request. Please try again.",
         )
     return ChatResponse(
         content=response.content,
@@ -89,6 +98,7 @@ async def send_message_stream(
 
     See ``api/v1/schemas.py`` for the Pydantic shapes of each event type.
     """
+    _chat_limiter.enforce(request)
     llm = _get_llm(request)
     generator = await chat_stream(session_id, body.query, db, faiss_store, llm)
     return StreamingResponse(

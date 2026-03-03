@@ -53,6 +53,9 @@ async def process_paper(
             logger.error(f"Paper {paper_id} not found")
             return
 
+        # MED-005: Transition REGISTERED -> QUEUED -> EXTRACTING explicitly.
+        await update_paper_status(db, paper_id, PaperStatus.QUEUED, progress=0.0)
+
         await update_paper_status(db, paper_id, PaperStatus.EXTRACTING, progress=0.1)
         if progress_callback:
             await progress_callback(0.1)

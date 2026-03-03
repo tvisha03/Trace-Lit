@@ -8,7 +8,7 @@ from infrastructure.db.crud.session_crud import (
     delete_session as db_delete_session,
 )
 from infrastructure.db.crud.message_crud import delete_messages_by_session
-from infrastructure.db.crud.paper_crud import get_papers_by_session
+from infrastructure.db.crud.paper_crud import get_papers_by_session, delete_paper
 from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
 from infrastructure.storage.file_storage import FileStorage
 from infrastructure.vector_store.faiss_store import FAISSStore
@@ -85,10 +85,14 @@ async def delete_full_session(
     papers = await get_papers_by_session(db, session_id)
     paper_ids = [str(p.id) for p in papers]
 
-    # Remove FAISS vectors and DB chunks for every paper in the session.
+    # Remove FAISS vectors, DB chunks, and paper records for every paper in
+    # the session.  Explicit paper deletion provides defence-in-depth on top
+    # of the ondelete="CASCADE" FK — SQLite only honours cascading deletes
+    # when PRAGMA foreign_keys is ON (HI-005 fix).
     for paper in papers:
         faiss_store.remove_paper(str(paper.id))
         await delete_chunks_by_paper(db, str(paper.id))
+        await delete_paper(db, str(paper.id))
 
     await delete_messages_by_session(db, session_id)
 

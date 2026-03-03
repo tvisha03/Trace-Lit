@@ -33,8 +33,16 @@ def _get_cross_encoder():
             return None
     return _cross_encoder
 
-def _update_result_confidence(best_score: float) -> ConfidenceLevel:
-    if best_score >= HAVF_CROSS_ENCODER_THRESHOLD:
+def _update_result_confidence(
+    best_score: float,
+    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
+) -> ConfidenceLevel:
+    """Determine confidence from a cross-encoder score.
+
+    Threshold defaults to the constant but can be overridden when the caller
+    forwards runtime-configurable settings (HI-003).
+    """
+    if best_score >= cross_encoder_threshold:
         return ConfidenceLevel.HIGH
     return ConfidenceLevel.MEDIUM
 
@@ -73,6 +81,7 @@ def _process_result(
     cross_encoder,
     source_sentences: list[dict] | None = None,
     top_k_sources: int = 3,
+    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
 ) -> dict:
     claim = result["claim"]
     candidates = _build_candidates(claim, result, source_sentences, top_k_sources)
@@ -85,7 +94,7 @@ def _process_result(
     best_idx = _get_best_idx(scores)
     best_score = _process_scores(scores, best_idx)
 
-    result["confidence"] = _update_result_confidence(best_score)
+    result["confidence"] = _update_result_confidence(best_score, cross_encoder_threshold)
     result["best_score"] = best_score
     result["needs_reranking"] = False
 
@@ -96,6 +105,8 @@ def rerank_claims(
     uncertain_results: list[dict],
     top_k_sources: int = 3,
     source_sentences: list[dict] | None = None,
+    *,
+    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
 ) -> list[dict]:
     if not uncertain_results:
         return []
@@ -112,7 +123,10 @@ def rerank_claims(
         return uncertain_results
 
     refined = [
-        _process_result(result, cross_encoder, source_sentences, top_k_sources)
+        _process_result(
+            result, cross_encoder, source_sentences, top_k_sources,
+            cross_encoder_threshold,
+        )
         for result in uncertain_results
     ]
 

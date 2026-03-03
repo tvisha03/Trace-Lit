@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import numpy as np
+
 from domain.retrieval.indexer import encode_texts
 from shared.logger import get_logger
 
@@ -33,8 +35,8 @@ def _collect_keywords(
     return keyword_to_papers, all_keywords
 
 def _build_cluster_map(
-    embeddings,
-    labels,
+    embeddings: np.ndarray,
+    labels: np.ndarray,
     all_keywords: list[str],
 ) -> dict[int, list[str]]:
     cluster_map: dict[int, list[str]] = {}

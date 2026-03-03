@@ -38,6 +38,8 @@ LLM_TEMPERATURE: float = 0.3
 UPLOADS_DIR: str = "data/uploads"
 EXPORTS_DIR: str = "data/exports"
 
+COMPARISON_TOKEN_BUDGET_PER_PAPER: int = 3_000
+
 WS_PAPER_PROGRESS: str = "paper_progress"
 WS_PAPER_COMPLETE: str = "paper_complete"
 WS_PAPER_ERROR: str = "paper_error"

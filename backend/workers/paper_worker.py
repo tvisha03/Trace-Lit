@@ -4,6 +4,8 @@ from infrastructure.db.database import async_session_factory
 from infrastructure.vector_store.faiss_store import FAISSStore
 from shared.logger import get_logger
 
+import time
+
 logger = get_logger(__name__)
 
 _ws_manager = None
@@ -47,13 +49,25 @@ async def paper_job_processor(job: PaperJob):
         )
 
     async with async_session_factory() as db:
+        # Track when processing started so we can estimate remaining time.
+        _start_time = time.monotonic()
+
         async def progress_callback(progress: float):
             if _ws_manager:
                 stage = _progress_to_stage(progress)
-                # Use send_event so the payload carries both a fractional
-                # progress value (0–1) and a named stage string that the
-                # frontend can display without having to reverse-engineer
-                # progress thresholds (HI-001 fix).
+
+                # Estimate remaining seconds based on elapsed time and current
+                # progress (linear extrapolation).  Clamped to avoid nonsensical
+                # values when progress is near-zero or already at 100%.
+                elapsed = time.monotonic() - _start_time
+                clamped_progress = max(0.01, min(progress, 1.0))
+                if clamped_progress >= 1.0:
+                    eta_seconds = 0.0
+                else:
+                    eta_seconds = round(
+                        elapsed * (1.0 - clamped_progress) / clamped_progress, 1
+                    )
+
                 await _ws_manager.send_event(
                     session_id=job.session_id,
                     event_type="paper_progress",
@@ -61,6 +75,7 @@ async def paper_job_processor(job: PaperJob):
                         "paper_id": job.paper_id,
                         "progress": max(0.0, progress),
                         "stage": stage,
+                        "eta_seconds": eta_seconds,
                     },
                 )
 

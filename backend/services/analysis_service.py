@@ -32,7 +32,12 @@ async def get_session_gap_analysis(
 ) -> dict:
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if len(papers) < 2:
-        raise InsufficientDataError("Gap analysis requires at least 2 completed papers")
+        raise InsufficientDataError(
+            "Gap analysis requires at least 2 completed papers in the session. "
+            "Currently only {} completed paper(s) found. "
+            "Please upload and wait for more papers to finish processing, "
+            "then try again.".format(len(papers))
+        )
 
     paper_texts: dict[str, str] = {}
     for paper in papers:
@@ -75,7 +80,21 @@ async def generate_literature_review(
     chunks_by_paper: dict[str, list] = {}
     for paper in papers:
         chunks = await get_chunks_by_paper(db, str(paper.id))
+        if not chunks:
+            logger.warning(
+                f"Paper '{paper.id}' ({paper.title or paper.filename}) has no chunks "
+                "despite COMPLETED status — skipping from literature review."
+            )
+            continue
         chunks_by_paper[str(paper.id)] = chunks[:15]
+
+    # BUG-002/MED-001: Guard against empty context — if every paper had zero
+    # chunks the LLM would receive an empty prompt and hallucinate freely.
+    if not chunks_by_paper:
+        raise InsufficientDataError(
+            "No indexed content found for the completed papers in this session. "
+            "Please ensure papers have been fully processed before generating a review."
+        )
 
     review_text, provider = await generate_review(chunks_by_paper, llm)
 

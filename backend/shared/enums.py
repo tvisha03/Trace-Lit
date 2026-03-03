@@ -1,6 +1,7 @@
 from enum import Enum
 
 class PaperStatus(str, Enum):
+    REGISTERED = "registered"
     QUEUED = "queued"
     EXTRACTING = "extracting"
     CHUNKING = "chunking"

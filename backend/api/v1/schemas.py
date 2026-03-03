@@ -1,5 +1,6 @@
 
 import re
+import uuid as _uuid
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
@@ -117,6 +118,19 @@ class MessageListResponse(BaseModel):
 class CompareRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)
 
+    @field_validator("paper_ids")
+    @classmethod
+    def validate_paper_ids(cls, v: list[str]) -> list[str]:
+        """HI-004: Validate UUID format and uniqueness of paper_ids."""
+        for pid in v:
+            try:
+                _uuid.UUID(pid)
+            except ValueError:
+                raise ValueError(f"Invalid UUID format for paper_id: {pid}")
+        if len(set(v)) != len(v):
+            raise ValueError("Duplicate paper_ids are not allowed")
+        return v
+
 class ComparisonResponse(BaseModel):
     comparison: str
     paper_ids: list[str]
@@ -134,6 +148,19 @@ class ExportRequest(BaseModel):
 class ComparisonExportRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)
     format: str = Field(default="pdf", pattern="^(pdf|excel|bibtex)$")
+
+    @field_validator("paper_ids")
+    @classmethod
+    def validate_paper_ids(cls, v: list[str]) -> list[str]:
+        """HI-004: Validate UUID format and uniqueness of paper_ids."""
+        for pid in v:
+            try:
+                _uuid.UUID(pid)
+            except ValueError:
+                raise ValueError(f"Invalid UUID format for paper_id: {pid}")
+        if len(set(v)) != len(v):
+            raise ValueError("Duplicate paper_ids are not allowed")
+        return v
 
 class ExportResponse(BaseModel):
     download_url: str
@@ -179,6 +206,19 @@ class VerifyRequest(BaseModel):
     def sanitize_text(cls, v: str) -> str:
         return _sanitize_user_text(v)
 
+    @field_validator("paper_ids")
+    @classmethod
+    def validate_paper_ids(cls, v: list[str]) -> list[str]:
+        """HI-004: Validate UUID format and uniqueness of paper_ids."""
+        for pid in v:
+            try:
+                _uuid.UUID(pid)
+            except ValueError:
+                raise ValueError(f"Invalid UUID format for paper_id: {pid}")
+        if len(set(v)) != len(v):
+            raise ValueError("Duplicate paper_ids are not allowed")
+        return v
+
 class VerifyResponse(BaseModel):
     results: list[VerificationItem]
 
@@ -188,6 +228,7 @@ class HealthResponse(BaseModel):
     providers: dict[str, bool] = {}
     db: bool = False
     faiss: bool = False
+    cross_encoder: bool = False
 
 
 # ---------------------------------------------------------------------------

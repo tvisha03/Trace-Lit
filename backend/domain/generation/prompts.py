@@ -85,18 +85,38 @@ def build_context_block(chunks: list) -> str:
 
 
 def build_history_block(messages: list, max_turns: int = 4) -> str:
+    """Serialize recent conversation messages into a text block for the prompt.
+
+    Enforces ``HISTORY_TOKEN_BUDGET`` by walking backwards from the most
+    recent messages and dropping older turns that would blow the budget
+    (MED-002 fix).  This prevents long conversations from silently consuming
+    the context window and crowding out retrieved source paragraphs.
+    """
     from enum import Enum
+    from shared.constants import HISTORY_TOKEN_BUDGET, TOKENS_PER_CHAR
 
     if not messages:
         return "(No conversation history)"
 
     recent = messages[-max_turns * 2:]
-    lines = []
-    for msg in recent:
-        # Use isinstance(Enum) rather than hasattr(..., "value") to avoid
-        # double-access on str-based enums where hasattr returns True but the
-        # value is already the string (e.g. MessageRole(str, Enum)).
-        role = msg.role.value if isinstance(msg.role, Enum) else msg.role
-        lines.append(f"{role}: {msg.content}")
 
+    # Build lines newest-first, then reverse, so we keep the most recent
+    # messages when the budget runs out.
+    lines: list[str] = []
+    remaining_budget = HISTORY_TOKEN_BUDGET
+
+    for msg in reversed(recent):
+        role = msg.role.value if isinstance(msg.role, Enum) else msg.role
+        line = f"{role}: {msg.content}"
+        estimated_tokens = int(len(line) * TOKENS_PER_CHAR)
+        if estimated_tokens > remaining_budget:
+            # No room for this (older) message — stop including history.
+            break
+        lines.append(line)
+        remaining_budget -= estimated_tokens
+
+    if not lines:
+        return "(No conversation history)"
+
+    lines.reverse()
     return "\n".join(lines)

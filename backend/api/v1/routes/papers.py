@@ -1,8 +1,5 @@
 
-from collections import defaultdict
-from time import monotonic
-
-from fastapi import APIRouter, Depends, UploadFile, File, Request, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.v1.schemas import PaperResponse, PaperListResponse, PaperUploadResponse
@@ -13,49 +10,20 @@ from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
 from services.paper_service import register_paper, get_session_papers, delete_paper, mark_paper_failed
 from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB
-from shared.errors import FileValidationError, ForbiddenError, NotFoundError
+from shared.errors import FileValidationError, ForbiddenError, NotFoundError, TraceLitError
 from shared.utils.file_utils import get_file_size_mb
+from shared.utils.rate_limiter import SlidingWindowRateLimiter
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Sliding-window rate limiter for the paper upload endpoint.
-# Uploading triggers expensive PDF extraction, chunking, and embedding, so we
-# cap each client IP to _UPLOAD_RATE_LIMIT_MAX batches per window to prevent
-# resource exhaustion from rapid-fire uploads.
-#
-# ⚠️  PRODUCTION NOTE (HI-001): This is an in-memory implementation and is
-# therefore NOT suitable for multi-instance / multi-worker deployments.  In
-# those environments counters are not shared between processes, so the window
-# can be exceeded by a factor equal to the worker count.  Migrate to a
-# Redis-backed or database-backed rate limiter before scaling horizontally.
-# ---------------------------------------------------------------------------
-_UPLOAD_RATE_LIMIT_MAX = 5
-_UPLOAD_RATE_LIMIT_WINDOW_SECONDS = 60.0
-_upload_rate_limit_calls: dict[str, list[float]] = defaultdict(list)
-
-
-def _enforce_upload_rate_limit(request: Request) -> None:
-    client_ip = request.client.host if request.client else "unknown"
-    now = monotonic()
-    cutoff = now - _UPLOAD_RATE_LIMIT_WINDOW_SECONDS
-
-    calls = _upload_rate_limit_calls[client_ip]
-    _upload_rate_limit_calls[client_ip] = [t for t in calls if t > cutoff]
-
-    if len(_upload_rate_limit_calls[client_ip]) >= _UPLOAD_RATE_LIMIT_MAX:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"Rate limit exceeded: max {_UPLOAD_RATE_LIMIT_MAX} upload "
-                f"requests per {int(_UPLOAD_RATE_LIMIT_WINDOW_SECONDS)} seconds."
-            ),
-        )
-
-    _upload_rate_limit_calls[client_ip].append(now)
+# Uploading triggers expensive PDF extraction, chunking, and embedding
+# — cap each client IP to 5 batches per minute.
+_upload_limiter = SlidingWindowRateLimiter(
+    max_calls=5, window_seconds=60.0, resource_name="upload requests",
+)
 
 @router.post("", response_model=PaperUploadResponse, status_code=201)
 async def upload_papers(
@@ -64,7 +32,7 @@ async def upload_papers(
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    _enforce_upload_rate_limit(request)
+    _upload_limiter.enforce(request)
 
     # CRT-002/BUG-001: Validate that the target session exists before creating
     # any paper records.  Without this check a user could register papers under
@@ -112,10 +80,10 @@ async def upload_papers(
             await mark_paper_failed(
                 db, paper_id, reason=f"Processing queue unavailable: {enqueue_exc}"
             )
-            raise HTTPException(
+            raise TraceLitError(
+                message=f"Processing queue unavailable for '{upload_file.filename}'. "
+                        "Please try again later.",
                 status_code=503,
-                detail=f"Processing queue unavailable for '{upload_file.filename}'. "
-                       "Please try again later.",
             )
 
     return PaperUploadResponse(

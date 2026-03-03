@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 from domain.verification.embedding_verifier import verify_claims_embedding
 from domain.verification.reranker import rerank_claims
+from shared.constants import (
+    HAVF_HIGH_THRESHOLD,
+    HAVF_MEDIUM_THRESHOLD,
+    HAVF_CROSS_ENCODER_THRESHOLD,
+)
 from shared.enums import ConfidenceLevel
 from shared.utils.text_utils import split_into_sentences
 from shared.logger import get_logger
@@ -36,7 +41,17 @@ def build_source_sentences(chunks: list) -> list[dict]:
 async def verify_response(
     generated_text: str,
     retrieved_chunks: list,
+    *,
+    high_threshold: float = HAVF_HIGH_THRESHOLD,
+    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
+    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
 ) -> list[VerificationResult]:
+    """Run the full HAVF pipeline (Level 1 embedding + Level 2 reranking).
+
+    Thresholds default to the compile-time constants in ``shared.constants``
+    but can be overridden at call time so operators may tune confidence
+    cutoffs per-environment via ``Settings`` (HI-003).
+    """
     with timer("HAVF verification"):
         claims = split_into_sentences(generated_text)
         if not claims:
@@ -61,7 +76,9 @@ async def verify_response(
         # asyncio.to_thread() keeps the event loop free during verification so
         # concurrent chat requests are not starved.
         level1_results = await asyncio.to_thread(
-            verify_claims_embedding, claims, source_sentences
+            verify_claims_embedding, claims, source_sentences,
+            high_threshold=high_threshold,
+            medium_threshold=medium_threshold,
         )
 
         uncertain = [r for r in level1_results if r.get("needs_reranking")]
@@ -69,7 +86,9 @@ async def verify_response(
 
         if uncertain:
             reranked = await asyncio.to_thread(
-                rerank_claims, uncertain, source_sentences=source_sentences
+                rerank_claims, uncertain,
+                source_sentences=source_sentences,
+                cross_encoder_threshold=cross_encoder_threshold,
             )
             resolved.extend(reranked)
 

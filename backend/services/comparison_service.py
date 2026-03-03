@@ -9,13 +9,9 @@ from infrastructure.llm.fallback_chain import FallbackChain
 from shared.errors import NotFoundError
 from shared.logger import get_logger
 from shared.utils.text_utils import estimate_tokens
+from shared.constants import COMPARISON_TOKEN_BUDGET_PER_PAPER
 
 logger = get_logger(__name__)
-
-# Token budget per paper for comparison context.  Using a token-based limit
-# (rather than a fixed chunk count) ensures we include as much relevant content
-# as the prompt window allows regardless of individual chunk sizes.
-_COMPARISON_TOKEN_BUDGET_PER_PAPER = 3_000
 
 async def compare_papers(
     paper_ids: list[str],
@@ -41,7 +37,7 @@ async def compare_papers(
         for chunk in chunks:
             chunk_text = chunk.text if hasattr(chunk, "text") else str(chunk)
             chunk_tokens = estimate_tokens(chunk_text)
-            if cumulative_tokens + chunk_tokens > _COMPARISON_TOKEN_BUDGET_PER_PAPER:
+            if cumulative_tokens + chunk_tokens > COMPARISON_TOKEN_BUDGET_PER_PAPER:
                 break
             selected.append(chunk)
             cumulative_tokens += chunk_tokens
