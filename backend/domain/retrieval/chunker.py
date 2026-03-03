@@ -202,3 +202,115 @@ def create_figure_chunks(
     logger.info(f"Created {len(chunks)} figure chunks")
     return chunks
 
+
+def create_table_chunks(
+    tables: list,
+    paper_title: str | None = None,
+    paper_id: str | None = None,
+    start_idx: int = 0,
+) -> list[Chunk]:
+    chunks: list[Chunk] = []
+
+    for offset, table in enumerate(tables):
+        idx = start_idx + offset
+
+        if paper_id:
+            paragraph_id = f"{paper_id[:8]}_T{idx}"
+        else:
+            paragraph_id = f"T{idx}"
+
+        text = table.content
+        caption = getattr(table, "caption", "") or ""
+        rows = getattr(table, "row_count", 0)
+        cols = getattr(table, "col_count", 0)
+
+        prefix_parts = []
+        if paper_title:
+            prefix_parts.append(f"[Paper: {paper_title}]")
+        prefix_parts.append(f"[Table on page {table.page_number}, {rows}x{cols}]")
+        if caption:
+            prefix_parts.append(f"[Caption: {caption}]")
+        prefix = " ".join(prefix_parts)
+        enriched_text = f"{prefix}\n{text}"
+
+        display_text = f"{caption}\n{text}" if caption else text
+
+        sentence_map = {
+            f"{paragraph_id}_S0": {
+                "text": display_text,
+                "start": 0,
+                "end": len(display_text),
+                "tokens": estimate_tokens(display_text),
+            }
+        }
+
+        chunks.append(Chunk(
+            paragraph_id=paragraph_id,
+            text=display_text,
+            enriched_text=enriched_text,
+            section_title=f"Table (page {table.page_number})",
+            page_number=table.page_number,
+            token_count=estimate_tokens(display_text),
+            sentence_map=sentence_map,
+            chunk_type=ChunkType.TABLE,
+        ))
+
+    logger.info(f"Created {len(chunks)} table chunks")
+    return chunks
+
+
+def create_formula_chunks(
+    formulas: list,
+    paper_title: str | None = None,
+    paper_id: str | None = None,
+    start_idx: int = 0,
+) -> list[Chunk]:
+    chunks: list[Chunk] = []
+
+    for offset, formula in enumerate(formulas):
+        idx = start_idx + offset
+
+        if paper_id:
+            paragraph_id = f"{paper_id[:8]}_E{idx}"
+        else:
+            paragraph_id = f"E{idx}"
+
+        text = formula.content
+        formula_type = getattr(formula, "formula_type", "unknown")
+        eq_number = getattr(formula, "equation_number", None)
+        context = getattr(formula, "context", "") or ""
+
+        prefix_parts = []
+        if paper_title:
+            prefix_parts.append(f"[Paper: {paper_title}]")
+        prefix_parts.append(f"[Equation on page {formula.page_number}, type: {formula_type}]")
+        if eq_number:
+            prefix_parts.append(f"[Eq. {eq_number}]")
+        prefix = " ".join(prefix_parts)
+
+        display_text = f"{context}\n{text}" if context else text
+        enriched_text = f"{prefix}\n{display_text}"
+
+        sentence_map = {
+            f"{paragraph_id}_S0": {
+                "text": display_text,
+                "start": 0,
+                "end": len(display_text),
+                "tokens": estimate_tokens(display_text),
+            }
+        }
+
+        chunks.append(Chunk(
+            paragraph_id=paragraph_id,
+            text=display_text,
+            enriched_text=enriched_text,
+            section_title=f"Equation (page {formula.page_number})",
+            page_number=formula.page_number,
+            token_count=estimate_tokens(display_text),
+            sentence_map=sentence_map,
+            chunk_type=ChunkType.FORMULA,
+        ))
+
+    logger.info(f"Created {len(chunks)} formula/equation chunks")
+    return chunks
+

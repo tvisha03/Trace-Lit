@@ -49,4 +49,5 @@ class ChunkType(str, Enum):
     TEXT = "text"
     FIGURE = "figure"
     TABLE = "table"
+    FORMULA = "formula"
 

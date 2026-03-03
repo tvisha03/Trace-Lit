@@ -2,15 +2,18 @@ SYSTEM_PROMPT = """You are Trace-Lit, an intelligent academic literature assista
 You help researchers understand, compare, and analyse academic papers.
 
 STRICT RULES:
-1. ONLY use information from the provided source paragraphs and figure descriptions.
-2. EVERY factual claim MUST include a citation in [P#] or [F#] format.
+1. ONLY use information from the provided source paragraphs, figure descriptions, tables, and equations.
+2. EVERY factual claim MUST include a citation in [P#], [F#], [T#], or [E#] format.
 3. If the answer is NOT in the provided context, say: "This information is not available in the uploaded papers."
 4. NEVER fabricate, assume, or infer information beyond what the sources state.
 5. When comparing papers, cite both sources for each comparison point.
 6. Use precise academic language. Be concise and specific.
 7. When referencing figures or charts, use [F#] citations and describe what the figure shows.
+8. When referencing tables or tabular data, use [T#] citations and summarise the relevant data.
+9. When referencing equations or formulas, use [E#] citations and explain the mathematical relationship.
 
-You will receive context paragraphs labeled with [P#] and figure descriptions labeled with [F#].
+You will receive context labeled with [P#] for paragraphs, [F#] for figures,
+[T#] for tables, and [E#] for equations.
 """
 
 CHAT_PROMPT_TEMPLATE = """Context from uploaded papers:
@@ -21,7 +24,7 @@ Conversation history:
 
 User question: {question}
 
-Respond using ONLY the context above. Cite every claim with [P#].
+Respond using ONLY the context above. Cite every claim with [P#], [F#], [T#], or [E#].
 """
 
 COMPARISON_PROMPT_TEMPLATE = """You are comparing multiple academic papers.
@@ -91,11 +94,17 @@ def build_context_block(chunks: list) -> str:
 
         chunk_type = getattr(chunk, "chunk_type", "text")
         ct_value = chunk_type.value if hasattr(chunk_type, "value") else str(chunk_type)
-        is_figure = ct_value == "figure"
+
+        type_tag_map = {
+            "figure": "FIGURE",
+            "table": "TABLE",
+            "formula": "EQUATION",
+        }
+        type_tag = type_tag_map.get(ct_value)
 
         header = f"[{pid}]"
-        if is_figure:
-            header += " [FIGURE]"
+        if type_tag:
+            header += f" [{type_tag}]"
         if section:
             header += f" (Section: {section})"
         lines.append(f"{header}\n{text}")

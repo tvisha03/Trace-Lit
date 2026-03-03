@@ -6,7 +6,12 @@ from domain.extraction.pdf_processor import extract_pdf
 from domain.extraction.section_parser import parse_sections
 from domain.extraction.metadata_extractor import extract_metadata
 from domain.extraction.figure_analyzer import analyze_figures
-from domain.retrieval.chunker import create_chunks, create_figure_chunks
+from domain.retrieval.chunker import (
+    create_chunks,
+    create_figure_chunks,
+    create_table_chunks,
+    create_formula_chunks,
+)
 from domain.retrieval.indexer import index_chunks
 from infrastructure.db.crud.paper_crud import (
     create_paper,
@@ -17,9 +22,10 @@ from infrastructure.db.crud.paper_crud import (
 from infrastructure.db.crud.chunk_crud import create_chunks_bulk
 from infrastructure.vector_store.faiss_store import FAISSStore
 from infrastructure.llm.fallback_chain import FallbackChain
-from shared.enums import PaperStatus
+from shared.enums import PaperStatus, ChunkType
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
+from shared.constants import VISION_TABLE_KEYWORDS, VISION_FORMULA_KEYWORDS
 
 logger = get_logger(__name__)
 
@@ -123,28 +129,116 @@ async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
         logger.warning(f"Could not clean up upload for {paper_id}: {exc}")
 
 
+def _classify_figure(fig) -> ChunkType:
+    fig_type = (getattr(fig, "figure_type", "") or "").lower()
+    if any(kw in fig_type for kw in VISION_TABLE_KEYWORDS):
+        return ChunkType.TABLE
+    if any(kw in fig_type for kw in VISION_FORMULA_KEYWORDS):
+        return ChunkType.FORMULA
+    return ChunkType.FIGURE
+
+
+def _partition_analyzed_figures(analyzed_figures: list) -> tuple[list, list, list]:
+    figures = []
+    table_figs = []
+    formula_figs = []
+    for fig in analyzed_figures:
+        kind = _classify_figure(fig)
+        if kind == ChunkType.TABLE:
+            table_figs.append(fig)
+        elif kind == ChunkType.FORMULA:
+            formula_figs.append(fig)
+        else:
+            figures.append(fig)
+    return figures, table_figs, formula_figs
+
+
+def _vision_figs_to_tables(table_figs: list) -> list:
+    if not table_figs:
+        return []
+    from domain.extraction.table_extractor import ExtractedTable
+    return [
+        ExtractedTable(
+            content=fig.description,
+            page_number=fig.page_number,
+            caption=getattr(fig, "figure_type", "table"),
+        )
+        for fig in table_figs
+    ]
+
+
+def _vision_figs_to_formulas(formula_figs: list) -> list:
+    if not formula_figs:
+        return []
+    from domain.extraction.formula_extractor import ExtractedFormula
+    return [
+        ExtractedFormula(
+            content=fig.description,
+            page_number=fig.page_number,
+            formula_type="vision",
+        )
+        for fig in formula_figs
+    ]
+
+
+def _assemble_typed_chunks(
+    chunks: list,
+    analyzed_figures: list | None,
+    tables: list | None,
+    formulas: list | None,
+    paper_title: str | None,
+    paper_id: str,
+) -> list:
+    pure_figures, table_figs, formula_figs = _partition_analyzed_figures(
+        analyzed_figures or []
+    )
+
+    if pure_figures:
+        chunks.extend(create_figure_chunks(
+            pure_figures, paper_title=paper_title,
+            paper_id=paper_id, start_idx=len(chunks),
+        ))
+
+    all_tables = (tables or []) + _vision_figs_to_tables(table_figs)
+    if all_tables:
+        chunks.extend(create_table_chunks(
+            all_tables, paper_title=paper_title,
+            paper_id=paper_id, start_idx=len(chunks),
+        ))
+
+    all_formulas = (formulas or []) + _vision_figs_to_formulas(formula_figs)
+    if all_formulas:
+        chunks.extend(create_formula_chunks(
+            all_formulas, paper_title=paper_title,
+            paper_id=paper_id, start_idx=len(chunks),
+        ))
+
+    return chunks
+
+
 async def _chunk_and_index_paper(
     db: AsyncSession,
     faiss_store: FAISSStore,
     paper_id: str,
     paper,
-    sections,
-    metadata,
-    analyzed_figures=None,
+    extraction_results: dict,
 ) -> int:
+    sections = extraction_results["sections"]
+    metadata = extraction_results["metadata"]
+
     with timer(f"Chunk {paper.filename}"):
         chunks = create_chunks(
             sections, paper_title=metadata.title, paper_id=paper_id
         )
 
-    if analyzed_figures:
-        figure_chunks = create_figure_chunks(
-            analyzed_figures,
-            paper_title=metadata.title,
-            paper_id=paper_id,
-            start_idx=len(chunks),
-        )
-        chunks.extend(figure_chunks)
+    chunks = _assemble_typed_chunks(
+        chunks,
+        extraction_results.get("analyzed_figures"),
+        extraction_results.get("tables"),
+        extraction_results.get("formulas"),
+        paper_title=metadata.title,
+        paper_id=paper_id,
+    )
 
     await _persist_chunks_with_retry(db, chunks, paper_id)
 
@@ -183,7 +277,7 @@ async def _run_extraction_phase(
     )
 
     analyzed_figures = await _analyze_paper_figures(extracted, llm_chain)
-    return sections, metadata, analyzed_figures
+    return sections, metadata, analyzed_figures, extracted.tables, extracted.formulas
 
 
 async def _run_chunking_phase(
@@ -192,9 +286,7 @@ async def _run_chunking_phase(
     faiss_store: FAISSStore,
     paper,
     progress_callback,
-    sections,
-    metadata,
-    analyzed_figures,
+    extraction_results: dict,
 ) -> int:
     await _update_status_with_progress(
         db, paper_id, PaperStatus.CHUNKING, 0.45, progress_callback,
@@ -205,7 +297,8 @@ async def _run_chunking_phase(
     )
 
     chunk_count = await _chunk_and_index_paper(
-        db, faiss_store, paper_id, paper, sections, metadata, analyzed_figures
+        db, faiss_store, paper_id, paper,
+        extraction_results,
     )
 
     await _update_status_with_progress(
@@ -227,18 +320,29 @@ async def _execute_paper_processing(
         db, paper_id, PaperStatus.QUEUED, 0.0, progress_callback
     )
 
-    sections, metadata, analyzed_figures = await _run_extraction_phase(
+    sections, metadata, analyzed_figures, tables, formulas = await _run_extraction_phase(
         paper_id, db, paper, progress_callback, llm_chain
     )
 
+    extraction_results = {
+        "sections": sections,
+        "metadata": metadata,
+        "analyzed_figures": analyzed_figures,
+        "tables": tables,
+        "formulas": formulas,
+    }
+
     chunk_count = await _run_chunking_phase(
         paper_id, db, faiss_store, paper, progress_callback,
-        sections, metadata, analyzed_figures
+        extraction_results,
     )
 
+    fig_count = len(analyzed_figures) if analyzed_figures else 0
+    tbl_count = len(tables) if tables else 0
+    eq_count = len(formulas) if formulas else 0
     logger.info(
         f"Paper {paper.filename} processed: {chunk_count} chunks indexed "
-        f"({len(analyzed_figures)} figures analysed)"
+        f"({fig_count} figures, {tbl_count} tables, {eq_count} formulas)"
     )
 
 

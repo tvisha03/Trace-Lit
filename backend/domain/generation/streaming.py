@@ -49,7 +49,7 @@ def _validate_and_strip_citations(
     has_citations = bool(extract_paragraph_ids(full_text))
     if not has_citations:
         logger.warning(
-            f"LLM response for session {session_id} contains no [P#] citations. "
+            f"LLM response for session {session_id} contains no [P#]/[F#]/[T#]/[E#] citations. "
             "HAVF will have no citation targets — confidence scores may be unreliable."
         )
     return full_text, has_citations

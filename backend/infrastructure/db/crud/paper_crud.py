@@ -34,7 +34,7 @@ async def update_paper_status(
 ) -> None:
     values: dict = {"status": status, "progress": progress, **extra_fields}
     await db.execute(update(Paper).where(Paper.id == paper_id).values(**values))
-    await db.flush()
+    await db.commit()
 
 async def get_stuck_papers(db: AsyncSession) -> list[Paper]:
     terminal = {PaperStatus.COMPLETED, PaperStatus.FAILED}

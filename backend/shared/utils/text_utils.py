@@ -60,7 +60,7 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(". ")
 
 def extract_paragraph_ids(text: str) -> list[str]:
-    return re.findall(r"\[((?:[a-f0-9]{1,8}_)?P\d+)\]", text)
+    return re.findall(r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]", text)
 
 
 def normalize_paragraph_ids(

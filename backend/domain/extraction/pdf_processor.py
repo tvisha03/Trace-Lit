@@ -5,6 +5,16 @@ from dataclasses import dataclass, field
 from shared.logger import get_logger
 from shared.errors import PDFExtractionError
 from shared.constants import FIGURE_IMAGE_FORMAT, FIGURE_IMAGE_DPI, FIGURE_MIN_SIZE_RATIO
+from domain.extraction.table_extractor import (
+    ExtractedTable,
+    extract_tables_from_pages,
+    extract_tables_from_pdf,
+    merge_tables,
+)
+from domain.extraction.formula_extractor import (
+    ExtractedFormula,
+    extract_formulas_from_pages,
+)
 
 logger = get_logger(__name__)
 
@@ -31,6 +41,8 @@ class ExtractedDocument:
     filename: str
     pages: list[ExtractedPage] = field(default_factory=list)
     figures: list[ExtractedFigure] = field(default_factory=list)
+    tables: list[ExtractedTable] = field(default_factory=list)
+    formulas: list[ExtractedFormula] = field(default_factory=list)
 
 
 def _ensure_figure_dir(file_path: Path) -> Path:
@@ -211,8 +223,15 @@ def _assemble_document(
     all_figures = figures + rendered
     pages = _build_pages(page_chunks)
 
+    text_tables = extract_tables_from_pages(pages)
+    pdf_tables = extract_tables_from_pdf(file_path)
+    all_tables = merge_tables(text_tables, pdf_tables)
+
+    all_formulas = extract_formulas_from_pages(pages)
+
     logger.info(
-        f"Extracted {page_count} pages, {len(all_figures)} figures "
+        f"Extracted {page_count} pages, {len(all_figures)} figures, "
+        f"{len(all_tables)} tables, {len(all_formulas)} formulas "
         f"from {file_path.name} (layout mode)"
     )
 
@@ -222,6 +241,8 @@ def _assemble_document(
         filename=file_path.name,
         pages=pages,
         figures=all_figures,
+        tables=all_tables,
+        formulas=all_formulas,
     )
 
 

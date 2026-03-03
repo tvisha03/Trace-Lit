@@ -60,3 +60,13 @@ FIGURE_MAX_CONCURRENT_ANALYSIS: int = 5
 FIGURE_DESCRIPTION_MAX_TOKENS: int = 300
 FIGURE_ANALYSIS_TIMEOUT: int = 30
 
+TABLE_MIN_ROWS: int = 2
+TABLE_MIN_COLS: int = 2
+TABLE_MAX_TOKENS: int = 1024
+
+FORMULA_MIN_LENGTH: int = 3
+FORMULA_MAX_INLINE_LENGTH: int = 500
+
+VISION_TABLE_KEYWORDS: tuple = ("table", "tabular", "spreadsheet", "grid")
+VISION_FORMULA_KEYWORDS: tuple = ("equation", "formula", "mathematical", "math expression")
+

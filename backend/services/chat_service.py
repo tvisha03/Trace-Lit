@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 async def validate_response_has_citations(
     response: str, context: list[dict], retrieved_paragraph_ids: list[str] | None = None,
 ) -> str:
-    citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?P\d+)\]"
+    citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]"
     citations_found = re.findall(citation_pattern, response)
 
     if not citations_found:

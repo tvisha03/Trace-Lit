@@ -14,12 +14,16 @@ from app.config import get_settings
 settings = get_settings()
 
 _SQLITE_BUSY_TIMEOUT_MS = 30_000
+_POOL_CHECKOUT_TIMEOUT_S = 60
 
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     future=True,
-    connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_MS / 1000},
+    pool_size=1,
+    max_overflow=0,
+    pool_timeout=_POOL_CHECKOUT_TIMEOUT_S,
+    connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_MS / 1000, "check_same_thread": False},
 )
 
 
