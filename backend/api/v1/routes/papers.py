@@ -51,8 +51,25 @@ async def upload_papers(
         if not upload_file.filename or not upload_file.filename.lower().endswith(".pdf"):
             raise FileValidationError(f"Only PDF files are accepted: {upload_file.filename}")
 
-        content = await upload_file.read()
-        size_mb = len(content) / (1024 * 1024)
+        # Read the file in chunks to avoid loading huge PDFs into memory
+        # all at once.  We still need the full content for storage, but we
+        # abort early if the size limit is exceeded.
+        chunks: list[bytes] = []
+        total_bytes = 0
+        max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+        while True:
+            chunk = await upload_file.read(1024 * 1024)  # 1 MB chunks
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > max_bytes:
+                raise FileValidationError(
+                    f"{upload_file.filename} exceeds {MAX_FILE_SIZE_MB}MB limit "
+                    f"({total_bytes / (1024 * 1024):.1f}MB+)"
+                )
+            chunks.append(chunk)
+        content = b"".join(chunks)
+        size_mb = total_bytes / (1024 * 1024)
         if size_mb > MAX_FILE_SIZE_MB:
             raise FileValidationError(
                 f"{upload_file.filename} exceeds {MAX_FILE_SIZE_MB}MB limit ({size_mb:.1f}MB)"

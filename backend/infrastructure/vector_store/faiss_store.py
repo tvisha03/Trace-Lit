@@ -73,8 +73,16 @@ class FAISSStore:
         if vectors.shape[0] != len(ids):
             raise ValueError("vectors and ids must have the same length")
 
+        # CRT-003: Guarantee L2-normalised vectors for IndexFlatIP (cosine sim).
+        # encode_texts already passes normalize_embeddings=True, but this is a
+        # safety net for any call-site that bypasses the encoder.
+        vecs = vectors.astype(np.float32)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms[norms == 0] = 1  # Avoid division by zero for zero vectors.
+        vecs = vecs / norms
+
         with self._lock:
-            self._index.add(vectors.astype(np.float32))
+            self._index.add(vecs)
             self._id_map.extend(ids)
 
     def search(

@@ -1,5 +1,7 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -19,6 +21,19 @@ class Settings(BaseSettings):
     USE_LOCAL_LLM: bool = False
     OLLAMA_MODEL: str = "llama3.2:3b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+
+    @field_validator("OLLAMA_BASE_URL")
+    @classmethod
+    def _validate_ollama_url(cls, v: str) -> str:  # noqa: N805
+        """Ensure the Ollama base URL is a valid HTTP(S) URL."""
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"OLLAMA_BASE_URL must be an http:// or https:// URL, got: {v}"
+            )
+        if not parsed.hostname:
+            raise ValueError(f"OLLAMA_BASE_URL must include a hostname, got: {v}")
+        return v.rstrip("/")
 
     LLM_TIMEOUT: int = 30
     LLM_MAX_RETRIES: int = 2

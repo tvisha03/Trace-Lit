@@ -108,8 +108,24 @@ async def process_paper(
             }
             for c in chunks
         ]
-        await create_chunks_bulk(db, chunk_records)
-        await db.flush()  # Flush to get IDs
+
+        # MED-001: Retry chunk creation up to 2 times for transient DB errors
+        # (e.g. SQLite lock contention) before marking the paper as failed.
+        _MAX_CHUNK_RETRIES = 2
+        for attempt in range(1, _MAX_CHUNK_RETRIES + 2):
+            try:
+                await create_chunks_bulk(db, chunk_records)
+                await db.flush()  # Flush to get IDs
+                break
+            except Exception as chunk_exc:
+                if attempt > _MAX_CHUNK_RETRIES:
+                    raise
+                logger.warning(
+                    f"Chunk creation attempt {attempt}/{_MAX_CHUNK_RETRIES + 1} "
+                    f"failed for paper {paper_id}: {chunk_exc} — retrying"
+                )
+                import asyncio as _aio
+                await _aio.sleep(0.5 * attempt)
 
         await update_paper_status(
             db,

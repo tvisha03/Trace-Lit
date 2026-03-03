@@ -1,4 +1,5 @@
 
+import asyncio
 import json
 import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -9,6 +10,9 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+# Heartbeat interval in seconds for detecting stale WebSocket connections.
+_WS_HEARTBEAT_INTERVAL: float = 30.0
 
 class ConnectionManager:
     """Manages WebSocket connections keyed by (session_id, connection_id).
@@ -22,27 +26,30 @@ class ConnectionManager:
     def __init__(self):
         # session_id → {connection_id → WebSocket}
         self._connections: dict[str, dict[str, WebSocket]] = {}
+        self._lock = asyncio.Lock()
 
     async def connect(
         self, websocket: WebSocket, session_id: str, connection_id: str
     ) -> None:
         await websocket.accept()
-        self._connections.setdefault(session_id, {})[connection_id] = websocket
+        async with self._lock:
+            self._connections.setdefault(session_id, {})[connection_id] = websocket
         logger.info(f"WS connected: session={session_id} conn={connection_id}")
 
     async def disconnect(
         self, websocket: WebSocket, session_id: str, connection_id: Optional[str] = None
     ) -> None:
-        session_conns = self._connections.get(session_id, {})
-        if connection_id and connection_id in session_conns:
-            session_conns.pop(connection_id, None)
-        else:
-            # Fall back to linear scan when connection_id is unknown.
-            stale = [cid for cid, ws in session_conns.items() if ws is websocket]
-            for cid in stale:
-                session_conns.pop(cid, None)
-        if not session_conns:
-            self._connections.pop(session_id, None)
+        async with self._lock:
+            session_conns = self._connections.get(session_id, {})
+            if connection_id and connection_id in session_conns:
+                session_conns.pop(connection_id, None)
+            else:
+                # Fall back to linear scan when connection_id is unknown.
+                stale = [cid for cid, ws in session_conns.items() if ws is websocket]
+                for cid in stale:
+                    session_conns.pop(cid, None)
+            if not session_conns:
+                self._connections.pop(session_id, None)
         logger.info(f"WS disconnected: session={session_id} conn={connection_id}")
 
     async def send_progress(
@@ -82,12 +89,16 @@ class ConnectionManager:
 
     async def _broadcast(self, session_id: str, message: str) -> None:
         """Send a raw message to every WebSocket in a session."""
-        conns = dict(self._connections.get(session_id, {}))
+        async with self._lock:
+            conns = dict(self._connections.get(session_id, {}))
+        stale_ids: list[tuple[str, WebSocket]] = []
         for connection_id, ws in conns.items():
             try:
                 await ws.send_text(message)
             except Exception:
-                await self.disconnect(ws, session_id, connection_id)
+                stale_ids.append((connection_id, ws))
+        for connection_id, ws in stale_ids:
+            await self.disconnect(ws, session_id, connection_id)
 
 ws_manager = ConnectionManager()
 
@@ -106,10 +117,27 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     )
 
     try:
-        while True:
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
-    except WebSocketDisconnect:
+        # Background heartbeat task detects stale connections by sending
+        # periodic pings.  If the client is gone the send will fail,
+        # triggering disconnect cleanup.
+        async def _heartbeat():
+            try:
+                while True:
+                    await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+            except Exception:
+                pass  # Connection closed; heartbeat exits silently.
+
+        heartbeat_task = asyncio.create_task(_heartbeat())
+        try:
+            while True:
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+        except WebSocketDisconnect:
+            pass
+        finally:
+            heartbeat_task.cancel()
+    finally:
         # Use the known connection_id for O(1) removal rather than a linear scan.
         await ws_manager.disconnect(websocket, session_id, connection_id)

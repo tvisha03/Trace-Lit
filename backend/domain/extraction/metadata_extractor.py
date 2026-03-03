@@ -24,9 +24,27 @@ def _extract_title(head: str) -> str | None:
     return None
 
 def _extract_year(head: str) -> int | None:
-    year_match = re.search(r"\b(19|20)\d{2}\b", head)
+    """Extract a publication year from the head of the document.
+
+    The regex is intentionally restricted to plausible publication years
+    (1900-2039) and looks for contextual clues such as surrounding
+    parentheses, copyright symbols, or typical date prepositions to
+    avoid matching page numbers or reference IDs.
+    """
+    # Prefer years that appear in a clear date context.
+    contextual = re.search(
+        r"(?:©|copyright|published|received|accepted|\(|,\s*)\s*"
+        r"((?:19|20)\d{2})\b",
+        head,
+        re.IGNORECASE,
+    )
+    if contextual:
+        return int(contextual.group(1))
+
+    # Fallback: first standalone 4-digit year in the head section.
+    year_match = re.search(r"\b((?:19|20)\d{2})\b", head)
     if year_match:
-        return int(year_match.group())
+        return int(year_match.group(1))
     return None
 
 def _extract_abstract(text: str) -> str | None:

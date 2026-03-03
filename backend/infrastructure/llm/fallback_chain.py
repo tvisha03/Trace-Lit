@@ -145,10 +145,14 @@ class FallbackChain:
         finally:
             # Track usage for whatever portion of the stream was received,
             # including interrupted streams where full_text may be partial.
-            if full_text:
-                from shared.utils.text_utils import estimate_tokens as _est
-                actual_tokens = _est(system_prompt + user_prompt + full_text)
-                self._rate_monitor.track_usage(provider.provider, actual_tokens)
+            # Even when no output tokens arrived, we still consumed input
+            # tokens that count toward rate limits (Issue 1.2 fix).
+            from shared.utils.text_utils import estimate_tokens as _est
+            input_tokens = _est(system_prompt + user_prompt)
+            output_tokens = _est(full_text) if full_text else 0
+            self._rate_monitor.track_usage(
+                provider.provider, input_tokens + output_tokens,
+            )
 
     async def generate_streaming(
         self,

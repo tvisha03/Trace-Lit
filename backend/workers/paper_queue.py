@@ -30,6 +30,15 @@ class SmartPaperQueue:
         self._process_fn = fn
 
     async def enqueue(self, paper_id: str, session_id: str, priority: int = 0):
+        # Guard against duplicate processing if the same paper is re-enqueued
+        # (e.g. on retry after transient failure).  This is a best-effort check;
+        # the FAISS add is idempotent, so a race here is safe.
+        if paper_id in self._active_jobs:
+            logger.warning(
+                f"Paper {paper_id} is already being processed — skipping duplicate enqueue"
+            )
+            return
+
         job = PaperJob(paper_id=paper_id, session_id=session_id, priority=priority)
         await self._queue.put((priority, job))
         logger.info(f"Enqueued paper {paper_id} (queue size: {self._queue.qsize()})")
@@ -71,6 +80,13 @@ class SmartPaperQueue:
     async def _process_with_semaphore(self, job: PaperJob):
         if not self._process_fn:
             logger.error("No processor function set on SmartPaperQueue")
+            return
+
+        # Prevent duplicate concurrent processing of the same paper.
+        if job.paper_id in self._active_jobs:
+            logger.warning(
+                f"Paper {job.paper_id} is already active — ignoring duplicate job"
+            )
             return
 
         # MED-008: Check memory pressure BEFORE acquiring the semaphore so a

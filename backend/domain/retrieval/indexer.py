@@ -25,16 +25,24 @@ def _get_encoder() -> SentenceTransformer:
     global _encoder
     if _encoder is None:
         with timer("Load embedding model"):
-            device = "mps" if _mps_available() else "cpu"
-            # Load model first, then explicitly move to MPS device.
-            # Passing device= at construction time is insufficient for MPS;
-            # the .to() call ensures all internal tensors are placed on the
-            # Apple Silicon GPU for 2.7x embedding throughput (CRT-002 fix).
+            device = "cpu"
+            try:
+                if _mps_available():
+                    device = "mps"
+            except Exception as exc:
+                logger.warning(f"MPS availability check failed, falling back to CPU: {exc}")
+
             _encoder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+
             if device == "mps":
-                import torch
-                _encoder = _encoder.to(torch.device("mps"))
-                logger.info("Using MPS (Apple Silicon GPU) for embeddings")
+                try:
+                    import torch
+                    _encoder = _encoder.to(torch.device("mps"))
+                    logger.info("Using MPS (Apple Silicon GPU) for embeddings")
+                except Exception as mps_exc:
+                    logger.warning(
+                        f"Failed to move model to MPS device, falling back to CPU: {mps_exc}"
+                    )
             else:
                 logger.info("Using CPU for embeddings")
     return _encoder

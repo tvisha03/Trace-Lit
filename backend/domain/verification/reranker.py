@@ -33,6 +33,17 @@ def _get_cross_encoder():
             return None
     return _cross_encoder
 
+
+async def async_get_cross_encoder():
+    """Load the cross-encoder in a thread to avoid blocking the event loop.
+
+    The first call after startup downloads weights (or loads from disk) which
+    can take several seconds.  Subsequent calls return the cached instance
+    immediately (MED-002 fix).
+    """
+    import asyncio
+    return await asyncio.to_thread(_get_cross_encoder)
+
 def _update_result_confidence(
     best_score: float,
     cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,

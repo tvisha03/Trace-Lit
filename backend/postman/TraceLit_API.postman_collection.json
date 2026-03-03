@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "trace-lit-collection-002",
     "name": "TraceLit API v2",
-    "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  POST /sessions/{id}/export               Export results\n10. POST /verify                             Standalone HAVF verify\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## Paper Processing Stages\n\n`pending` → `processing` → `ready` | `failed`\n\nStages: `extraction` → `chunking` → `embedding` → `indexing`",
+    "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  POST /sessions/{id}/export               Export results\n10. POST /verify/{session_id}               Standalone HAVF verify\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## Paper Processing Stages\n\n`pending` → `processing` → `ready` | `failed`\n\nStages: `extraction` → `chunking` → `embedding` → `indexing`",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -31,14 +31,10 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/health",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "health"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["health"]
             },
-            "description": "Returns live health status of the service and reachability of each configured LLM provider.\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `status` | string | Always `\"ok\"` when the service is up |\n| `version` | string | API version, e.g. `\"0.1.0\"` |\n| `providers` | object | Map of provider name → `true` (reachable) / `false` |"
+            "description": "Returns live health status of the service and reachability of each configured LLM provider.\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `status` | string | Always `\"ok\"` when the service is up |\n| `version` | string | API version, e.g. `\"0.1.0\"` |\n| `providers` | object | Map of provider name → `true` (reachable) / `false` |\n| `db` | bool | Database connectivity |\n| `faiss` | bool | FAISS index loaded |\n| `cross_encoder` | bool | Cross-encoder model available |"
           },
           "response": [
             {
@@ -52,7 +48,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"status\": \"ok\",\n  \"version\": \"0.1.0\",\n  \"providers\": {\n    \"GeminiProvider\": true,\n    \"GroqProvider\": true,\n    \"OllamaProvider\": false\n  }\n}"
+              "body": "{\n  \"status\": \"ok\",\n  \"version\": \"0.1.0\",\n  \"providers\": {\n    \"GeminiProvider\": true,\n    \"GroqProvider\": true,\n    \"OllamaProvider\": false\n  },\n  \"db\": true,\n  \"faiss\": true,\n  \"cross_encoder\": true\n}"
             }
           ]
         }
@@ -98,12 +94,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions"]
             },
             "description": "Create a new research session. Both fields are optional.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `title` | string | No | max 200 chars |\n| `description` | string | No | max 1000 chars |\n\n**Response:** `SessionResponse` — `201 Created`\n\n> The test script automatically stores `session_id` in the environment."
           },
@@ -143,12 +135,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions"]
             },
             "description": "Returns all sessions ordered by most recently updated first.\n\n**Response:** `SessionListResponse` — array of `SessionResponse` objects.\n\n| Field | Type | Description |\n|---|---|---|\n| `id` | string | Session UUID |\n| `title` | string | Session title |\n| `description` | string\\|null | Optional description |\n| `created_at` | string | ISO-8601 creation timestamp |\n| `updated_at` | string\\|null | Last modification timestamp |"
           },
@@ -175,13 +163,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
             },
             "description": "Retrieve a single session by its UUID.\n\n**Errors:** `404 Not Found` if the session does not exist."
           },
@@ -235,13 +218,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
             },
             "description": "Update the title of an existing session.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `title` | string | **Yes** | 1–200 chars |\n\n**Response:** Updated `SessionResponse` — `200 OK`"
           },
@@ -268,13 +246,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
             },
             "description": "Permanently delete a session and **all associated data**: papers, sentence chunks, FAISS vectors, and exported files.\n\n⚠️ This action is irreversible.\n\n**Response:** `204 No Content`"
           },
@@ -301,14 +274,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/ws-url",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "ws-url"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "ws-url"]
             },
             "description": "Returns the WebSocket (`ws://` or `wss://`) URL for real-time paper processing progress.\n\nThe scheme is derived from the incoming HTTP request (`http` → `ws`, `https` → `wss`).\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `websocket_url` | string | Full WebSocket URL to connect to |\n| `session_id` | string | Echo of the session UUID |\n\n**WebSocket events after connecting:**\n\n```json\n{ \"type\": \"paper_progress\",  \"paper_id\": \"...\", \"progress\": 0.42, \"stage\": \"embedding\", \"eta_seconds\": 18 }\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n{ \"type\": \"paper_failed\",    \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```"
           },
@@ -373,14 +340,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "papers"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers"]
             },
             "description": "Upload 1–7 PDF files to the session. Each file is validated, saved to disk, and queued for async background processing.\n\n**Processing pipeline per paper:**\n1. PDF text extraction (page-by-page)\n2. Section detection and sentence-aware chunking\n3. Sentence embedding (local model)\n4. FAISS vector indexing\n5. Metadata extraction (title, authors, year, abstract)\n\n**Constraints:**\n- `Content-Type: multipart/form-data`\n- Form field name must be `files` (repeat field for multiple files)\n- Only `.pdf` extension accepted\n- Maximum 7 files per request\n- Maximum 50 MB per file\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_ids` | string[] | UUIDs for all registered papers |\n| `message` | string | Human-readable confirmation |\n\n> The test script stores the first two paper IDs as `paper_id` and `second_paper_id`."
           },
@@ -446,14 +407,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "papers"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers"]
             },
             "description": "List all papers in the session with current processing status and metadata.\n\n**Status values:** `pending` | `processing` | `ready` | `failed`\n\n**Response fields per paper:**\n\n| Field | Type | Description |\n|---|---|---|\n| `id` | string | Paper UUID |\n| `session_id` | string | Owning session UUID |\n| `filename` | string | Original filename |\n| `title` | string\\|null | Extracted title (available after `ready`) |\n| `authors` | string\\|null | Comma-separated author names |\n| `year` | int\\|null | Publication year |\n| `abstract` | string\\|null | Extracted abstract |\n| `status` | string | Processing status |\n| `progress` | float | 0.0–1.0 progress |\n| `page_count` | int\\|null | Number of pages |\n| `chunk_count` | int\\|null | Number of indexed sentence chunks |\n| `file_size_mb` | float\\|null | File size in MB |\n| `error_message` | string\\|null | Error detail (only when `failed`) |\n| `created_at` | string | ISO-8601 timestamp |"
           },
@@ -480,15 +435,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers/{{paper_id}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "papers",
-                "{{paper_id}}"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers", "{{paper_id}}"]
             },
             "description": "Retrieve a single paper by UUID.\n\nUse this to **poll processing status** when not using WebSocket. Check `status` and `progress` (0.0–1.0) to track progress.\n\n**Errors:** `404 Not Found` if the paper does not exist."
           },
@@ -554,15 +502,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers/{{paper_id}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "papers",
-                "{{paper_id}}"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers", "{{paper_id}}"]
             },
             "description": "Delete a paper and its associated data: sentence chunks and FAISS vectors.\n\n⚠️ Deleted papers no longer contribute to chat, comparison, or analysis.\n\n**Response:** `204 No Content`"
           },
@@ -609,14 +550,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "chat"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat"]
             },
             "description": "Send a natural-language query and receive a verified, cited answer as a single JSON response.\n\n**Pipeline per request:**\n1. Query is embedded → top-k sentence chunks retrieved from FAISS\n2. Context assembled → sent to LLM (Gemini → Groq → Ollama fallback)\n3. LLM must cite every sentence with `[P#]` paragraph tags\n4. Citation IDs validated against indexed paragraphs\n5. Each sentence passes HAVF (embedding similarity + optional cross-encoder)\n6. Message persisted to session chat history\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `query` | string | **Yes** | 1–5000 chars |\n| `stream` | bool | No | `false` for sync JSON (default) |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `content` | string | Full answer with `[P#]` citation tags |\n| `provider` | string | LLM used: `gemini` \\| `groq` \\| `ollama` |\n| `havf_results` | array | Per-sentence verification (see below) |\n| `token_count` | int | Tokens consumed by LLM |\n| `latency_ms` | float | End-to-end latency in ms |\n\n**HAVF result fields per sentence:**\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The verified sentence |\n| `confidence` | string | `HIGH` \\| `MEDIUM` \\| `LOW` |\n| `score` | float | Best cosine similarity score 0.0–1.0 |\n| `source_sentence` | string\\|null | Most similar source sentence |\n| `paragraph_id` | string\\|null | Cited paragraph ID, e.g. `P5` |\n| `sentence_key` | string\\|null | Internal sentence identifier |\n\n> Requires at least one paper with `status = ready`."
           },
@@ -665,7 +600,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"query\": \"Summarize the key findings across all papers.\",\n  \"stream\": true\n}",
+              "raw": "{\n  \"query\": \"Summarize the key findings across all papers.\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -673,17 +608,11 @@
               }
             },
             "url": {
-              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "chat"
-              ]
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat/stream",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat", "stream"]
             },
-            "description": "Same as Send Message (Sync) with `stream: true`. Returns a **Server-Sent Events (SSE)** stream.\n\n**SSE event format:**\n\n```\ndata: {\"type\": \"token\", \"content\": \"Transformer\"}\ndata: {\"type\": \"token\", \"content\": \" models\"}\n...\ndata: {\"type\": \"done\", \"havf_results\": [...], \"provider\": \"gemini\", \"token_count\": 312, \"latency_ms\": 1842.5}\n```\n\n- `type: \"token\"` — incremental text chunk\n- `type: \"done\"` — final event with full HAVF results and metadata\n\n> ⚠️ Postman HTTP runner has limited SSE support. Use the browser `EventSource` API or `curl --no-buffer` for best results."
+            "description": "Streaming variant of Send Message. Uses a **dedicated /chat/stream endpoint** and returns **Server-Sent Events (SSE)**.\n\n**SSE event types:**\n\n| Event | Description |\n|---|---|\n| `query_type` | Query classification (SIMPLE_QA, COMPARISON, etc.) |\n| `sources` | Retrieved source chunks |\n| `token` | Incremental LLM text chunk |\n| `havf` | HAVF verification results after all tokens |\n| `done` | Final event: provider, full text, token count, latency |\n| `error` | Unrecoverable error |\n\n**SSE format example:**\n\n```\ndata: {\"type\": \"query_type\", \"query_type\": \"SIMPLE_QA\"}\ndata: {\"type\": \"sources\", \"sources\": [...]}\ndata: {\"type\": \"token\", \"content\": \"Transformer\"}\ndata: {\"type\": \"token\", \"content\": \" models\"}\n...\ndata: {\"type\": \"havf\", \"havf_results\": [...]}\ndata: {\"type\": \"done\", \"provider\": \"gemini\", \"token_count\": 312, \"latency_ms\": 1842.5}\n```\n\n> ⚠️ Postman HTTP runner has limited SSE support. Use the browser `EventSource` API or `curl --no-buffer` for best results."
           },
           "response": [
             {
@@ -697,7 +626,7 @@
                   "value": "text/event-stream"
                 }
               ],
-              "body": "data: {\"type\": \"token\", \"content\": \"Transformer\"}\n\ndata: {\"type\": \"token\", \"content\": \" models rely on self-attention [P1].\"}\n\ndata: {\"type\": \"done\", \"havf_results\": [], \"provider\": \"gemini\", \"token_count\": 298, \"latency_ms\": 1540.2}"
+              "body": "data: {\"type\": \"query_type\", \"query_type\": \"SIMPLE_QA\"}\n\ndata: {\"type\": \"sources\", \"sources\": [{\"paragraph_id\": \"P1\", \"text\": \"We propose a model...\"}]}\n\ndata: {\"type\": \"token\", \"content\": \"Transformer\"}\n\ndata: {\"type\": \"token\", \"content\": \" models rely on self-attention [P1].\"}\n\ndata: {\"type\": \"havf\", \"havf_results\": [{\"claim\": \"Transformer models rely on self-attention [P1].\", \"confidence\": \"HIGH\", \"score\": 0.92}]}\n\ndata: {\"type\": \"done\", \"provider\": \"gemini\", \"token_count\": 298, \"latency_ms\": 1540.2}"
             }
           ]
         },
@@ -708,15 +637,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat/messages",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "chat",
-                "messages"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat", "messages"]
             },
             "description": "Retrieve the full message history for a session in chronological order.\n\nBoth user queries and assistant responses are returned.\n\n**Message fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `id` | string | Message UUID |\n| `role` | string | `user` \\| `assistant` |\n| `content` | string | Message text |\n| `provider` | string\\|null | LLM provider (assistant only) |\n| `havf_results` | array\\|null | HAVF per-sentence results (assistant only) |\n| `token_count` | int\\|null | Tokens used (assistant only) |\n| `latency_ms` | float\\|null | Latency ms (assistant only) |\n| `created_at` | string | ISO-8601 timestamp |"
           },
@@ -763,14 +685,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/compare",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "compare"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "compare"]
             },
             "description": "Generate a structured side-by-side comparison of 2–7 papers.\n\nThe LLM analyses each paper and produces a comparative narrative covering objectives, methodology, findings, datasets, and limitations.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `paper_ids` | string[] | **Yes** | 2–7 UUIDs of `ready` papers |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `comparison` | string | Full comparison text (markdown) |\n| `paper_ids` | string[] | Input paper UUIDs |\n| `paper_titles` | string[] | Resolved paper titles |\n| `provider` | string | LLM provider used |"
           },
@@ -810,9 +726,7 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/compare/contributions/{{paper_id}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
+              "host": ["{{base_url}}{{api_prefix}}"],
               "path": [
                 "sessions",
                 "{{session_id}}",
@@ -881,14 +795,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "export"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
             },
             "description": "Export the session chat history (all messages with citations and HAVF data) to a **PDF** document.\n\n**Request body:**\n\n| Field | Type | Required | Values |\n|---|---|---|---|\n| `format` | string | **Yes** | `\"pdf\"` or `\"excel\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment."
           },
@@ -944,14 +852,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "export"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
             },
             "description": "Export the session chat history to an **Excel (.xlsx)** spreadsheet.\n\nEach row contains: role, message content, cited paragraph IDs, HAVF confidence per sentence, provider, and latency.\n\n> See **Export Session Chat (PDF)** for full field documentation."
           },
@@ -1007,15 +909,8 @@
             },
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export/comparison",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "export",
-                "comparison"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export", "comparison"]
             },
             "description": "Run a paper comparison and export the result to a file in one combined request.\n\nEquivalent to `POST /compare` followed by `POST /export` but in a single call.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `paper_ids` | string[] | **Yes** | 2–7 UUIDs of `ready` papers |\n| `format` | string | No | `\"pdf\"` (default) or `\"excel\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment."
           },
@@ -1042,9 +937,7 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export/download/{{export_filename}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
+              "host": ["{{base_url}}{{api_prefix}}"],
               "path": [
                 "sessions",
                 "{{session_id}}",
@@ -1097,9 +990,7 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/keywords/{{paper_id}}",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
+              "host": ["{{base_url}}{{api_prefix}}"],
               "path": [
                 "sessions",
                 "{{session_id}}",
@@ -1133,15 +1024,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/gaps",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "analysis",
-                "gaps"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "analysis", "gaps"]
             },
             "description": "Analyse all ready papers in the session to identify research themes and highlight underexplored areas (gaps).\n\n**Algorithm:**\n1. Aggregate keywords from all ready papers\n2. Cluster into high-level themes\n3. Compute per-theme coverage ratio (fraction of papers addressing it)\n4. Flag low-coverage themes as potential research gaps\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `themes` | array | All detected themes with coverage data |\n| `underexplored` | array | Subset: low-coverage themes (gaps) |\n\n**Theme object:**\n\n| Field | Type | Description |\n|---|---|---|\n| `label` | string | Theme name |\n| `keywords` | string[] | Representative keywords |\n| `papers_covering` | string[]\\|null | Paper UUIDs that address this theme |\n| `coverage_ratio` | float | 0.0–1.0 fraction of papers covering this theme |"
           },
@@ -1168,15 +1052,8 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/review",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "sessions",
-                "{{session_id}}",
-                "analysis",
-                "review"
-              ]
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "analysis", "review"]
             },
             "description": "Generate a coherent mini literature review synthesising all ready papers in the session.\n\nThe LLM receives each paper's contributions and keywords and writes a structured review: background, methodological landscape, comparative findings, and open questions.\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `review` | string | Full literature review text (markdown) |\n| `paper_count` | int | Number of papers included |\n| `provider` | string | LLM provider used |"
           },
@@ -1193,6 +1070,60 @@
                 }
               ],
               "body": "{\n  \"review\": \"## Literature Review\\n\\n### Introduction\\nRecent advances in NLP have been driven by attention-based architectures...\\n\\n### Transformer Architecture (Vaswani et al., 2017)\\nThe seminal work introduced self-attention, removing recurrence entirely...\\n\\n### Bidirectional Representations (Devlin et al., 2018)\\nBERT demonstrated that bidirectional pre-training significantly improves...\\n\\n### Open Questions\\nInterpretability of attention heads and scaling laws remain underexplored...\",\n  \"paper_count\": 2,\n  \"provider\": \"gemini\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Paper Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/summary/{{paper_id}}?question=Provide a structured summary of this paper.",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "analysis",
+                "summary",
+                "{{paper_id}}"
+              ],
+              "query": [
+                {
+                  "key": "question",
+                  "value": "Provide a structured summary of this paper.",
+                  "description": "Optional custom question. Defaults to 'Provide a structured summary of this paper.' Max 500 chars."
+                }
+              ]
+            },
+            "description": "Generate an on-demand structured summary of a single paper.\n\nThe LLM analyses the paper's indexed chunks and produces a concise summary. Optionally pass a custom `question` query parameter to focus the summary.\n\n**Path parameters:**\n- `session_id` — session UUID\n- `paper_id` — paper UUID (must be `status = ready`)\n\n**Query parameters:**\n\n| Param | Type | Required | Default | Constraints |\n|---|---|---|---|---|\n| `question` | string | No | `\"Provide a structured summary of this paper.\"` | max 500 chars |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_id` | string | Paper UUID |\n| `title` | string\\|null | Paper title |\n| `summary` | string | Generated summary text |\n| `provider` | string | LLM provider used |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n  \"title\": \"Attention Is All You Need\",\n  \"summary\": \"This paper introduces the Transformer architecture, a novel sequence transduction model based entirely on self-attention mechanisms. The model eschews recurrence and convolutions while achieving state-of-the-art results on WMT 2014 English-German (28.4 BLEU) and English-French (41.0 BLEU) translation benchmarks. Key innovations include multi-head attention, positional encoding, and a scalable encoder-decoder structure that enables significantly more parallelisation during training.\",\n  \"provider\": \"gemini\"\n}"
+            },
+            {
+              "name": "404 Paper Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Paper a1b2c3d4-0000-0000-0000-111111111111 not found\"\n}"
             }
           ]
         }
@@ -1222,15 +1153,11 @@
               }
             },
             "url": {
-              "raw": "{{base_url}}{{api_prefix}}/verify",
-              "host": [
-                "{{base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "verify"
-              ]
+              "raw": "{{base_url}}{{api_prefix}}/verify/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["verify", "{{session_id}}"]
             },
-            "description": "Verify arbitrary text against one or more indexed papers using the HAVF pipeline.\n\nEach sentence in `text` is independently evaluated.\n\n**HAVF algorithm:**\n\n**Level 1 (~5ms, handles ~89% of cases):**\n- Embed sentence → cosine similarity vs all source sentences in indexed papers\n- Score >= 0.85 → `HIGH` (return immediately)\n- Score 0.65–0.84 → proceed to Level 2\n- Score < 0.65 → `LOW` (return immediately)\n\n**Level 2 (~40ms, uncertain cases only):**\n- Cross-encoder reranking of top candidate source sentences\n- Score >= 0.75 → `MEDIUM`\n- Score < 0.75 → `LOW`\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `text` | string | **Yes** | 1–10000 chars. One or more sentences. |\n| `paper_ids` | string[] | **Yes** | 1+ UUIDs of `ready` papers |\n\n**Response:** Array of `VerificationItem`:\n\n**HAVF result fields per sentence:**\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The verified sentence |\n| `confidence` | string | `HIGH` \\| `MEDIUM` \\| `LOW` |\n| `score` | float | Best cosine similarity score 0.0–1.0 |\n| `source_sentence` | string\\|null | Most similar source sentence |\n| `paragraph_id` | string\\|null | Cited paragraph ID, e.g. `P5` |\n| `sentence_key` | string\\|null | Internal sentence identifier |"
+            "description": "Verify arbitrary text against one or more indexed papers using the HAVF pipeline.\n\n**Path parameters:**\n- `session_id` — session UUID (validates paper ownership)\n\nEach sentence in `text` is independently evaluated.\n\n**HAVF algorithm:**\n\n**Level 1 (~5ms, handles ~89% of cases):**\n- Embed sentence → cosine similarity vs all source sentences in indexed papers\n- Score >= 0.85 → `HIGH` (return immediately)\n- Score 0.65–0.84 → proceed to Level 2\n- Score < 0.65 → `LOW` (return immediately)\n\n**Level 2 (~40ms, uncertain cases only):**\n- Cross-encoder reranking of top candidate source sentences\n- Score >= 0.75 → `MEDIUM`\n- Score < 0.75 → `LOW`\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `text` | string | **Yes** | 1–10000 chars. One or more sentences. |\n| `paper_ids` | string[] | **Yes** | 1+ UUIDs of `ready` papers |\n\n**Response:** Array of `VerificationItem`:\n\n**HAVF result fields per sentence:**\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The verified sentence |\n| `confidence` | string | `HIGH` \\| `MEDIUM` \\| `LOW` |\n| `score` | float | Best cosine similarity score 0.0–1.0 |\n| `source_sentence` | string\\|null | Most similar source sentence |\n| `paragraph_id` | string\\|null | Cited paragraph ID, e.g. `P5` |\n| `sentence_key` | string\\|null | Internal sentence identifier |"
           },
           "response": [
             {
@@ -1273,16 +1200,11 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{ws_base_url}}{{api_prefix}}/ws/{{session_id}}",
-              "host": [
-                "{{ws_base_url}}{{api_prefix}}"
-              ],
-              "path": [
-                "ws",
-                "{{session_id}}"
-              ]
+              "raw": "{{ws_base_url}}/ws/{{session_id}}",
+              "host": ["{{ws_base_url}}"],
+              "path": ["ws", "{{session_id}}"]
             },
-            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**⚠️ This is a WebSocket URL. Open Postman → New → WebSocket Request.**\n\n---\n\n## Connection Steps\n\n1. Call `GET /sessions/{session_id}/ws-url` to get the exact URL\n2. Open Postman → **New → WebSocket Request**\n3. Paste the returned `websocket_url` and click **Connect**\n\nOr use: `{{ws_base_url}}{{api_prefix}}/ws/{{session_id}}`\n\n---\n\n## Incoming Events\n\n**Progress update:**\n```json\n{ \"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.42, \"stage\": \"embedding\", \"eta_seconds\": 18 }\n```\n\n**Paper ready:**\n```json\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n```\n\n**Paper failed:**\n```json\n{ \"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```\n\n---\n\n## Heartbeat\n\nSend the text message `ping` — the server replies with `pong`.\n\n---\n\n## Processing Stages\n\n| Stage | Description |\n|---|---|\n| `extraction` | Extracting text from PDF pages |\n| `chunking` | Splitting into sentence-aware chunks |\n| `embedding` | Generating sentence embeddings |\n| `indexing` | Writing vectors to FAISS index |"
+            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**⚠️ This is a WebSocket URL. Open Postman → New → WebSocket Request.**\n\nThe WebSocket is mounted at the app root (`/ws`), **not** under `/api/v1`.\n\n---\n\n## Connection Steps\n\n1. Call `GET /sessions/{session_id}/ws-url` to get the exact URL\n2. Open Postman → **New → WebSocket Request**\n3. Paste the returned `websocket_url` and click **Connect**\n\nOr use: `{{ws_base_url}}/ws/{{session_id}}`\n\n---\n\n## Incoming Events\n\n**Connected:**\n```json\n{ \"type\": \"connected\", \"connection_id\": \"...\" }\n```\n\n**Progress update:**\n```json\n{ \"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.42, \"stage\": \"embedding\", \"eta_seconds\": 18 }\n```\n\n**Paper ready:**\n```json\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n```\n\n**Paper failed:**\n```json\n{ \"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```\n\n**Paper deleted:**\n```json\n{ \"type\": \"paper_deleted\", \"paper_id\": \"...\", \"session_id\": \"...\" }\n```\n\n**Session deleted:**\n```json\n{ \"type\": \"session_deleted\", \"session_id\": \"...\" }\n```\n\n---\n\n## Heartbeat\n\nThe server sends a `ping` event every 30 seconds. Send the text message `ping` — the server replies with a JSON `pong`.\n\n---\n\n## Processing Stages\n\n| Stage | Description |\n|---|---|\n| `extraction` | Extracting text from PDF pages |\n| `chunking` | Splitting into sentence-aware chunks |\n| `embedding` | Generating sentence embeddings |\n| `indexing` | Writing vectors to FAISS index |"
           },
           "response": []
         }

@@ -15,12 +15,24 @@ Redis-backed rate limiter before scaling horizontally.
 
 from collections import defaultdict
 from time import monotonic
+from typing import Optional
 
 from fastapi import HTTPException, Request
 
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _resolve_client_ip(request: Request) -> str:
+    """Extract the real client IP, respecting X-Forwarded-For behind proxies."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        # X-Forwarded-For may contain a chain: "client, proxy1, proxy2"
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
 
 
 class SlidingWindowRateLimiter:

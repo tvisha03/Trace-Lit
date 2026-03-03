@@ -59,6 +59,11 @@ async def verify_response(
 
         source_sentences = build_source_sentences(retrieved_chunks)
         if not source_sentences:
+            logger.warning(
+                "HAVF: No source sentences found in retrieved chunks. "
+                "All claims will be marked LOW confidence — citations "
+                "may reference non-existent paragraphs."
+            )
             return [
                 VerificationResult(
                     claim=c,

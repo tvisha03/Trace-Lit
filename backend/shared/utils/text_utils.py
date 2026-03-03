@@ -6,15 +6,17 @@ _ABBREV = re.compile(
     # shorthand to reduce false sentence-boundary splits (MINOR-002 fix).
     r"\b(?:"
     # Typical citation / reference abbreviations
-    r"et al|Fig|fig|Eq|eq|cf|viz|nb|"
+    r"et al|Fig|fig|Figs|figs|Eq|eq|Eqs|eqs|cf|viz|nb|"
     # Common Latin abbreviations
     r"e\.g|i\.e|vs|i\.e\.?|e\.g\.?|et seq|op cit|ibid|"
     # Titles and honorifics
-    r"Dr|Mr|Mrs|Ms|Prof|Jr|Sr|Rev|Gen|Sgt|Cpl|Lt|Col|Maj|"
+    r"Dr|Mr|Mrs|Ms|Prof|Jr|Sr|Rev|Gen|Sgt|Cpl|Lt|Col|Maj|St|"
     # Org / legal suffixes
     r"Inc|Ltd|Corp|Dept|Assoc|Univ|Inst|"
     # Measurement / publication
-    r"Vol|No|pp|Ch|Sec|approx|est|avg|"
+    r"Vol|No|pp|Ch|Sec|Sect|approx|est|avg|max|min|"
+    # Figure/Table references ("Table 1." should not split)
+    r"Tab|Tbl|Ref|Refs|Suppl|Supp|App|"
     # Generic informal
     r"etc|vs\.?"
     r")\.$",
@@ -24,6 +26,11 @@ _ABBREV = re.compile(
 _CITATION_END = re.compile(r"\]\.\s*$")
 
 def split_into_sentences(text: str) -> list[str]:
+    """Split text into sentences using regex-based heuristics.
+
+    Handles common academic edge cases: abbreviations, decimal numbers,
+    figure references ("Fig. 1"), equation labels, and inline citations.
+    """
     raw_splits = re.split(r'(?<=[.!?])\s+(?=[A-Z"])', text)
 
     sentences: list[str] = []
@@ -32,10 +39,20 @@ def split_into_sentences(text: str) -> list[str]:
     for fragment in raw_splits:
         buffer = f"{buffer} {fragment}".strip() if buffer else fragment
 
+        # Don't split after known abbreviations (e.g. "et al.")
         if _ABBREV.search(buffer):
             continue
 
+        # Don't split inside decimal numbers (e.g. "3.5")
         if re.search(r"\d\.\d\s*$", buffer):
+            continue
+
+        # Don't split after figure/table references like "Figure 1."
+        if re.search(r"(?:Figure|Table|Equation)\s+\d+\.\s*$", buffer, re.IGNORECASE):
+            continue
+
+        # Don't split after inline citation endings like "[23]."
+        if _CITATION_END.search(buffer) and len(buffer.split()) < 4:
             continue
 
         sentences.append(buffer)

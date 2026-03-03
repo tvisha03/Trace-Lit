@@ -71,6 +71,13 @@ async def gap_analysis(
             "Please wait for paper processing to finish before running gap analysis."
         )
 
+    if len(papers) < 2:
+        raise InsufficientDataError(
+            f"Gap analysis requires at least 2 completed papers, but session "
+            f"'{session_id}' has only {len(papers)}. Upload more papers to "
+            f"identify research gaps across multiple studies."
+        )
+
     result = await get_session_gap_analysis(session_id, db)
     return GapAnalysisResponse(
         themes=[ThemeItem(**t) for t in result["themes"]],

@@ -34,13 +34,11 @@ async def verify_text(
     if not session:
         raise NotFoundError("Session", session_id)
 
-    # CRT-001: Validate session ownership.  The session_id is part of the URL
-    # path, so we must verify the caller actually owns this session via the
-    # Referer / session-cookie mechanism.  Without auth middleware the best
-    # guard is ensuring the session exists and papers are cross-checked below.
-    # When auth middleware is added, insert owner_id check here:
-    # if str(session.owner_id) != request.state.user_id:
-    #     raise ForbiddenError("Session", session_id)
+    # CRT-001: Session ownership validation.
+    # When auth middleware is present, verify the caller owns this session.
+    if hasattr(request.state, "user_id"):
+        if str(getattr(session, "owner_id", None)) != request.state.user_id:
+            raise ForbiddenError("Session", session_id)
 
     # Verify every requested paper belongs to this session.  This prevents
     # one user from verifying content against another session's papers.

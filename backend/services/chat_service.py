@@ -15,7 +15,9 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def validate_response_has_citations(response: str, context: list[dict]) -> str:
+async def validate_response_has_citations(
+    response: str, context: list[dict], retrieved_paragraph_ids: list[str] | None = None,
+) -> str:
     """Validate that response has proper citations or indicate not found.
 
     This is Layer 2 of HAVF hallucination prevention - ensuring the model
@@ -37,6 +39,17 @@ async def validate_response_has_citations(response: str, context: list[dict]) ->
             "accurately sourced. Please try rephrasing your question or verify the "
             "information independently."
         )
+
+    # MED-006: Validate that cited paragraph IDs actually exist in retrieved context.
+    if retrieved_paragraph_ids:
+        cited_ids = set(re.findall(r"\[P(\d+)\]", response))
+        valid_ids = set(retrieved_paragraph_ids)
+        invalid_ids = cited_ids - valid_ids
+        if invalid_ids:
+            logger.warning(
+                f"Citations reference non-existent paragraphs: {invalid_ids}. "
+                f"Valid IDs: {valid_ids}"
+            )
 
     return response
 
@@ -66,7 +79,18 @@ async def _prepare_chat_context(
 
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if not papers:
-        raise NotFoundError("Papers", f"no completed papers in session {session_id}")
+        # Distinguish between "no papers at all" and "no completed papers".
+        all_papers = await get_papers_by_session(db, session_id)
+        if not all_papers:
+            raise NotFoundError(
+                "Papers",
+                f"no papers uploaded in session {session_id}",
+            )
+        raise NotFoundError(
+            "Papers",
+            f"no completed papers in session {session_id} "
+            f"({len(all_papers)} paper(s) still processing or failed)",
+        )
 
     paper_ids = [str(p.id) for p in papers]
     history = await get_recent_messages(db, session_id, max_turns=4)
@@ -98,9 +122,17 @@ async def chat(
         llm=llm,
         db_session=db,
     )
-    # Validate response has citations - Layer 2 of HAVF hallucination prevention
+    # Validate response has citations - Layer 2 of HAVF hallucination prevention.
+    # Pass retrieved paragraph IDs so the validator can flag invalid citations.
+    retrieved_para_ids = [
+        str(r.paragraph_id)
+        for r in (response.havf_results or [])
+        if r.paragraph_id
+    ]
     validated_content = await validate_response_has_citations(
-        response.content, [{"paper_id": pid} for pid in paper_ids]
+        response.content,
+        [{"paper_id": pid} for pid in paper_ids],
+        retrieved_paragraph_ids=retrieved_para_ids or None,
     )
     response.content = validated_content
     await create_message(
