@@ -1,6 +1,11 @@
-
 from pathlib import Path
 from dataclasses import dataclass, field
+
+try:
+    import pymupdf.layout  # noqa: F401  # pylint: disable=unused-import
+    _LAYOUT_MODE = True
+except ImportError:
+    _LAYOUT_MODE = False
 
 from shared.logger import get_logger
 from shared.errors import PDFExtractionError
@@ -33,6 +38,7 @@ class ExtractedPage:
     tables: list[dict] = field(default_factory=list)
     images: list[dict] = field(default_factory=list)
     toc_items: list = field(default_factory=list)
+    page_boxes: list[dict] = field(default_factory=list)
 
 @dataclass
 class ExtractedDocument:
@@ -44,6 +50,7 @@ class ExtractedDocument:
     tables: list[ExtractedTable] = field(default_factory=list)
     formulas: list[ExtractedFormula] = field(default_factory=list)
     pdf_metadata: dict | None = None
+    layout_mode: bool = False
 
 
 def _ensure_figure_dir(file_path: Path) -> Path:
@@ -170,6 +177,7 @@ def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
             tables=page_data.get("tables", []),
             images=page_data.get("images", []),
             toc_items=page_data.get("toc_items", []),
+            page_boxes=page_data.get("page_boxes", []),
         ))
     return pages
 
@@ -212,20 +220,24 @@ def _get_ocr_function():
 def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
     import pymupdf4llm
 
-    ocr_fn = _get_ocr_function()
-
     kwargs = {
         "page_chunks": True,
         "write_images": True,
         "image_path": str(figure_dir),
         "image_format": FIGURE_IMAGE_FORMAT,
-        "image_size_limit": FIGURE_MIN_SIZE_RATIO,
         "dpi": FIGURE_IMAGE_DPI,
         "force_text": True,
     }
 
-    if ocr_fn:
-        kwargs["ocr"] = ocr_fn
+    if not _LAYOUT_MODE:
+        kwargs["image_size_limit"] = FIGURE_MIN_SIZE_RATIO
+        ocr_fn = _get_ocr_function()
+        if ocr_fn:
+            kwargs["ocr"] = ocr_fn
+
+    logger.info(
+        f"Running {'layout' if _LAYOUT_MODE else 'legacy'} extraction on {file_path.name}"
+    )
 
     return pymupdf4llm.to_markdown(str(file_path), **kwargs)
 
@@ -259,7 +271,7 @@ def _assemble_document(
     logger.info(
         f"Extracted {page_count} pages, {len(all_figures)} figures, "
         f"{len(all_tables)} tables, {len(all_formulas)} formulas "
-        f"from {file_path.name} (layout mode)"
+        f"from {file_path.name} ({'layout' if _LAYOUT_MODE else 'legacy'} mode)"
     )
 
     return ExtractedDocument(
@@ -271,6 +283,7 @@ def _assemble_document(
         tables=all_tables,
         formulas=all_formulas,
         pdf_metadata=pdf_metadata,
+        layout_mode=_LAYOUT_MODE,
     )
 
 

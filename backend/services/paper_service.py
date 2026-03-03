@@ -66,8 +66,12 @@ async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
     with timer(f"Extract {paper.filename}"):
         extracted = extract_pdf(paper.file_path)
 
-    sections = parse_sections(extracted.markdown_text)
-    metadata = extract_metadata(extracted.markdown_text, pdf_metadata=extracted.pdf_metadata)
+    sections = parse_sections(extracted.markdown_text, pages=extracted.pages)
+    metadata = extract_metadata(
+        extracted.markdown_text,
+        pdf_metadata=extracted.pdf_metadata,
+        pages=extracted.pages,
+    )
 
     return extracted, sections, metadata
 

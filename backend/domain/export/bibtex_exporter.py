@@ -52,18 +52,15 @@ def _build_cite_key(paper: dict) -> str:
     year: int | None = paper.get("year")
     year_str = str(year) if year else "XXXX"
 
-    # Try to build key from authors first
     key = _build_key_from_authors(authors, year_str)
     if key:
         return key
 
-    # Fall back to title-based key
     title: str = paper.get("title") or ""
     key = _build_key_from_title(title, year_str)
     if key:
         return key
 
-    # Final fallback using paper ID
     return f"TraceLit_{str(paper.get('id', 'unknown'))[:8]}"
 
 

@@ -172,6 +172,63 @@ def _deduplicate_tables(tables: list[ExtractedTable]) -> list[ExtractedTable]:
     return deduplicated
 
 
+def _extract_box_text(box: dict, page_text: str) -> str | None:
+    if not isinstance(box, dict) or box.get("class") != "table":
+        return None
+    pos = box.get("pos")
+    if not pos or len(pos) < 2:
+        return None
+    raw = page_text[pos[0]:pos[1]].strip()
+    return raw if len(raw) >= 10 else None
+
+
+def _extract_box_bbox(box: dict) -> tuple | None:
+    bbox_raw = box.get("bbox")
+    if bbox_raw and len(bbox_raw) >= 4:
+        return tuple(bbox_raw[:4])
+    return None
+
+
+def _parse_table_box(
+    box: dict,
+    page_text: str,
+) -> tuple[str, int, int, tuple | None, str | None] | None:
+    raw = _extract_box_text(box, page_text)
+    if not raw:
+        return None
+    dims = _validate_table_content(raw)
+    if not dims:
+        return None
+    pos = box.get("pos")
+    caption = _find_caption_near(page_text, pos[0])
+    return raw, dims[0], dims[1], _extract_box_bbox(box), caption
+
+
+def _extract_box_tables(page, table_counter: dict) -> list[ExtractedTable]:
+    page_boxes = getattr(page, "page_boxes", None) or []
+    page_text = getattr(page, "text", "")
+    page_num = getattr(page, "page_number", 0)
+    tables: list[ExtractedTable] = []
+
+    for box in page_boxes:
+        parsed = _parse_table_box(box, page_text)
+        if not parsed:
+            continue
+        raw, rows, cols, bbox, caption = parsed
+        table_counter["count"] += 1
+        tables.append(ExtractedTable(
+            content=raw,
+            page_number=page_num,
+            caption=caption or f"Table {table_counter['count']}",
+            row_count=rows,
+            col_count=cols,
+            bbox=bbox,
+            table_number=table_counter["count"],
+        ))
+
+    return tables
+
+
 def extract_tables_from_pages(
     pages: list,
 ) -> list[ExtractedTable]:
@@ -181,6 +238,9 @@ def extract_tables_from_pages(
     for page in pages:
         page_num = getattr(page, "page_number", 0)
         page_text = getattr(page, "text", "")
+
+        box_tables = _extract_box_tables(page, table_counter)
+        tables.extend(box_tables)
 
         text_tables = extract_tables_from_text(page_text, default_page=page_num)
         for t in text_tables:

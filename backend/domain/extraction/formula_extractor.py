@@ -40,6 +40,7 @@ _COMMON_SYMBOLS = re.compile(
 
 _TABLE_GARBAGE = re.compile(r"[|].*[|]|<br>|<tr|<td|<th")
 _CHECKMARK_ONLY = re.compile(r"^[\s✓✗×☑☐●○◯■□▪▫\-–—|,.\d\s]+$")
+_NATURAL_WORDS = re.compile(r"\b[a-zA-Z]{4,}\b")
 
 _MIN_FORMULA_LENGTH = 3
 _MAX_INLINE_LENGTH = 500
@@ -99,6 +100,29 @@ def _is_meaningful_formula(content: str) -> bool:
     return False
 
 
+def _count_math_signals(content: str) -> int:
+    count = 0
+    if "=" in content and len(content) < 200:
+        count += 1
+    if _has_operators(content):
+        count += 1
+    if any(ch in content for ch in "^_{}\\≤≥≠≈"):
+        count += 1
+    return count
+
+
+def _has_math_content(content: str) -> bool:
+    if _has_common_symbols(content):
+        return True
+    if re.search(r"[a-z]_\{|[a-z]\^|\\[a-z]+\{", content):
+        return True
+    words = _NATURAL_WORDS.findall(content)
+    signals = _count_math_signals(content)
+    if len(words) > 3 and signals == 0:
+        return False
+    return signals > 0
+
+
 def _find_display_equations(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
 
@@ -144,6 +168,8 @@ def _find_numbered_equations(text: str) -> list[ExtractedFormula]:
         content = _clean_formula(match.group(2))
         if not _is_meaningful_formula(content):
             continue
+        if not _has_math_content(content):
+            continue
 
         formulas.append(ExtractedFormula(
             content=content,
@@ -187,16 +213,30 @@ def _has_unicode_math(line: str) -> bool:
     return any(ch in _UNICODE_MATH_CHARS for ch in line)
 
 
+def _passes_unicode_basic_checks(stripped: str) -> bool:
+    return (
+        len(stripped) >= 5
+        and not _is_table_like_line(stripped)
+        and _has_unicode_math(stripped)
+    )
+
+
+def _passes_unicode_content_checks(content: str) -> bool:
+    if len(content) > 200 or not _is_meaningful_formula(content):
+        return False
+    words = _NATURAL_WORDS.findall(content)
+    unicode_count = sum(1 for ch in content if ch in _UNICODE_MATH_CHARS)
+    return not (len(words) > 5 and unicode_count <= 2)
+
+
 def _find_unicode_equations(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
     for line in text.split("\n"):
         stripped = line.strip()
-        if not stripped or len(stripped) < 5:
-            continue
-        if _is_table_like_line(stripped) or not _has_unicode_math(stripped):
+        if not stripped or not _passes_unicode_basic_checks(stripped):
             continue
         content = _clean_formula(stripped)
-        if len(content) > 200 or not _is_meaningful_formula(content):
+        if not _passes_unicode_content_checks(content):
             continue
         formulas.append(ExtractedFormula(
             content=content,
@@ -244,6 +284,30 @@ def extract_formulas(markdown_text: str) -> list[ExtractedFormula]:
     return deduplicated
 
 
+def _extract_box_formulas(page) -> list[ExtractedFormula]:
+    page_boxes = getattr(page, "page_boxes", None) or []
+    page_text = getattr(page, "text", "")
+    page_num = getattr(page, "page_number", 0)
+    formulas: list[ExtractedFormula] = []
+
+    for box in page_boxes:
+        if not isinstance(box, dict) or box.get("class") != "formula":
+            continue
+        pos = box.get("pos")
+        if not pos or len(pos) < 2:
+            continue
+        raw = page_text[pos[0]:pos[1]].strip()
+        if len(raw) < _MIN_FORMULA_LENGTH:
+            continue
+        formulas.append(ExtractedFormula(
+            content=raw,
+            page_number=page_num,
+            formula_type="layout_box",
+        ))
+
+    return formulas
+
+
 def extract_formulas_from_pages(
     pages: list,
 ) -> list[ExtractedFormula]:
@@ -252,6 +316,9 @@ def extract_formulas_from_pages(
     for page in pages:
         page_num = getattr(page, "page_number", 0)
         page_text = getattr(page, "text", "")
+
+        box_formulas = _extract_box_formulas(page)
+        all_formulas.extend(box_formulas)
 
         page_formulas = extract_formulas(page_text)
         for f in page_formulas:

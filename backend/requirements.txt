@@ -1,41 +1,33 @@
-# ─── Core Framework ─────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
 pydantic
 pydantic-settings
 
-# ─── Async ──────────────────────────────────────────────────────────
 sqlalchemy[asyncio]
 aiosqlite
 
-# ─── PDF Extraction ────────────────────────────────────────────────
 pymupdf4llm[layout]
 pymupdf
 Pillow
 
-# ─── Vector Store & Embeddings ─────────────────────────────────────
 faiss-cpu
 sentence-transformers
 numpy
 
-# ─── LLM Providers ────────────────────────────────────────────────
 google-genai
 groq
 httpx
 
-# ─── Analysis ──────────────────────────────────────────────────────
 keybert
 scikit-learn
 
-# ─── Export ────────────────────────────────────────────────────────
 fpdf2
 jinja2
 openpyxl
 python-docx
 
-# ─── Utilities ─────────────────────────────────────────────────────
 python-multipart
 python-dotenv
 websockets
 psutil
-rapidocr
+rapidocr-onnxruntime
