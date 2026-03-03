@@ -159,12 +159,14 @@ class GeminiClient(BaseLLMProvider):
         # system_instruction goes into config; user_prompt is the sole content
         config = self._make_config(system_prompt, temperature, max_tokens)
         try:
-            # generate_content_stream returns an AsyncIterator — do NOT await it
-            async for chunk in self._client.aio.models.generate_content_stream(
+            # generate_content_stream is an async def that returns AsyncIterator
+            # — must be awaited first, then iterated with async for
+            stream = await self._client.aio.models.generate_content_stream(
                 model=self.model,
                 contents=user_prompt,
                 config=config,
-            ):
+            )
+            async for chunk in stream:
                 if chunk.text:
                     yield chunk.text
         except (ProviderError, RateLimitError):

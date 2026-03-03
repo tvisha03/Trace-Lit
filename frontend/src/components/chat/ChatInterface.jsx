@@ -2,10 +2,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import MessageBubble from './MessageBubble';
 import useChatStore from '../../stores/chatStore';
+import usePaperStore from '../../stores/paperStore';
 import { chatApi } from '../../api/client';
 import { uid } from '../../utils/helpers';
 
-export default function ChatInterface({ session, onCitationClick }) {
+export default function ChatInterface({ session, sessionError, onRetrySession, onCitationClick }) {
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -14,6 +15,12 @@ export default function ChatInterface({ session, onCitationClick }) {
   const cancelStreamRef = useRef(null);
 
   const { messages, loading, error, clearError } = useChatStore();
+  const papers = usePaperStore((s) => s.papers);
+
+  // Collect IDs of all ready papers to pass with each chat request
+  const readyPaperIds = papers
+    .filter((p) => p.status === 'ready')
+    .map((p) => p.id);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -44,7 +51,11 @@ export default function ChatInterface({ session, onCitationClick }) {
     let accumulated = '';
 
     const cancel = chatApi.queryStream(
-      { query, session_id: session.id, active_paper_ids: null },
+      {
+        query,
+        session_id: session.id,
+        active_paper_ids: readyPaperIds.length > 0 ? readyPaperIds : null,
+      },
       {
         onChunk: (text) => {
           accumulated += text;
@@ -77,7 +88,7 @@ export default function ChatInterface({ session, onCitationClick }) {
     );
 
     cancelStreamRef.current = cancel;
-  }, [input, isStreaming, loading, session]);
+  }, [input, isStreaming, loading, session, readyPaperIds]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -155,8 +166,22 @@ export default function ChatInterface({ session, onCitationClick }) {
 
       {/* Input bar */}
       <div className="px-4 py-3 border-t border-slate-200 flex-shrink-0">
-        {!session && (
-          <p className="text-xs text-amber-600 mb-2">Initialising session…</p>
+        {!session && !sessionError && (
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs text-amber-600">Initialising session…</p>
+          </div>
+        )}
+        {!session && sessionError && (
+          <div className="flex items-center gap-2 mb-2">
+            <p className="text-xs text-red-600">Session failed to load.</p>
+            <button
+              onClick={onRetrySession}
+              className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+            >
+              Retry
+            </button>
+          </div>
         )}
         <div className="flex gap-2 items-end">
           <textarea

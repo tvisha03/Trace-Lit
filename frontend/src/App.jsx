@@ -9,28 +9,35 @@ import usePaperStore from './stores/paperStore';
 function App() {
   const [highlightedSentenceId, setHighlightedSentenceId] = useState(null);
   const [activePaperId, setActivePaperId] = useState(null);
+  const [sessionError, setSessionError] = useState(null);
 
   const { activeSession, sessions, fetchSessions, createSession, setActiveSession } =
     useSessionStore();
   const { papers, fetchPapers } = usePaperStore();
 
-  // Bootstrap: load sessions + papers, auto-create session if needed
+  // Bootstrap helper — init session with retry
+  const initSession = useCallback(async () => {
+    setSessionError(null);
+    try {
+      const fetchedSessions = await fetchSessions();
+      const { activeSession: current } = useSessionStore.getState();
+      if (!current) {
+        if (fetchedSessions && fetchedSessions.length > 0) {
+          setActiveSession(fetchedSessions[0]);
+        } else {
+          await createSession('Session 1');
+        }
+      }
+    } catch (err) {
+      console.error('Session init failed:', err);
+      setSessionError(err.message || 'Failed to initialise session');
+    }
+  }, [fetchSessions, createSession, setActiveSession]);
+
+  // Bootstrap: load sessions + papers on mount
   useEffect(() => {
     fetchPapers().catch(console.error);
-
-    fetchSessions()
-      .then((fetchedSessions) => {
-        // Use the returned value directly — avoids timing issues reading store state
-        const { activeSession: current } = useSessionStore.getState();
-        if (!current) {
-          if (fetchedSessions && fetchedSessions.length > 0) {
-            setActiveSession(fetchedSessions[0]);
-          } else {
-            createSession('Session 1').catch(console.error);
-          }
-        }
-      })
-      .catch(console.error);
+    initSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -60,6 +67,8 @@ function App() {
         chatPanel={
           <ChatInterface
             session={activeSession}
+            sessionError={sessionError}
+            onRetrySession={initSession}
             onCitationClick={handleCitationClick}
           />
         }

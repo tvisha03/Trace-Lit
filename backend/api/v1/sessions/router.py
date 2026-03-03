@@ -50,9 +50,9 @@ async def update_session(
     request: SessionUpdateRequest,
     db: Session = Depends(get_db),
 ) -> SessionSchema:
-    """Rename a session."""
-    from services.session_service import rename_session
-    result = await rename_session(session_id, request, db)
+    """Update a session (name, paper associations, etc.)."""
+    from services.session_service import update_session
+    result = await update_session(session_id, request, db)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     return result

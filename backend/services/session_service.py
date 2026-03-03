@@ -102,7 +102,7 @@ async def get_session_with_history(
     }
 
 
-async def rename_session(
+async def update_session(
     session_id: str,
     request: SessionUpdateRequest,
     db: DBSession,
@@ -111,11 +111,14 @@ async def rename_session(
     if not session:
         return None
 
-    session.name = request.name
+    if request.name is not None:
+        session.name = request.name
+    if request.paper_ids is not None:
+        session.paper_ids = json.dumps(request.paper_ids)
     session.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(session)
-    logger.info("Session renamed: {} → {}", session_id, request.name)
+    logger.info("Session updated: {} (name={}, papers={})", session_id, session.name, request.paper_ids)
     return _session_to_schema(session)
 
 

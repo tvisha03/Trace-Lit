@@ -32,9 +32,10 @@ class SessionCreateRequest(BaseModel):
 
 
 class SessionUpdateRequest(BaseModel):
-    """Request body for renaming a session."""
+    """Request body for updating a session."""
 
-    name: str
+    name: Optional[str] = None
+    paper_ids: Optional[List[str]] = None
 
 
 class ComparisonUpdateRequest(BaseModel):

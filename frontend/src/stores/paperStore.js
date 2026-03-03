@@ -1,6 +1,7 @@
 /** TraceLit — Paper Store (Zustand) */
 import { create } from 'zustand';
-import { papersApi } from '../api/client';
+import { papersApi, sessionsApi } from '../api/client';
+import useSessionStore from './sessionStore';
 
 const usePaperStore = create((set, get) => ({
   papers: [],
@@ -23,6 +24,27 @@ const usePaperStore = create((set, get) => ({
       const result = await papersApi.upload(files);
       // Refresh list after upload
       await get().fetchPapers();
+
+      // Auto-associate all ready papers with current session
+      const { activeSession } = useSessionStore.getState();
+      if (activeSession) {
+        const allPapers = get().papers;
+        const readyIds = allPapers
+          .filter((p) => p.status === 'ready')
+          .map((p) => p.id);
+        // Merge newly uploaded (may still be processing) + existing ready
+        const newIds = result.paper_ids || [];
+        const merged = [...new Set([...readyIds, ...newIds])];
+        try {
+          await sessionsApi.update(activeSession.id, { paper_ids: merged });
+          useSessionStore.setState((state) => ({
+            activeSession: { ...state.activeSession, paper_ids: merged },
+          }));
+        } catch (err) {
+          console.warn('Failed to associate papers with session:', err);
+        }
+      }
+
       return result;
     } catch (err) {
       set({ error: err.message, loading: false });

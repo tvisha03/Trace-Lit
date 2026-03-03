@@ -49,14 +49,29 @@ def _overall_confidence(sentences: List[SentenceVerification]) -> float:
     return round(sum(s.confidence for s in sentences) / len(sentences), 3)
 
 
-def _resolve_paper_ids(request: ChatQueryRequest, session: SessionModel) -> List[str]:
+def _resolve_paper_ids(request: ChatQueryRequest, session: SessionModel, db: DBSession) -> List[str]:
+    """Resolve which paper IDs to use for context retrieval.
+
+    Priority: request.active_paper_ids > session.paper_ids > all ready papers.
+    """
     if request.active_paper_ids:
         return request.active_paper_ids
+
     if session.paper_ids:
         try:
-            return json.loads(session.paper_ids)
+            ids = json.loads(session.paper_ids)
+            if ids:
+                return ids
         except (json.JSONDecodeError, TypeError):
-            return []
+            pass
+
+    # Fallback: use ALL ready papers so the user always gets context
+    ready_papers = db.query(Paper).filter(Paper.status == "ready").all()
+    if ready_papers:
+        ids = [p.id for p in ready_papers]
+        logger.info("No paper IDs on request/session — falling back to {} ready papers", len(ids))
+        return ids
+
     return []
 
 
@@ -68,7 +83,7 @@ async def handle_chat_query(
     """Business logic for the non-streaming chat endpoint."""
     from infrastructure.llm.fallback_chain import get_llm
 
-    active_paper_ids = _resolve_paper_ids(request, session)
+    active_paper_ids = _resolve_paper_ids(request, session, db)
 
     for pid in active_paper_ids:
         paper = db.query(Paper).filter(Paper.id == pid).first()
@@ -77,6 +92,11 @@ async def handle_chat_query(
 
     context_paragraphs = retrieve_context_paragraphs(
         db=db, paper_ids=active_paper_ids, query=request.query
+    )
+
+    logger.info(
+        "Chat query: paper_ids={}, context_paragraphs={}",
+        len(active_paper_ids), len(context_paragraphs),
     )
 
     _save_message(db, request.session_id, "user", request.query)
@@ -144,10 +164,15 @@ async def stream_chat_query(
     from infrastructure.llm.fallback_chain import get_llm
     from shared.errors import AllProvidersFailedError
 
-    active_paper_ids = _resolve_paper_ids(request, session)
+    active_paper_ids = _resolve_paper_ids(request, session, db)
 
     context_paragraphs = retrieve_context_paragraphs(
         db=db, paper_ids=active_paper_ids, query=request.query
+    )
+
+    logger.info(
+        "Stream chat: paper_ids={}, context_paragraphs={}",
+        len(active_paper_ids), len(context_paragraphs),
     )
 
     _save_message(db, request.session_id, "user", request.query)
