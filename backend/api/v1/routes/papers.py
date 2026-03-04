@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import asyncio
 import hashlib
+import time
 
 from api.v1.schemas import PaperResponse, PaperListResponse, PaperUploadResponse
 from api.v1.routes.websocket import ws_manager
@@ -11,11 +12,20 @@ from app.dependencies import get_db, get_faiss_store
 from infrastructure.db.crud.paper_crud import get_paper as db_get_paper, get_paper_by_content_hash
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
-from services.paper_service import register_paper, get_session_papers, delete_paper, mark_paper_failed
-from shared.constants import MAX_UPLOAD_FILES, MAX_FILE_SIZE_MB, MAX_PAPERS_PER_SESSION
+from infrastructure.db.database import async_session_factory
+from services.paper_service import register_paper, get_session_papers, delete_paper, process_paper
+from workers.paper_worker import _progress_to_stage
+from shared.constants import (
+    MAX_UPLOAD_FILES,
+    MAX_FILE_SIZE_MB,
+    MAX_PAPERS_PER_SESSION,
+    MAX_PARALLEL_PAPERS,
+    PAPER_PROCESSING_TIMEOUT_SECONDS,
+)
 from shared.errors import FileValidationError, ForbiddenError, NotFoundError, TraceLitError
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
 from shared.utils.file_utils import check_disk_space
+from shared.utils.memory_monitor import is_memory_pressure_high
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -112,15 +122,15 @@ async def _read_and_validate_file(
     return content, content_hash
 
 
-async def _register_and_enqueue(
+async def _register_paper(
     content: bytes,
     upload_file: UploadFile,
     content_hash: str,
     session_id: str,
     db: AsyncSession,
     file_storage: FileStorage,
-    paper_queue,
 ) -> str:
+    """Save file and register paper record in DB. Does not start processing."""
     size_mb = len(content) / (1024 * 1024)
     file_path = file_storage.save_upload(content, upload_file.filename, session_id)
 
@@ -132,40 +142,147 @@ async def _register_and_enqueue(
         file_size_mb=round(size_mb, 2),
         content_hash=content_hash,
     )
-
-    try:
-        await paper_queue.enqueue(paper_id, session_id)
-    except Exception as enqueue_exc:
-        logger.error(f"Failed to enqueue paper {paper_id}: {enqueue_exc}")
-        await mark_paper_failed(
-            db, paper_id, reason=f"Processing queue unavailable: {enqueue_exc}"
-        )
-        raise TraceLitError(
-            message=f"Processing queue unavailable for '{upload_file.filename}'. "
-                    "Please try again later.",
-            status_code=503,
-        )
     return paper_id
 
 
-async def _process_uploads(
+_MEMORY_BACKOFF_SECONDS: float = 1.0
+_MAX_MEMORY_WAITS: int = 6
+
+
+async def _wait_for_memory() -> None:
+    """Pause before acquiring a processing slot when memory pressure is high."""
+    for attempt in range(1, _MAX_MEMORY_WAITS + 1):
+        if not is_memory_pressure_high():
+            return
+        logger.warning(
+            f"Memory pressure high — delaying paper processing "
+            f"(attempt {attempt}/{_MAX_MEMORY_WAITS})"
+        )
+        await asyncio.sleep(_MEMORY_BACKOFF_SECONDS)
+    logger.warning("Max memory-pressure waits exceeded — proceeding anyway")
+
+
+async def _process_single_paper(
+    paper_id: str,
+    session_id: str,
+    faiss_store,
+    llm_chain,
+    semaphore: asyncio.Semaphore,
+) -> None:
+    """Process one paper with WS progress updates inside a concurrency semaphore.
+
+    Checks memory pressure before acquiring the slot, mirrors the WS payload
+    produced by paper_job_processor in the background queue worker.
+    """
+    start_time = time.monotonic()
+
+    async def progress_callback(progress: float) -> None:
+        try:
+            stage = _progress_to_stage(progress)
+            elapsed = time.monotonic() - start_time
+            if progress < 0:
+                eta_seconds = 0.0
+            else:
+                clamped = max(0.01, min(progress, 1.0))
+                eta_seconds = 0.0 if clamped >= 1.0 else round(
+                    elapsed * (1.0 - clamped) / clamped, 1
+                )
+            await ws_manager.send_event(
+                session_id=session_id,
+                event_type="paper_progress",
+                data={
+                    "paper_id": paper_id,
+                    "progress": progress,
+                    "stage": stage,
+                    "eta_seconds": eta_seconds,
+                },
+            )
+        except Exception as ws_exc:
+            logger.warning(f"WS progress send failed for {paper_id}: {ws_exc}")
+
+    # Wait for memory to settle before claiming a semaphore slot.
+    await _wait_for_memory()
+
+    async with semaphore:
+        try:
+            async with async_session_factory() as db:
+                await asyncio.wait_for(
+                    process_paper(
+                        paper_id=paper_id,
+                        db=db,
+                        faiss_store=faiss_store,
+                        progress_callback=progress_callback,
+                        llm_chain=llm_chain,
+                    ),
+                    timeout=PAPER_PROCESSING_TIMEOUT_SECONDS,
+                )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Paper {paper_id} timed out after {PAPER_PROCESSING_TIMEOUT_SECONDS}s"
+            )
+        except Exception as exc:
+            logger.error(f"Background processing failed for {paper_id}: {exc}")
+
+
+async def _register_all_papers(
     files: list[UploadFile],
     session_id: str,
     db: AsyncSession,
     file_storage: FileStorage,
-    paper_queue,
 ) -> list[str]:
-    paper_ids = []
+    """Read, validate, and register every uploaded file; return list of paper IDs."""
+    paper_ids: list[str] = []
     for upload_file in files:
         content, content_hash = await _read_and_validate_file(
             upload_file, session_id, db,
         )
-        paper_id = await _register_and_enqueue(
+        paper_id = await _register_paper(
             content, upload_file, content_hash,
-            session_id, db, file_storage, paper_queue,
+            session_id, db, file_storage,
         )
         paper_ids.append(paper_id)
     return paper_ids
+
+
+async def _process_batch_background(
+    paper_ids: list[str],
+    session_id: str,
+    faiss_store,
+    llm_chain,
+) -> None:
+    """Background task: process all papers from an upload batch in parallel.
+
+    Up to MAX_PARALLEL_PAPERS run concurrently; each waits for memory pressure
+    to clear before starting. When every paper finishes (success or failure)
+    an ``upload_batch_complete`` WebSocket event is sent so the client knows the
+    full batch is done.
+    """
+    semaphore = asyncio.Semaphore(MAX_PARALLEL_PAPERS)
+    results = await asyncio.gather(
+        *[
+            _process_single_paper(pid, session_id, faiss_store, llm_chain, semaphore)
+            for pid in paper_ids
+        ],
+        return_exceptions=True,
+    )
+
+    # Count outcomes: None means success, anything else is an exception.
+    failed = sum(1 for r in results if r is not None)
+    completed = len(paper_ids) - failed
+
+    try:
+        await ws_manager.send_event(
+            session_id=session_id,
+            event_type="upload_batch_complete",
+            data={
+                "paper_ids": paper_ids,
+                "total": len(paper_ids),
+                "completed": completed,
+                "failed": failed,
+            },
+        )
+    except Exception as ws_exc:
+        logger.warning(f"WS upload_batch_complete send failed for session {session_id}: {ws_exc}")
 
 
 @router.post("", response_model=PaperUploadResponse, status_code=201)
@@ -182,8 +299,19 @@ async def upload_papers(
     async with session_lock:
         await _validate_session_capacity(session_id, files, db)
         file_storage = FileStorage()
-        paper_queue = request.app.state.paper_queue
-        paper_ids = await _process_uploads(files, session_id, db, file_storage, paper_queue)
+        # Register all papers first (fast: DB write + file save only)
+        paper_ids = await _register_all_papers(files, session_id, db, file_storage)
+
+    # Kick off background processing — returns immediately so 201 is sent to the client.
+    # Progress is streamed via WebSocket; upload_batch_complete is emitted when done.
+    asyncio.create_task(
+        _process_batch_background(
+            paper_ids,
+            session_id,
+            request.app.state.faiss_store,
+            request.app.state.llm,
+        )
+    )
 
     return PaperUploadResponse(
         paper_ids=paper_ids,

@@ -90,8 +90,13 @@ class VerificationItem(BaseModel):
     score: float
     source_sentence: Optional[str] = None
     paragraph_id: Optional[str] = None
+    paper_id: Optional[str] = None
     sentence_key: Optional[str] = None
     verification_method: Optional[str] = None
+    # Content type: "text", "figure", "table", or "formula"
+    chunk_type: Optional[str] = None
+    # Brief citation reference (e.g. "F3", "T1", "E2", "P5") matching the paragraph suffix
+    citation_ref: Optional[str] = None
 
 class ChatResponse(BaseModel):
     content: str

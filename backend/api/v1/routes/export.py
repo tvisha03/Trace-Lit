@@ -19,6 +19,21 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 router = APIRouter()
 
+def _get_media_type(filename: str) -> str:
+    if filename.endswith(".pdf"):
+        return "application/pdf"
+    if filename.endswith(".bib"):
+        return "text/x-bibtex"
+    if filename.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if filename.endswith(".tex"):
+        return "application/x-tex"
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+def _validate_filename(filename: str) -> None:
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise NotFoundError("Export file", filename)
+
 def _get_llm(request: Request) -> FallbackChain:
     return request.app.state.llm
 
@@ -99,8 +114,7 @@ async def download_export(
     filename: str,
     background_tasks: BackgroundTasks,
 ):
-    if ".." in filename or "/" in filename or "\\" in filename:
-        raise NotFoundError("Export file", filename)
+    _validate_filename(filename)
 
     file_storage = FileStorage()
     file_path = file_storage.get_export_path(filename, session_id)
@@ -113,17 +127,7 @@ async def download_export(
     if not file_path.exists():
         raise NotFoundError("Export file", filename)
 
-    media_type = (
-        "application/pdf"
-        if filename.endswith(".pdf")
-        else "text/x-bibtex"
-        if filename.endswith(".bib")
-        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        if filename.endswith(".docx")
-        else "application/x-tex"
-        if filename.endswith(".tex")
-        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    media_type = _get_media_type(filename)
 
     def _delete_file() -> None:
         try:

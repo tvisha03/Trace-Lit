@@ -78,6 +78,9 @@ async def _emit_havf_results(full_text: str, chunks: list):
             "paper_id": r.paper_id,
             "sentence_key": r.sentence_key,
             "verification_method": r.verification_method.value if r.verification_method else None,
+            # Content type and brief citation reference for non-text chunks (figures, tables, formulas)
+            "chunk_type": r.chunk_type,
+            "citation_ref": r.citation_ref,
         }
         for r in havf_results
     ]

@@ -26,6 +26,29 @@ class VerificationResult:
     paper_id: str | None
     sentence_key: str | None
     verification_method: "VerificationMethod | None" = None
+    # Explicit content type derived from paragraph_id ("text", "figure", "table", "formula")
+    chunk_type: str | None = None
+    # Human-readable citation reference matching the paragraph_id suffix (e.g. "F3", "T1", "E2", "P5")
+    citation_ref: str | None = None
+
+
+def _chunk_type_from_paragraph_id(paragraph_id: str | None) -> str:
+    """Derive content type string from a paragraph_id.
+
+    paragraph_id format: ``{paper_id[:8]}_{TYPE}{idx}`` or bare ``{TYPE}{idx}``.
+    TYPE is one of P (text), F (figure), T (table), E (formula/equation).
+    """
+    if not paragraph_id:
+        return "text"
+    # Take the last underscore-delimited segment; handles both prefixed and bare IDs.
+    suffix = paragraph_id.split("_")[-1]
+    if suffix.startswith("F"):
+        return "figure"
+    if suffix.startswith("T"):
+        return "table"
+    if suffix.startswith("E"):
+        return "formula"
+    return "text"
 
 def build_source_sentences(chunks: list) -> list[dict]:
     sources = []
@@ -130,15 +153,19 @@ def _build_final_results(
     for claim in claims:
         r = result_map.get(claim, {})
         method = _determine_verification_method(claim, r, uncertain_claims)
+        p_id = r.get("paragraph_id")
         final.append(VerificationResult(
             claim=claim,
             confidence=r.get("confidence", ConfidenceLevel.LOW),
             score=r.get("best_score", 0.0),
             source_sentence=r.get("source_sentence"),
-            paragraph_id=r.get("paragraph_id"),
+            paragraph_id=p_id,
             paper_id=r.get("paper_id"),
             sentence_key=r.get("sentence_key"),
             verification_method=method,
+            chunk_type=_chunk_type_from_paragraph_id(p_id),
+            # citation_ref is the type+index suffix, e.g. "F3", "T1", "E2", "P5"
+            citation_ref=p_id.split("_")[-1] if p_id else None,
         ))
     return final
 

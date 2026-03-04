@@ -29,6 +29,16 @@ class RetrievedChunk:
     section_title: str | None
     score: float
     sentence_map: dict
+    # Content type: "text", "figure", "table", or "formula"
+    chunk_type: str | None = None
+
+
+def _resolve_chunk_type(chunk) -> str | None:
+    """Normalise chunk_type from enum or string to a plain string."""
+    ct = getattr(chunk, "chunk_type", None)
+    if ct is None:
+        return None
+    return ct.value if hasattr(ct, "value") else str(ct)
 
 def _should_use_balanced_budget(classification: QueryClassification) -> bool:
     """Determine whether to use balanced token budget strategy."""
@@ -77,6 +87,7 @@ async def _build_chunks(
                     section_title=chunk.section_title,
                     score=score,
                     sentence_map=chunk.sentence_map or {},
+                    chunk_type=_resolve_chunk_type(chunk),
                 ))
     retrieved.sort(key=lambda r: r.score, reverse=True)
     return retrieved
@@ -115,6 +126,7 @@ def _chunk_to_retrieved(chunk) -> RetrievedChunk:
         section_title=chunk.section_title,
         score=_NON_TEXT_MIN_SCORE,
         sentence_map=chunk.sentence_map or {},
+        chunk_type=_resolve_chunk_type(chunk),
     )
 
 
