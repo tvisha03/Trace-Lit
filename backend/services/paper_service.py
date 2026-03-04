@@ -127,7 +127,7 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
 
 async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
     """Clean up all resources after processing failure.
-    
+
     MED-004: This ensures transaction-like cleanup when chunking fails partway through.
     Removes both the uploaded file AND any partial chunks that may have been created.
     """
@@ -138,7 +138,7 @@ async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
         logger.info(f"Cleaned up partial chunks for failed paper {paper_id}")
     except Exception as exc:
         logger.warning(f"Could not clean up chunks for {paper_id}: {exc}")
-    
+
     # Clean up the uploaded file
     try:
         paper = await get_paper(db, paper_id)
@@ -421,19 +421,33 @@ async def mark_paper_failed(db: AsyncSession, paper_id: str, reason: str) -> Non
     )
 
 
+async def _collect_paper_image_paths(paper_id: str, db: AsyncSession) -> list[str]:
+    """Return all on-disk image paths recorded for a paper's chunks."""
+    from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
+    chunks = await get_chunks_by_paper(db, paper_id)
+    return [c.image_path for c in chunks if c.image_path]
+
+
 async def delete_paper(
     paper_id: str,
     db: AsyncSession,
     faiss_store: FAISSStore,
 ) -> bool:
+    from pathlib import Path
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     from infrastructure.db.crud.paper_crud import delete_paper as db_delete_paper
 
-    await delete_chunks_by_paper(db, paper_id)
-    deleted = await db_delete_paper(db, paper_id)
-    if not deleted:
+    # Gather on-disk paths before removing DB rows so we know what to clean up.
+    paper = await get_paper(db, paper_id)
+    if not paper:
         return False
+    pdf_path = Path(paper.file_path) if paper.file_path else None
+    image_paths = await _collect_paper_image_paths(paper_id, db)
 
+    await delete_chunks_by_paper(db, paper_id)
+    await db_delete_paper(db, paper_id)
+
+    # Remove FAISS vectors — log but don't raise; index reconciles on restart.
     try:
         faiss_store.remove_paper(paper_id)
         faiss_store.save()
@@ -442,6 +456,25 @@ async def delete_paper(
             f"FAISS removal for paper {paper_id} failed after DB delete — "
             f"index will be reconciled on restart: {exc}"
         )
+
+    # Delete uploaded PDF file.
+    if pdf_path:
+        try:
+            pdf_path.unlink(missing_ok=True)
+            logger.info(f"Deleted uploaded PDF for paper {paper_id}: {pdf_path}")
+        except Exception as exc:
+            logger.warning(f"Could not delete PDF for paper {paper_id}: {exc}")
+
+    # Delete figure/chart images extracted from this paper.
+    deleted_images = 0
+    for img_str in image_paths:
+        try:
+            Path(img_str).unlink(missing_ok=True)
+            deleted_images += 1
+        except Exception as exc:
+            logger.warning(f"Could not delete image {img_str}: {exc}")
+    if deleted_images:
+        logger.info(f"Deleted {deleted_images} figure image(s) for paper {paper_id}")
 
     return True
 
