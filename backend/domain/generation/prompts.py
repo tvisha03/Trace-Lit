@@ -85,28 +85,47 @@ Cite every claim with [P#]. Write in formal academic prose.
 """
 
 
+_CHUNK_TYPE_TAG: dict[str, str] = {
+    "figure": "FIGURE",
+    "table": "TABLE",
+    "formula": "EQUATION",
+}
+
+
+def _get_chunk_type_tag(chunk) -> str | None:
+    """Return the FIGURE/TABLE/EQUATION tag for non-text chunks, else None."""
+    chunk_type = getattr(chunk, "chunk_type", "text")
+    # chunk_type may be a ChunkType enum or a raw string — getattr handles both
+    # without a conditional branch.
+    ct_value = getattr(chunk_type, "value", str(chunk_type))
+    return _CHUNK_TYPE_TAG.get(ct_value)
+
+
+def _get_context_text(chunk, type_tag: str | None) -> str:
+    """Return enriched_text for non-text chunks (carries semantic labels), text otherwise."""
+    if type_tag:
+        return getattr(chunk, "enriched_text", None) or getattr(chunk, "text", str(chunk))
+    return getattr(chunk, "text", str(chunk))
+
+
+def _build_chunk_header(pid: str, type_tag: str | None, section: str) -> str:
+    """Assemble the [PID] [TYPE] (Section: …) header line."""
+    header = f"[{pid}]"
+    if type_tag:
+        header += f" [{type_tag}]"
+    if section:
+        header += f" (Section: {section})"
+    return header
+
+
 def build_context_block(chunks: list) -> str:
     lines = []
     for chunk in chunks:
-        pid = chunk.paragraph_id if hasattr(chunk, "paragraph_id") else "?"
-        section = chunk.section_title if hasattr(chunk, "section_title") else ""
-        text = chunk.text if hasattr(chunk, "text") else str(chunk)
-
-        chunk_type = getattr(chunk, "chunk_type", "text")
-        ct_value = chunk_type.value if hasattr(chunk_type, "value") else str(chunk_type)
-
-        type_tag_map = {
-            "figure": "FIGURE",
-            "table": "TABLE",
-            "formula": "EQUATION",
-        }
-        type_tag = type_tag_map.get(ct_value)
-
-        header = f"[{pid}]"
-        if type_tag:
-            header += f" [{type_tag}]"
-        if section:
-            header += f" (Section: {section})"
+        pid = getattr(chunk, "paragraph_id", "?")
+        section = getattr(chunk, "section_title", "")
+        type_tag = _get_chunk_type_tag(chunk)
+        text = _get_context_text(chunk, type_tag)
+        header = _build_chunk_header(pid, type_tag, section)
         lines.append(f"{header}\n{text}")
 
     return "\n\n".join(lines)

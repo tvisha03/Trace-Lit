@@ -323,7 +323,16 @@ async def export_comparison(
 
     handler = handlers[export_format]
     if export_format == ExportFormat.EXCEL:
-        return await handler(session_id, paper_titles, filename, file_storage, paper_ids, db)
+        # Bug-6 fix: use keyword args so parameter reordering can never cause
+        # a silent mismatch between the caller and _export_comparison_as_excel.
+        return await handler(
+            session_id,
+            paper_titles,
+            filename,
+            file_storage,
+            paper_ids=paper_ids,
+            db=db,
+        )
     else:
         return await handler(session_id, comparison_content, paper_titles, filename, file_storage)
 

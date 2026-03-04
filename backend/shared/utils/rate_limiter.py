@@ -59,14 +59,16 @@ class SlidingWindowRateLimiter:
         self._calls[client_ip].append(now)
 
     def _cleanup_stale_clients(self, cutoff: float) -> None:
-        total_entries = sum(len(v) for v in self._calls.values())
-        if total_entries > 100:
-            stale_ips = [
-                ip for ip, ts in self._calls.items()
-                if not ts or ts[-1] <= cutoff
-            ]
-            for ip in stale_ips:
-                del self._calls[ip]
+        # Bug-5 fix: always prune stale clients unconditionally rather than
+        # waiting until total_entries > 100.  Without this, entries for
+        # thousands of short-lived clients accumulate over the server's
+        # lifetime because the threshold was rarely triggered.
+        stale_ips = [
+            ip for ip, ts in self._calls.items()
+            if not ts or ts[-1] <= cutoff
+        ]
+        for ip in stale_ips:
+            del self._calls[ip]
 
     def reset(self) -> None:
         self._calls.clear()

@@ -8,6 +8,24 @@ from shared.enums import ChunkType
 
 logger = get_logger(__name__)
 
+# Compiled pattern for inline image markdown: ![alt](url)
+# Strips embedded image references such as ``![](data/uploads/…)`` that
+# formula and figure extractor results can embed inside their text fields.
+# These paths are meaningless for the HAVF verifier and the LLM.
+_IMG_MD_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+
+
+def _strip_image_markdown(text: str) -> str:
+    """Remove ``![alt](url)`` tokens from *text*.
+
+    Formula and figure chunks sometimes embed image paths like
+    ``![](data/uploads/…)`` inside their extracted text content.  Stripping
+    these keeps source sentences readable and prevents the HAVF verifier from
+    treating them as meaningful claims.
+    """
+    return _IMG_MD_RE.sub("", text).strip()
+
+
 @dataclass
 class Chunk:
     paragraph_id: str
@@ -232,20 +250,37 @@ def create_table_chunks(
         prefix_parts = []
         if paper_title:
             prefix_parts.append(f"[Paper: {paper_title}]")
-        prefix_parts.append(f"[Table on page {table.page_number}, {rows}x{cols}]")
+        prefix_parts.append(f"[TABLE, page {table.page_number}, {rows} rows \u00d7 {cols} cols]")
         if caption:
             prefix_parts.append(f"[Caption: {caption}]")
         prefix = " ".join(prefix_parts)
-        enriched_text = f"{prefix}\n{text}"
+
+        # Semantic description in plain English so the LLM understands what this
+        # table represents and how it relates to the paper, enabling accurate
+        # [T#] citations and fact-checking during HAVF verification.
+        semantic_parts = []
+        if paper_title:
+            semantic_parts.append(f"This table is from the paper '{paper_title}'.")
+        if caption:
+            semantic_parts.append(f"It presents: {caption}.")
+        if rows or cols:
+            semantic_parts.append(f"The table contains {rows} data rows across {cols} columns.")
+        semantic_desc = " ".join(semantic_parts)
+
+        enriched_text = f"{prefix}\n{semantic_desc}\n{text}" if semantic_desc else f"{prefix}\n{text}"
 
         display_text = f"{caption}\n{text}" if caption else text
 
+        # Use only the caption as the HAVF verification sentence.
+        # The full markdown table body is unsuitable for embedding-based
+        # similarity checks; the caption is concise and verifiable.
+        havf_text = caption if caption else f"Table on page {table.page_number}"
         sentence_map = {
             f"{paragraph_id}_S0": {
-                "text": display_text,
+                "text": havf_text,
                 "start": 0,
-                "end": len(display_text),
-                "tokens": estimate_tokens(display_text),
+                "end": len(havf_text),
+                "tokens": estimate_tokens(havf_text),
             }
         }
 
@@ -294,24 +329,27 @@ def create_formula_chunks(
         prefix = " ".join(prefix_parts)
 
         display_text = f"{context}\n{text}" if context else text
-        enriched_text = f"{prefix}\n{display_text}"
+        # Strip inline image markdown (e.g. ![](data/uploads/…)) so the LLM
+        # context and the HAVF source sentence remain human-readable text.
+        clean_text = _strip_image_markdown(display_text)
+        enriched_text = f"{prefix}\n{clean_text}"
 
         sentence_map = {
             f"{paragraph_id}_S0": {
-                "text": display_text,
+                "text": clean_text,
                 "start": 0,
-                "end": len(display_text),
-                "tokens": estimate_tokens(display_text),
+                "end": len(clean_text),
+                "tokens": estimate_tokens(clean_text),
             }
         }
 
         chunks.append(Chunk(
             paragraph_id=paragraph_id,
-            text=display_text,
+            text=clean_text,
             enriched_text=enriched_text,
             section_title=f"Equation (page {formula.page_number})",
             page_number=formula.page_number,
-            token_count=estimate_tokens(display_text),
+            token_count=estimate_tokens(clean_text),
             sentence_map=sentence_map,
             chunk_type=ChunkType.FORMULA,
         ))

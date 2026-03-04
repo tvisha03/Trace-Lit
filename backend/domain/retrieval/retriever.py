@@ -138,8 +138,15 @@ async def _collect_non_text_chunks(
     db_session,
     existing_pids: set[tuple[str, str]],
 ) -> list[RetrievedChunk]:
+    """Add non-text (figure/table/formula) chunks not already in retrieved set.
+
+    Uses a *per-paper* cap of ``_NON_TEXT_RESERVED_SLOTS`` so that multi-paper
+    queries always receive non-text context from every paper, not just the first
+    paper that happens to come up when the global cap is hit.
+    """
     non_text_added: list[RetrievedChunk] = []
     for paper_id in paper_ids:
+        paper_count = 0
         all_chunks = await get_chunks_by_paper(db_session, paper_id)
         for chunk in all_chunks:
             if not _is_non_text_chunk(chunk):
@@ -147,8 +154,9 @@ async def _collect_non_text_chunks(
             if (str(chunk.paper_id), chunk.paragraph_id) in existing_pids:
                 continue
             non_text_added.append(_chunk_to_retrieved(chunk))
-            if len(non_text_added) >= _NON_TEXT_RESERVED_SLOTS:
-                return non_text_added
+            paper_count += 1
+            if paper_count >= _NON_TEXT_RESERVED_SLOTS:
+                break  # Move to the next paper once this paper's slot is full.
     return non_text_added
 
 

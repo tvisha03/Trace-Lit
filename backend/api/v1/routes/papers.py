@@ -13,19 +13,16 @@ from infrastructure.db.crud.paper_crud import get_paper as db_get_paper, get_pap
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
 from infrastructure.db.database import async_session_factory
-from services.paper_service import register_paper, get_session_papers, delete_paper, process_paper
-from workers.paper_worker import _progress_to_stage
+from services.paper_service import register_paper, get_session_papers, delete_paper
 from shared.constants import (
     MAX_UPLOAD_FILES,
     MAX_FILE_SIZE_MB,
     MAX_PAPERS_PER_SESSION,
-    MAX_PARALLEL_PAPERS,
     PAPER_PROCESSING_TIMEOUT_SECONDS,
 )
 from shared.errors import FileValidationError, ForbiddenError, NotFoundError, TraceLitError
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
 from shared.utils.file_utils import check_disk_space
-from shared.utils.memory_monitor import is_memory_pressure_high
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,10 +35,35 @@ _upload_limiter = SlidingWindowRateLimiter(
 
 _session_upload_locks: dict[str, asyncio.Lock] = {}
 
+# Terminal paper states — a batch is done when every paper reaches one of these.
+_TERMINAL_STATUSES: frozenset[str] = frozenset({"COMPLETED", "FAILED"})
+# Poll interval for the batch-completion watcher.
+_BATCH_WATCH_INTERVAL_SECONDS: float = 5.0
+
+
 def _get_session_lock(session_id: str) -> asyncio.Lock:
+    """Return (or create) the per-session upload lock.
+
+    Idle locks are pruned on creation to prevent the dict from growing
+    indefinitely across thousands of sessions (Bug-3 fix).
+    """
     if session_id not in _session_upload_locks:
+        # Evict any unlocked entries before adding a new one.
+        _evict_idle_session_locks()
         _session_upload_locks[session_id] = asyncio.Lock()
     return _session_upload_locks[session_id]
+
+
+def _evict_idle_session_locks() -> None:
+    """Remove entries whose locks are no longer held.
+
+    Because asyncio is single-threaded, checking ``lock.locked()`` here is
+    race-free: no other coroutine can acquire or release a lock between the
+    check and the deletion.
+    """
+    idle = [sid for sid, lock in _session_upload_locks.items() if not lock.locked()]
+    for sid in idle:
+        del _session_upload_locks[sid]
 
 
 async def _validate_upload_preconditions(
@@ -145,83 +167,85 @@ async def _register_paper(
     return paper_id
 
 
-_MEMORY_BACKOFF_SECONDS: float = 1.0
-_MAX_MEMORY_WAITS: int = 6
+async def _paper_status_str(paper_id: str) -> str:
+    """Return the status string for a paper, or empty string if not found."""
+    async with async_session_factory() as check_db:
+        paper = await db_get_paper(check_db, paper_id)
+    if not paper:
+        return ""
+    status = paper.status
+    return status.value if hasattr(status, "value") else str(status)
 
 
-async def _wait_for_memory() -> None:
-    """Pause before acquiring a processing slot when memory pressure is high."""
-    for attempt in range(1, _MAX_MEMORY_WAITS + 1):
-        if not is_memory_pressure_high():
-            return
-        logger.warning(
-            f"Memory pressure high — delaying paper processing "
-            f"(attempt {attempt}/{_MAX_MEMORY_WAITS})"
-        )
-        await asyncio.sleep(_MEMORY_BACKOFF_SECONDS)
-    logger.warning("Max memory-pressure waits exceeded — proceeding anyway")
+async def _all_papers_terminal(paper_ids: list[str]) -> tuple[bool, int, int]:
+    """Check whether every paper in *paper_ids* has reached a terminal state.
 
-
-async def _process_single_paper(
-    paper_id: str,
-    session_id: str,
-    faiss_store,
-    llm_chain,
-    semaphore: asyncio.Semaphore,
-) -> None:
-    """Process one paper with WS progress updates inside a concurrency semaphore.
-
-    Checks memory pressure before acquiring the slot, mirrors the WS payload
-    produced by paper_job_processor in the background queue worker.
+    Returns ``(all_done, completed_count, failed_count)``.  Uses a fresh
+    DB session per call so long-lived polling doesn't hold a connection open.
     """
-    start_time = time.monotonic()
+    statuses = [await _paper_status_str(pid) for pid in paper_ids]
+    if not all(s in _TERMINAL_STATUSES for s in statuses if s):
+        return False, 0, 0
+    completed = sum(1 for s in statuses if s == "COMPLETED")
+    return True, completed, len(paper_ids) - completed
 
-    async def progress_callback(progress: float) -> None:
-        try:
-            stage = _progress_to_stage(progress)
-            elapsed = time.monotonic() - start_time
-            if progress < 0:
-                eta_seconds = 0.0
-            else:
-                clamped = max(0.01, min(progress, 1.0))
-                eta_seconds = 0.0 if clamped >= 1.0 else round(
-                    elapsed * (1.0 - clamped) / clamped, 1
-                )
-            await ws_manager.send_event(
-                session_id=session_id,
-                event_type="paper_progress",
-                data={
-                    "paper_id": paper_id,
-                    "progress": progress,
-                    "stage": stage,
-                    "eta_seconds": eta_seconds,
-                },
-            )
-        except Exception as ws_exc:
-            logger.warning(f"WS progress send failed for {paper_id}: {ws_exc}")
 
-    # Wait for memory to settle before claiming a semaphore slot.
-    await _wait_for_memory()
+async def _check_batch_terminal(paper_ids: list[str]) -> tuple[bool, int, int]:
+    """Safely check batch terminal status; return (done, completed, failed).
 
-    async with semaphore:
-        try:
-            async with async_session_factory() as db:
-                await asyncio.wait_for(
-                    process_paper(
-                        paper_id=paper_id,
-                        db=db,
-                        faiss_store=faiss_store,
-                        progress_callback=progress_callback,
-                        llm_chain=llm_chain,
-                    ),
-                    timeout=PAPER_PROCESSING_TIMEOUT_SECONDS,
-                )
-        except asyncio.TimeoutError:
-            logger.error(
-                f"Paper {paper_id} timed out after {PAPER_PROCESSING_TIMEOUT_SECONDS}s"
-            )
-        except Exception as exc:
-            logger.error(f"Background processing failed for {paper_id}: {exc}")
+    Catches exceptions and logs them; returns (False, 0, 0) on error so
+    polling continues rather than crashing.
+    """
+    try:
+        return await _all_papers_terminal(paper_ids)
+    except Exception as exc:
+        logger.warning(f"Error checking batch terminal status: {exc}")
+        return False, 0, 0
+
+
+async def _watch_batch_completion(
+    paper_ids: list[str],
+    session_id: str,
+) -> None:
+    """Poll paper DB status; emit ``upload_batch_complete`` once all reach a terminal state.
+
+    This replaces the previous asyncio.gather-based approach that ran processing
+    directly in the route.  Processing now happens inside SmartPaperQueue; this
+    task only watches for completion and emits the summary WS event.
+    """
+    deadline = time.monotonic() + PAPER_PROCESSING_TIMEOUT_SECONDS + 60.0
+    while time.monotonic() < deadline:
+        await asyncio.sleep(_BATCH_WATCH_INTERVAL_SECONDS)
+        done, completed, failed = await _check_batch_terminal(paper_ids)
+        if done:
+            await _send_batch_complete_event(session_id, paper_ids, completed, failed)
+            return
+    logger.warning(
+        f"Batch completion watch timed out for session {session_id} "
+        f"after {PAPER_PROCESSING_TIMEOUT_SECONDS + 60:.0f}s"
+    )
+
+
+async def _send_batch_complete_event(
+    session_id: str,
+    paper_ids: list[str],
+    completed: int,
+    failed: int,
+) -> None:
+    """Emit upload_batch_complete WebSocket event."""
+    try:
+        await ws_manager.send_event(
+            session_id=session_id,
+            event_type="upload_batch_complete",
+            data={
+                "paper_ids": paper_ids,
+                "total": len(paper_ids),
+                "completed": completed,
+                "failed": failed,
+            },
+        )
+    except Exception as ws_exc:
+        logger.warning(f"WS upload_batch_complete failed for session {session_id}: {ws_exc}")
 
 
 async def _register_all_papers(
@@ -244,47 +268,6 @@ async def _register_all_papers(
     return paper_ids
 
 
-async def _process_batch_background(
-    paper_ids: list[str],
-    session_id: str,
-    faiss_store,
-    llm_chain,
-) -> None:
-    """Background task: process all papers from an upload batch in parallel.
-
-    Up to MAX_PARALLEL_PAPERS run concurrently; each waits for memory pressure
-    to clear before starting. When every paper finishes (success or failure)
-    an ``upload_batch_complete`` WebSocket event is sent so the client knows the
-    full batch is done.
-    """
-    semaphore = asyncio.Semaphore(MAX_PARALLEL_PAPERS)
-    results = await asyncio.gather(
-        *[
-            _process_single_paper(pid, session_id, faiss_store, llm_chain, semaphore)
-            for pid in paper_ids
-        ],
-        return_exceptions=True,
-    )
-
-    # Count outcomes: None means success, anything else is an exception.
-    failed = sum(1 for r in results if r is not None)
-    completed = len(paper_ids) - failed
-
-    try:
-        await ws_manager.send_event(
-            session_id=session_id,
-            event_type="upload_batch_complete",
-            data={
-                "paper_ids": paper_ids,
-                "total": len(paper_ids),
-                "completed": completed,
-                "failed": failed,
-            },
-        )
-    except Exception as ws_exc:
-        logger.warning(f"WS upload_batch_complete send failed for session {session_id}: {ws_exc}")
-
-
 @router.post("", response_model=PaperUploadResponse, status_code=201)
 async def upload_papers(
     session_id: str,
@@ -302,16 +285,20 @@ async def upload_papers(
         # Register all papers first (fast: DB write + file save only)
         paper_ids = await _register_all_papers(files, session_id, db, file_storage)
 
-    # Kick off background processing — returns immediately so 201 is sent to the client.
-    # Progress is streamed via WebSocket; upload_batch_complete is emitted when done.
-    asyncio.create_task(
-        _process_batch_background(
-            paper_ids,
-            session_id,
-            request.app.state.faiss_store,
-            request.app.state.llm,
-        )
-    )
+    # Release the lock entry from the dict now that the critical section is done.
+    # If no other upload for this session is waiting the entry is stale.
+    if not session_lock.locked():
+        _session_upload_locks.pop(session_id, None)
+
+    # Bug-2 fix: enqueue to SmartPaperQueue instead of running a local semaphore.
+    # The queue handles concurrency, memory pressure checks, timeout, and graceful
+    # shutdown — previously this route duplicated all of that logic.
+    paper_queue = request.app.state.paper_queue
+    for pid in paper_ids:
+        await paper_queue.enqueue(pid, session_id)
+
+    # Watch in the background: emit upload_batch_complete when all papers finish.
+    asyncio.create_task(_watch_batch_completion(paper_ids, session_id))
 
     return PaperUploadResponse(
         paper_ids=paper_ids,
