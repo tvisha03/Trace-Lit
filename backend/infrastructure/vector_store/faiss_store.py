@@ -102,6 +102,11 @@ class FAISSStore:
         if self._index.ntotal == 0:
             return []
 
+        # FIXED MED-003: Explicit check for empty paper_ids to avoid returning all results
+        if not paper_ids:
+            logger.warning("search called with empty paper_ids list - returning empty results")
+            return []
+
         total_k = min(self._index.ntotal, top_k_per_paper * len(paper_ids) * 2)
         query = query_vector.reshape(1, -1).astype(np.float32)
 

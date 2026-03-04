@@ -47,6 +47,7 @@ async def paper_keywords(
     if not paper:
         raise NotFoundError("Paper", paper_id)
 
+    # FIXED MED-007: Add paper ownership validation to prevent cross-session data leakage
     if str(paper.session_id) != session_id:
         raise ForbiddenError("Paper", paper_id)
 

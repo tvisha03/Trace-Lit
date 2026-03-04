@@ -11,6 +11,14 @@ _INJECT_PATTERNS: list[re.Pattern] = [
     re.compile(r"new\s+system\s+prompt", re.IGNORECASE),
     re.compile(r"disregard\s+(all|previous|prior)\s+(instructions?|prompts?)", re.IGNORECASE),
     re.compile(r"\[INST\]|\[\/INST\]|<\|system\|>|<\|user\|>", re.IGNORECASE),
+    # FIXED MED-002: Added more prompt injection patterns
+    re.compile(r"override\s+your\s+(instructions?|programming|guidelines)", re.IGNORECASE),
+    re.compile(r"do\s+not\s+(follow|obey|listen\s+to)", re.IGNORECASE),
+    re.compile(r"jailbreak", re.IGNORECASE),
+    re.compile(r"prompt\s+injection", re.IGNORECASE),
+    re.compile(r"roleplay\s+as", re.IGNORECASE),
+    re.compile(r"pretend\s+to\s+be", re.IGNORECASE),
+    re.compile(r"access\s+developer\s+mode", re.IGNORECASE),
 ]
 
 
@@ -256,4 +264,3 @@ class SSEDoneEvent(BaseModel):
 
 class SSEErrorEvent(BaseModel):
     detail: str
-

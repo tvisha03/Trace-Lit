@@ -18,18 +18,26 @@ logger = get_logger(__name__)
 
 async def validate_response_has_citations(
     response: str, context: list[dict], retrieved_paragraph_ids: list[str] | None = None,
-) -> str:
+) -> tuple[str, bool]:
+    """Validate that response has proper citations.
+    
+    Returns:
+        tuple of (validated_response, citations_were_stripped)
+    """
     citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]"
     citations_found = re.findall(citation_pattern, response)
+    citations_stripped = False
 
     if not citations_found:
         if not context:
-            return "I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers."
+            return ("I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers.",
+                    True)
         return (
             "I apologize, but I was unable to properly attribute my response to specific "
             "sections of the uploaded papers. The information provided may not be "
             "accurately sourced. Please try rephrasing your question or verify the "
-            "information independently."
+            "information independently.",
+            True
         )
 
     if retrieved_paragraph_ids:
@@ -42,6 +50,7 @@ async def validate_response_has_citations(
 
         invalid_ids = cited_ids - valid_ids
         if invalid_ids:
+            citations_stripped = True
             logger.warning(
                 f"Stripping citations referencing non-existent paragraphs: {invalid_ids}. "
                 f"Valid IDs: {valid_ids}"
@@ -50,7 +59,7 @@ async def validate_response_has_citations(
                 response = response.replace(f"[{bad_id}]", "")
             response = re.sub(r"  +", " ", response).strip()
 
-    return response
+    return response, citations_stripped
 
 
 async def _format_havf_data(response: ChatResponse) -> list[dict]:
@@ -130,12 +139,15 @@ async def chat(
             for r in (response.retrieved_chunks or [])
             if r.paragraph_id
         ]
-        validated_content = await validate_response_has_citations(
+        validated_content, citations_stripped = await validate_response_has_citations(
             response.content,
             [{"paper_id": pid} for pid in paper_ids],
             retrieved_paragraph_ids=retrieved_para_ids or None,
         )
         response.content = validated_content
+        # Log if citations were stripped for visibility
+        if citations_stripped:
+            logger.info("Citation validation: some citations were removed due to invalid references")
     await create_message(
         db,
         session_id=session_id,

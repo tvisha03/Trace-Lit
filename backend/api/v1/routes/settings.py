@@ -9,6 +9,31 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
+# FIXED CRT-003: Runtime configuration stored separately from Settings singleton
+# This prevents mutation of the cached singleton and provides thread-safe runtime config
+class RuntimeConfig:
+    """Thread-safe runtime configuration that persists across requests."""
+    
+    def __init__(self):
+        self._use_local_llm: bool = False
+    
+    @property
+    def use_local_llm(self) -> bool:
+        return self._use_local_llm
+    
+    @use_local_llm.setter
+    def use_local_llm(self, value: bool) -> None:
+        self._use_local_llm = value
+    
+    def get_provider_order(self) -> list[str]:
+        if self._use_local_llm:
+            return ["ollama", "gemini", "groq"]
+        return ["gemini", "groq", "ollama"]
+
+# Global runtime config instance - survives across requests
+_runtime_config = RuntimeConfig()
+
+
 class OllamaToggleRequest(BaseModel):
     use_local_llm: bool
 
@@ -24,20 +49,16 @@ async def get_ollama_status(request: Request):
     provider_order = (
         [p.provider.value for p in llm.providers] if llm else []
     )
-    from app.config import get_settings
-    settings = get_settings()
     return OllamaToggleResponse(
-        use_local_llm=settings.USE_LOCAL_LLM,
+        use_local_llm=_runtime_config.use_local_llm,
         provider_order=provider_order,
     )
 
 
 @router.put("/ollama", response_model=OllamaToggleResponse)
 async def toggle_ollama(request: Request, body: OllamaToggleRequest):
-    from app.config import get_settings
-    settings = get_settings()
-
-    settings.USE_LOCAL_LLM = body.use_local_llm
+    # FIXED CRT-003: Use runtime config instead of mutating singleton
+    _runtime_config.use_local_llm = body.use_local_llm
 
     llm = getattr(request.app.state, "llm", None)
     if llm is not None:
@@ -55,4 +76,3 @@ async def toggle_ollama(request: Request, body: OllamaToggleRequest):
         use_local_llm=body.use_local_llm,
         provider_order=provider_order,
     )
-

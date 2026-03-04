@@ -73,12 +73,15 @@ async def _build_chunks(
         for chunk in chunks:
             if chunk.paragraph_id in para_set:
                 cid = f"{paper_id}::{chunk.paragraph_id}"
-                score = score_map.get(cid, 0.0)
-                if cid not in score_map:
+                # FIXED HI-001: Better handle missing scores with explicit check first
+                if cid in score_map:
+                    score = score_map[cid]
+                else:
                     logger.warning(
                         f"Score map miss for {cid} — using 0.0. "
                         "Possible ID format mismatch between FAISS and DB."
                     )
+                    score = 0.0
                 retrieved.append(RetrievedChunk(
                     paragraph_id=chunk.paragraph_id,
                     paper_id=str(chunk.paper_id),

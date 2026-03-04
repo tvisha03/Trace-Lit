@@ -12,7 +12,6 @@ from workers.paper_worker import create_paper_queue, set_ws_manager, set_faiss_s
 from workers.export_worker import shutdown_export_pool
 from api.v1.routes.websocket import ws_manager
 from infrastructure.db.crud.paper_crud import get_stuck_papers, update_paper_status
-from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.db.database import async_session_factory
 from shared.enums import PaperStatus
 from app.config import get_settings
@@ -118,12 +117,19 @@ async def _get_orphaned_paper_ids(faiss_store: FAISSStore) -> list[str]:
     faiss_paper_ids: set[str] = {
         cid.split("::", 1)[0] for cid in faiss_store._id_map
     }
-    orphaned: list[str] = []
+    if not faiss_paper_ids:
+        return []
+    
+    # FIXED MED-007: Use batch query instead of N+1 queries
     async with async_session_factory() as db:
+        from infrastructure.db.crud.chunk_crud import get_chunks_by_papers
+        chunks_by_paper = await get_chunks_by_papers(db, list(faiss_paper_ids))
+        
+        orphaned: list[str] = []
         for pid in faiss_paper_ids:
-            chunks = await get_chunks_by_paper(db, pid)
-            if not chunks:
+            if not chunks_by_paper.get(pid):
                 orphaned.append(pid)
+    
     return orphaned
 
 

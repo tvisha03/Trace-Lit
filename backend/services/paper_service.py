@@ -126,6 +126,20 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
 
 
 async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
+    """Clean up all resources after processing failure.
+    
+    MED-004: This ensures transaction-like cleanup when chunking fails partway through.
+    Removes both the uploaded file AND any partial chunks that may have been created.
+    """
+    # Clean up any partial chunks that may have been created before failure
+    from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
+    try:
+        await delete_chunks_by_paper(db, paper_id)
+        logger.info(f"Cleaned up partial chunks for failed paper {paper_id}")
+    except Exception as exc:
+        logger.warning(f"Could not clean up chunks for {paper_id}: {exc}")
+    
+    # Clean up the uploaded file
     try:
         paper = await get_paper(db, paper_id)
         if paper and paper.file_path:

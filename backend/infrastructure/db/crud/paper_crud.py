@@ -1,9 +1,13 @@
 
+import uuid as _uuid
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.paper import Paper
 from shared.enums import PaperStatus
+from shared.logger import get_logger
+
+logger = get_logger(__name__)
 
 async def create_paper(db: AsyncSession, **kwargs) -> Paper:
     paper = Paper(**kwargs)
@@ -12,6 +16,12 @@ async def create_paper(db: AsyncSession, **kwargs) -> Paper:
     return paper
 
 async def get_paper(db: AsyncSession, paper_id: str) -> Paper | None:
+    # FIXED HI-003: Add UUID validation to handle invalid UUID format gracefully
+    try:
+        _uuid.UUID(paper_id)
+    except (ValueError, AttributeError):
+        logger.warning(f"Invalid UUID format for paper_id: {paper_id}")
+        return None
     result = await db.execute(select(Paper).where(Paper.id == paper_id))
     return result.scalar_one_or_none()
 

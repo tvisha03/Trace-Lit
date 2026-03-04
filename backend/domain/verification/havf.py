@@ -8,6 +8,7 @@ from shared.constants import (
     HAVF_HIGH_THRESHOLD,
     HAVF_MEDIUM_THRESHOLD,
     HAVF_CROSS_ENCODER_THRESHOLD,
+    HAVF_SHORT_SENTENCE_WORDS as _DEFAULT_SHORT_WORDS,  # Default fallback
 )
 from shared.enums import ConfidenceLevel, VerificationMethod
 from shared.utils.text_utils import split_into_sentences
@@ -15,6 +16,15 @@ from shared.logger import get_logger
 from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
+
+
+def _get_short_sentence_threshold() -> int:
+    """Get the short sentence threshold from config, fallback to constants."""
+    try:
+        from app.config import get_settings
+        return get_settings().HAVF_SHORT_SENTENCE_WORDS
+    except Exception:
+        return _DEFAULT_SHORT_WORDS
 
 @dataclass
 class VerificationResult:
@@ -72,7 +82,12 @@ async def verify_response(
     high_threshold: float = HAVF_HIGH_THRESHOLD,
     medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
     cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
+    short_sentence_words: int | None = None,  # MED-002: Allow override
 ) -> list[VerificationResult]:
+    # MED-002: Use configurable threshold, default from settings
+    if short_sentence_words is None:
+        short_sentence_words = _get_short_sentence_threshold()
+    
     with timer("HAVF verification"):
         claims = split_into_sentences(generated_text)
         source_sentences = build_source_sentences(retrieved_chunks)
@@ -80,29 +95,91 @@ async def verify_response(
         if not claims or not source_sentences:
             return _handle_missing_sources(claims)
 
+        
+        # FIXED MED-003: Filter out short sentences that shouldn't be verified
+        # Short sentences (< 5 words) are often transitional phrases like "In contrast,"
+        # or "Furthermore," which don't need verification
+        short_claims, valid_claims = _filter_short_claims(claims, short_sentence_words)
+        
+        # Handle short claims by marking them as SKIPPED with LOW confidence
+        short_results = _create_skipped_results(short_claims)
+        
+        # Only verify claims that have sufficient length
+        if not valid_claims:
+            # All claims were too short - return skipped results
+            return short_results
+        
         level1_results = await asyncio.to_thread(
-            verify_claims_embedding, claims, source_sentences,
+            verify_claims_embedding, valid_claims, source_sentences,
             high_threshold=high_threshold,
             medium_threshold=medium_threshold,
         )
 
         results = await _process_verification_results(
-            level1_results, claims, source_sentences, cross_encoder_threshold
+            level1_results, valid_claims, source_sentences, cross_encoder_threshold
         )
+        
+        # Combine skipped results with verified results
+        all_results = short_results + results
+        
+        _log_verification_summary(all_results)
+        return all_results
 
-        _log_verification_summary(results)
-        return results
+
+def _filter_short_claims(claims: list[str], short_sentence_threshold: int) -> tuple[list[str], list[str]]:
+    """Filter claims into short (< short_sentence_threshold) and valid claims.
+    
+    Returns tuple of (short_claims, valid_claims).
+    """
+    short_claims = []
+    valid_claims = []
+    
+    for claim in claims:
+        word_count = len(claim.split())
+        if word_count < short_sentence_threshold:
+            short_claims.append(claim)
+        else:
+            valid_claims.append(claim)
+    
+    if short_claims:
+        logger.info(
+            f"HAVF: Skipped {len(short_claims)} short sentences "
+            f"(< {short_sentence_threshold} words) - marked as LOW confidence"
+        )
+    
+    return short_claims, valid_claims
+
+
+def _create_skipped_results(claims: list[str]) -> list[VerificationResult]:
+    """Create verification results for skipped (too short) claims."""
+    return [
+        VerificationResult(
+            claim=c,
+            confidence=ConfidenceLevel.LOW,
+            score=0.0,
+            source_sentence=None,
+            paragraph_id=None,
+            paper_id=None,
+            sentence_key=None,
+            verification_method=VerificationMethod.SKIPPED,
+        )
+        for c in claims
+    ]
 
 
 def _handle_missing_sources(claims: list[str]) -> list[VerificationResult]:
-    """Return LOW confidence results when sources are unavailable."""
+    """Return LOW confidence results when sources are unavailable or sentences are too short.
+    
+    FIXED MED-003: Now handles both missing sources AND skipped short sentences.
+    Short sentences (< HAVF_SHORT_SENTENCE_WORDS words) are marked as SKIPPED with LOW confidence.
+    """
     if not claims:
         return []
 
     logger.warning(
-        "HAVF: No source sentences found in retrieved chunks. "
+        "HAVF: No source sentences found in retrieved chunks or sentences too short. "
         "All claims will be marked LOW confidence — citations "
-        "may reference non-existent paragraphs."
+        "may reference non-existent paragraphs or be transitional phrases."
     )
     return [
         VerificationResult(

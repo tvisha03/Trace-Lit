@@ -6,7 +6,8 @@ from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
 
-_kw_model = None
+# FIXED CRT-004: Use application state instead of global mutable state
+# Model is now managed through dependency injection pattern
 
 _MD_IMAGE = re.compile(r"!\[.*?\]\(.+?\)")
 _URL = re.compile(r"https?://\S+")
@@ -24,20 +25,47 @@ def _clean_for_keywords(text: str) -> str:
     text = _MD_FORMAT.sub(" ", text)
     return _MULTI_SPACE.sub(" ", text).strip()
 
+
+# FIXED CRT-004: Model factory with proper lifecycle management
+class KeywordModelFactory:
+    """Factory for keyword extraction model with proper memory management."""
+    
+    _instance = None
+    _model = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def get_model(self):
+        """Get or create the KeyBERT model with lazy loading."""
+        if self._model is None:
+            with timer("Load KeyBERT model"):
+                from keybert import KeyBERT
+                self._model = KeyBERT(model="all-MiniLM-L6-v2")
+                logger.info("KeyBERT model loaded into memory")
+        return self._model
+    
+    def unload(self) -> None:
+        """Unload model to free memory."""
+        if self._model is not None:
+            self._model = None
+            logger.info("KeyBERT model unloaded from memory")
+
+
 def _get_kw_model():
-    global _kw_model
-    if _kw_model is None:
-        with timer("Load KeyBERT model"):
-            from keybert import KeyBERT
-            _kw_model = KeyBERT(model="all-MiniLM-L6-v2")
-    return _kw_model
+    """Get keyword extraction model via factory - replaces global state pattern."""
+    factory = KeywordModelFactory()
+    return factory.get_model()
 
 
 def unload_kw_model() -> None:
-    global _kw_model
-    if _kw_model is not None:
-        _kw_model = None
-        logger.info("KeyBERT model unloaded from memory")
+    """Unload the keyword model from memory."""
+    factory = KeywordModelFactory()
+    factory.unload()
+    logger.info("KeyBERT model unloaded from memory via factory")
+
 
 def extract_keywords(
     text: str,
@@ -68,6 +96,7 @@ def extract_keywords(
     logger.info(f"Extracted {len(results)} keywords")
     return results
 
+
 def extract_keywords_per_paper(
     paper_texts: dict[str, str],
     top_n: int = 10,
@@ -76,4 +105,3 @@ def extract_keywords_per_paper(
         pid: extract_keywords(text, top_n=top_n)
         for pid, text in paper_texts.items()
     }
-

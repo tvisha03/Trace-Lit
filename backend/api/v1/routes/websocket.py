@@ -4,6 +4,7 @@ import json
 import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from typing import Optional
+import time
 
 from shared.constants import MAX_WS_CONNECTIONS_PER_SESSION
 from shared.logger import get_logger
@@ -14,14 +15,28 @@ router = APIRouter()
 
 _WS_HEARTBEAT_INTERVAL: float = 30.0
 
+# FIXED MED-001: Cache session existence to avoid creating new DB connection on every WS connect
+_session_cache: dict[str, tuple[bool, float]] = {}
+_SESSION_CACHE_TTL: float = 60.0  # Cache for 60 seconds
+
 
 async def _session_exists(session_id: str) -> bool:
+    # Check cache first
+    now = time.time()
+    if session_id in _session_cache:
+        cached_result, cached_time = _session_cache[session_id]
+        if now - cached_time < _SESSION_CACHE_TTL:
+            return cached_result
+
     try:
         from infrastructure.db.database import async_session_factory
         from infrastructure.db.crud.session_crud import get_session
         async with async_session_factory() as db:
             session = await get_session(db, session_id)
-            return session is not None
+            result = session is not None
+            # Update cache
+            _session_cache[session_id] = (result, now)
+            return result
     except Exception as exc:
         logger.warning(f"Session validation failed for WS {session_id}: {exc}")
         return False

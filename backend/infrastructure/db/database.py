@@ -12,15 +12,18 @@ from app.config import get_settings
 
 settings = get_settings()
 
-_SQLITE_BUSY_TIMEOUT_MS = 30_000
+_SQLITE_BUSY_TIMEOUT_MS = settings.SQLITE_BUSY_TIMEOUT_MS  # FIXED MINOR-003: Now configurable via settings
 _POOL_CHECKOUT_TIMEOUT_S = 60
 
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     future=True,
-    pool_size=5,
-    max_overflow=3,
+    # FIXED MED-005: Increased pool size for better concurrent request handling
+    # Previous: pool_size=5, max_overflow=3 (max 8 connections)
+    # Now: pool_size=10, max_overflow=5 (max 15 connections)
+    pool_size=10,
+    max_overflow=5,
     pool_timeout=_POOL_CHECKOUT_TIMEOUT_S,
     pool_recycle=1800,
     connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_MS / 1000, "check_same_thread": False},

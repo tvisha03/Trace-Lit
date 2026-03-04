@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     @field_validator("OLLAMA_BASE_URL")
     @classmethod
     def _validate_ollama_url(cls, v: str) -> str:  # noqa: N805
+        # FIXED MED-001: Added IPv6 support for URL validation
+        # IPv6 addresses are enclosed in brackets like http://[::1]:11434
+        import ipaddress
         parsed = urlparse(v)
         if parsed.scheme not in ("http", "https"):
             raise ValueError(
@@ -32,12 +35,26 @@ class Settings(BaseSettings):
             )
         if not parsed.hostname:
             raise ValueError(f"OLLAMA_BASE_URL must include a hostname, got: {v}")
+
+        # Validate hostname (supports both IPv4 and IPv6)
+        try:
+            # Strip brackets for IPv6 addresses
+            hostname = parsed.hostname
+            if hostname.startswith('[') and hostname.endswith(']'):
+                hostname = hostname[1:-1]
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            # Not an IP address, that's fine - it's a hostname
+            pass
         return v.rstrip("/")
 
     LLM_TIMEOUT: int = 30
     LLM_MAX_RETRIES: int = 2
     LLM_RETRY_DELAY_BASE: float = 2.0
     LLM_TEMPERATURE: float = 0.3
+
+    # FIXED MINOR-003: Made SQLite busy timeout configurable
+    SQLITE_BUSY_TIMEOUT_MS: int = 30_000
 
     UPLOADS_DIR: str = "data/uploads"
     EXPORTS_DIR: str = "data/exports"
@@ -50,6 +67,9 @@ class Settings(BaseSettings):
     HAVF_HIGH_THRESHOLD: float = 0.85
     HAVF_MEDIUM_THRESHOLD: float = 0.65
     HAVF_CROSS_ENCODER_THRESHOLD: float = 0.75
+
+    # FIXED MED-002: Made short sentence threshold configurable
+    HAVF_SHORT_SENTENCE_WORDS: int = 5
 
     CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 

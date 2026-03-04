@@ -34,3 +34,25 @@ async def delete_chunks_by_paper(db: AsyncSession, paper_id: str) -> None:
     await db.execute(sa_delete(Chunk).where(Chunk.paper_id == paper_id))
     await db.flush()
 
+
+# FIXED MED-007: Add batch function to get chunks for multiple papers (avoids N+1 queries)
+async def get_chunks_by_papers(db: AsyncSession, paper_ids: list[str]) -> dict[str, list[Chunk]]:
+    """Get chunks for multiple papers in a single query.
+    
+    Returns a dict mapping paper_id to list of chunks for that paper.
+    """
+    if not paper_ids:
+        return {}
+    
+    result = await db.execute(
+        select(Chunk).where(Chunk.paper_id.in_(paper_ids)).order_by(Chunk.paper_id, Chunk.paragraph_id)
+    )
+    chunks = list(result.scalars().all())
+    
+    # Group by paper_id
+    chunks_by_paper: dict[str, list[Chunk]] = {pid: [] for pid in paper_ids}
+    for chunk in chunks:
+        chunks_by_paper[str(chunk.paper_id)].append(chunk)
+    
+    return chunks_by_paper
+
