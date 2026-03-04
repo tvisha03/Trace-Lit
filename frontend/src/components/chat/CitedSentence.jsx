@@ -1,5 +1,7 @@
 /** TraceLit — Cited Sentence with confidence underlines and clickable superscripts */
+import { useState } from 'react';
 import { confidenceLevel } from '../../utils/helpers';
+import CitationTooltip from './CitationTooltip';
 
 const underlineColor = {
   high: 'decoration-green-500',
@@ -15,25 +17,28 @@ const supColor = {
 
 export default function CitedSentence({ text, citations, confidence, sources, onCitationClick }) {
   const level = confidence != null ? confidenceLevel(confidence) : null;
+  const [hoveredSource, setHoveredSource] = useState(null);
 
-  const handleClick = (citation, e) => {
+  const handleClick = (citation, index, e) => {
     e.stopPropagation();
-    // First source for this citation determines scroll target
-    const src = sources?.[0];
+    // Match citation to correct source by index, falling back to first source
+    const src = sources?.[index] ?? sources?.[0];
     onCitationClick?.(src?.sentence_id ?? null, src?.paper_id ?? null);
   };
 
   return (
     <span
-      className={`inline ${
+      className={`inline relative ${
         level ? `underline underline-offset-2 ${underlineColor[level]}` : ''
       }`}
     >
       {text}
-      {citations?.map((c) => (
+      {citations?.map((c, i) => (
         <sup
           key={c}
-          onClick={(e) => handleClick(c, e)}
+          onClick={(e) => handleClick(c, i, e)}
+          onMouseEnter={() => setHoveredSource(sources?.[i] ?? sources?.[0] ?? null)}
+          onMouseLeave={() => setHoveredSource(null)}
           className={`ml-px text-[10px] font-semibold cursor-pointer select-none transition-colors ${
             level ? supColor[level] : 'text-blue-600 hover:text-blue-800'
           }`}
@@ -42,6 +47,7 @@ export default function CitedSentence({ text, citations, confidence, sources, on
           {c}
         </sup>
       ))}
+      {hoveredSource && <CitationTooltip source={hoveredSource} />}
       {' '}
     </span>
   );

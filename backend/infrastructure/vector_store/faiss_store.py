@@ -11,6 +11,7 @@ Replaces ChromaDB to avoid pydantic v1 / Python 3.14 incompatibility.
 
 import json
 import pickle
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -41,6 +42,7 @@ class VectorStore:
         self._doc_id_map: Dict[str, int] = {}
         self._next_id: int = 0
         self._initialized: bool = False
+        self._lock = threading.Lock()
 
     @property
     def _index_path(self) -> Path:
@@ -99,48 +101,50 @@ class VectorStore:
     # ----------------------------------------------------------
 
     def add_paragraphs(self, paper_id: str, chunks: List[Dict[str, Any]]) -> int:
-        """Store paragraph chunks with embeddings."""
+        """Store paragraph chunks with embeddings (thread-safe)."""
         if not chunks:
             return 0
 
         self._ensure_initialized()
         embedder = get_embedder()
         enriched_texts = [c["enriched_text"] for c in chunks]
+        # Compute embeddings outside the lock (CPU-intensive)
         embeddings = embedder.encode(enriched_texts, batch_size=64)
 
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms = np.where(norms == 0, 1, norms)
         embeddings_normed = np.ascontiguousarray(embeddings / norms, dtype=np.float32)
 
-        ids_to_add: List[int] = []
+        with self._lock:
+            ids_to_add: List[int] = []
 
-        for i, chunk in enumerate(chunks):
-            doc_id = f"{paper_id}_{chunk['paragraph_id']}"
+            for i, chunk in enumerate(chunks):
+                doc_id = f"{paper_id}_{chunk['paragraph_id']}"
 
-            if doc_id in self._doc_id_map:
-                old_int_id = self._doc_id_map[doc_id]
-                self._index.remove_ids(np.array([old_int_id], dtype=np.int64))
-                del self._metadata[old_int_id]
+                if doc_id in self._doc_id_map:
+                    old_int_id = self._doc_id_map[doc_id]
+                    self._index.remove_ids(np.array([old_int_id], dtype=np.int64))
+                    del self._metadata[old_int_id]
 
-            int_id = self._next_id
-            self._next_id += 1
-            self._doc_id_map[doc_id] = int_id
-            self._metadata[int_id] = {
-                "doc_id": doc_id,
-                "paper_id": paper_id,
-                "paper_title": chunk.get("paper_title", ""),
-                "paragraph_id": chunk["paragraph_id"],
-                "section": chunk.get("section", ""),
-                "page": chunk.get("page", 0),
-                "original_text": chunk["text"],
-                "sentences": json.dumps(chunk.get("sentences", [])),
-                "token_count": chunk.get("token_count", 0),
-            }
-            ids_to_add.append(int_id)
+                int_id = self._next_id
+                self._next_id += 1
+                self._doc_id_map[doc_id] = int_id
+                self._metadata[int_id] = {
+                    "doc_id": doc_id,
+                    "paper_id": paper_id,
+                    "paper_title": chunk.get("paper_title", ""),
+                    "paragraph_id": chunk["paragraph_id"],
+                    "section": chunk.get("section", ""),
+                    "page": chunk.get("page", 0),
+                    "original_text": chunk["text"],
+                    "sentences": json.dumps(chunk.get("sentences", [])),
+                    "token_count": chunk.get("token_count", 0),
+                }
+                ids_to_add.append(int_id)
 
-        id_array = np.array(ids_to_add, dtype=np.int64)
-        self._index.add_with_ids(embeddings_normed, id_array)
-        self._save()
+            id_array = np.array(ids_to_add, dtype=np.int64)
+            self._index.add_with_ids(embeddings_normed, id_array)
+            self._save()
 
         logger.info("Stored {} paragraphs for paper {} in FAISS", len(chunks), paper_id)
         return len(chunks)
@@ -201,20 +205,22 @@ class VectorStore:
         return results
 
     def delete_paper(self, paper_id: str) -> int:
-        """Remove all vectors for the given paper."""
+        """Remove all vectors for the given paper (thread-safe)."""
         self._ensure_initialized()
-        ids_to_remove = [
-            int_id for doc_id, int_id in self._doc_id_map.items()
-            if doc_id.startswith(f"{paper_id}_")
-        ]
 
-        if ids_to_remove:
-            self._index.remove_ids(np.array(ids_to_remove, dtype=np.int64))
-            for int_id in ids_to_remove:
-                self._metadata.pop(int_id, None)
-            for doc_id in [d for d in list(self._doc_id_map) if d.startswith(f"{paper_id}_")]:
-                del self._doc_id_map[doc_id]
-            self._save()
+        with self._lock:
+            ids_to_remove = [
+                int_id for doc_id, int_id in self._doc_id_map.items()
+                if doc_id.startswith(f"{paper_id}_")
+            ]
+
+            if ids_to_remove:
+                self._index.remove_ids(np.array(ids_to_remove, dtype=np.int64))
+                for int_id in ids_to_remove:
+                    self._metadata.pop(int_id, None)
+                for doc_id in [d for d in list(self._doc_id_map) if d.startswith(f"{paper_id}_")]:
+                    del self._doc_id_map[doc_id]
+                self._save()
 
         logger.info("Deleted {} vectors for paper {}", len(ids_to_remove), paper_id)
         return len(ids_to_remove)

@@ -113,6 +113,20 @@ export const chatApi = {
             }
           }
         }
+
+        // Process any remaining buffer after stream ends
+        if (buffer.trim()) {
+          const remaining = buffer.split('\n');
+          for (const line of remaining) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'chunk') onChunk?.(event.text);
+              else if (event.type === 'done') onDone?.(event.metadata);
+              else if (event.type === 'error') onError?.(new Error(event.message));
+            } catch { /* ignore */ }
+          }
+        }
       })
       .catch((err) => {
         if (err.name !== 'AbortError') onError?.(err);
@@ -130,8 +144,46 @@ export const compareApi = {
 
 // ---- Export ----
 export const exportApi = {
-  pdf: (sessionId) => request(`/export/pdf`, { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }),
-  excel: (sessionId) => request(`/export/excel`, { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }),
+  pdf: async (sessionId) => {
+    const res = await fetch(`${API_BASE}/export/pdf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
+      throw new ApiError(res.status, err);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tracelit_export_${sessionId}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+  excel: async (sessionId) => {
+    const res = await fetch(`${API_BASE}/export/excel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
+      throw new ApiError(res.status, err);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tracelit_export_${sessionId}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };
 
 export { ApiError };

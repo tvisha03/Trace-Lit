@@ -127,6 +127,10 @@ class SmartPaperQueue:
 
     async def _worker_loop(self, worker_id: int) -> None:
         """Continuously process papers from queue."""
+        from shared.memory_monitor import MemoryMonitor
+
+        mem_monitor = MemoryMonitor()
+
         while self._running:
             try:
                 job = await asyncio.wait_for(self._queue.get(), timeout=1.0)
@@ -134,6 +138,29 @@ class SmartPaperQueue:
                 continue
             except asyncio.CancelledError:
                 break
+
+            # Memory-aware scheduling: wait if memory is critically high
+            for attempt in range(10):
+                if mem_monitor.is_safe_for_heavy_op():
+                    break
+                logger.warning(
+                    "Worker {} waiting for memory to drop before processing {} (attempt {}/10)",
+                    worker_id, job.paper_id, attempt + 1,
+                )
+                await asyncio.sleep(5.0)
+            else:
+                status = mem_monitor.check_memory()
+                logger.error(
+                    "Worker {} skipping paper {} — memory unsafe ({}% used, {:.1f}GB RSS)",
+                    worker_id, job.paper_id, status["system_percent"], status["process_rss_gb"],
+                )
+                job.stage = ProcessingStage.FAILED
+                job.error = "Insufficient memory to process paper"
+                await self._notify(job.paper_id, ProcessingStage.FAILED, 0.0, job.error)
+                self._completed_jobs[job.paper_id] = job
+                self._active_jobs.pop(job.paper_id, None)
+                self._queue.task_done()
+                continue
 
             async with self._semaphore:
                 try:

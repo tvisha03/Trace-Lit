@@ -115,10 +115,13 @@ def extract_pdf(pdf_path: str) -> Dict[str, Any]:
 async def extract_paper(pdf_path: str, mode: str = "auto") -> Dict[str, Any]:
     """Async wrapper for extract_pdf with mode selection.
 
+    Runs synchronous PDF extraction in a thread to avoid blocking the event loop.
     All modes use PyMuPDF4LLM in Phase 1 (Docling added in Phase 2).
     """
+    import asyncio
+
     logger.info("Extracting paper: mode={}, path={}", mode, pdf_path)
-    result = extract_pdf(pdf_path)
+    result = await asyncio.to_thread(extract_pdf, pdf_path)
     logger.info(
         "Extraction complete: {} sections, {} pages (mode={})",
         len(result.get("sections", [])),
