@@ -81,10 +81,12 @@ async def gap_analysis(
             f"identify research gaps across multiple studies."
         )
 
-    result = await get_session_gap_analysis(session_id, db)
+    result = await get_session_gap_analysis(session_id, db, _get_llm(request))
     return GapAnalysisResponse(
         themes=[ThemeItem(**t) for t in result["themes"]],
         underexplored=[ThemeItem(**t) for t in result["underexplored"]],
+        narrative=result.get("narrative"),
+        provider=result.get("provider"),
     )
 
 @router.get("/review", response_model=ReviewResponse)

@@ -183,6 +183,8 @@ class ThemeItem(BaseModel):
 class GapAnalysisResponse(BaseModel):
     themes: list[ThemeItem]
     underexplored: list[ThemeItem]
+    narrative: Optional[str] = None
+    provider: Optional[str] = None
 
 class ReviewResponse(BaseModel):
     review: str

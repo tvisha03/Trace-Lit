@@ -5,10 +5,12 @@ import json
 from typing import AsyncGenerator, Tuple
 
 from infrastructure.llm.fallback_chain import FallbackChain
-from shared.enums import LLMProvider
+from shared.enums import LLMProvider, QueryType
 from domain.generation.prompts import (
     SYSTEM_PROMPT,
     CHAT_PROMPT_TEMPLATE,
+    COMPARISON_PROMPT_TEMPLATE,
+    SUMMARY_PROMPT_TEMPLATE,
     build_context_block,
     build_history_block,
 )
@@ -186,6 +188,33 @@ async def _persist_response(
         logger.error(f"Failed to persist streaming assistant message for session {session_id}: {exc}")
 
 
+def _build_streaming_prompt(
+    classification,
+    query: str,
+    chunks: list,
+    history: list,
+) -> str:
+    context_block = build_context_block(chunks)
+    history_block = build_history_block(history)
+    query_type = classification.query_type
+
+    if query_type == QueryType.COMPARISON:
+        return COMPARISON_PROMPT_TEMPLATE.format(
+            paper_contexts=context_block,
+            question=query,
+        )
+    if query_type == QueryType.SUMMARY:
+        return SUMMARY_PROMPT_TEMPLATE.format(
+            context=context_block,
+            question=query,
+        )
+    return CHAT_PROMPT_TEMPLATE.format(
+        context=context_block,
+        history=history_block,
+        question=query,
+    )
+
+
 async def stream_chat_response(
     query: str,
     paper_ids: list[str],
@@ -208,11 +237,7 @@ async def stream_chat_response(
             for c in chunks
         ]))
 
-        user_prompt = CHAT_PROMPT_TEMPLATE.format(
-            context=build_context_block(chunks),
-            history=build_history_block(history),
-            question=query,
-        )
+        user_prompt = _build_streaming_prompt(classification, query, chunks, history)
 
         full_text = ""
         provider = ""

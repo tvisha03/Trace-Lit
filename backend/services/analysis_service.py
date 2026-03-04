@@ -3,7 +3,7 @@ from typing import AsyncGenerator
 
 from domain.analysis.keyword_extractor import extract_keywords, extract_keywords_per_paper
 from domain.analysis.gap_finder import find_gaps, GapAnalysis
-from domain.analysis.review_generator import generate_review, stream_review
+from domain.analysis.review_generator import generate_review, stream_review, generate_gap_narrative
 from domain.generation.prompts import SYSTEM_PROMPT, SUMMARY_PROMPT_TEMPLATE, build_context_block
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
 from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
@@ -13,6 +13,31 @@ from shared.errors import NotFoundError, InsufficientDataError
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+_MAX_KEYWORD_TEXT_LENGTH = 15_000
+_PRIORITY_SECTIONS = frozenset({
+    "abstract", "introduction", "conclusion",
+    "summary", "discussion", "results",
+})
+
+
+def _prepare_keyword_text(
+    chunks: list,
+    max_length: int = _MAX_KEYWORD_TEXT_LENGTH,
+) -> str:
+    priority: list[str] = []
+    other: list[str] = []
+    for c in chunks:
+        section = (getattr(c, "section_title", None) or "").lower()
+        bucket = priority if any(s in section for s in _PRIORITY_SECTIONS) else other
+        bucket.append(c.text if hasattr(c, "text") else str(c))
+    combined = " ".join(priority + other)
+    return combined[:max_length] if len(combined) > max_length else combined
+
+
+async def _get_paper_titles(papers: list) -> dict[str, str]:
+    return {str(p.id): p.title or p.filename for p in papers}
+
 
 async def get_paper_keywords(
     paper_id: str,
@@ -24,12 +49,13 @@ async def get_paper_keywords(
         raise NotFoundError("Paper", paper_id)
 
     chunks = await get_chunks_by_paper(db, paper_id)
-    full_text = " ".join(c.text for c in chunks)
-    return extract_keywords(full_text, top_n=top_n)
+    prepared_text = _prepare_keyword_text(chunks)
+    return extract_keywords(prepared_text, top_n=top_n)
 
 async def get_session_gap_analysis(
     session_id: str,
     db: AsyncSession,
+    llm: FallbackChain | None = None,
 ) -> dict:
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
     if len(papers) < 2:
@@ -40,16 +66,17 @@ async def get_session_gap_analysis(
             "then try again.".format(len(papers))
         )
 
+    chunks_by_paper: dict[str, list] = {}
     paper_texts: dict[str, str] = {}
     for paper in papers:
         chunks = await get_chunks_by_paper(db, str(paper.id))
-        paper_texts[str(paper.id)] = " ".join(c.text for c in chunks)
+        chunks_by_paper[str(paper.id)] = chunks[:15]
+        paper_texts[str(paper.id)] = _prepare_keyword_text(chunks)
 
     paper_keywords = extract_keywords_per_paper(paper_texts)
-
     gap_result: GapAnalysis = find_gaps(paper_keywords)
 
-    return {
+    result: dict = {
         "themes": [
             {
                 "label": t.theme_label,
@@ -69,6 +96,16 @@ async def get_session_gap_analysis(
         ],
     }
 
+    if llm and chunks_by_paper:
+        paper_titles = await _get_paper_titles(papers)
+        narrative, provider = await generate_gap_narrative(
+            chunks_by_paper, llm, paper_titles,
+        )
+        result["narrative"] = narrative
+        result["provider"] = provider.value
+
+    return result
+
 async def generate_literature_review(
     session_id: str,
     db: AsyncSession,
@@ -76,8 +113,9 @@ async def generate_literature_review(
 ) -> dict:
     chunks_by_paper = await _gather_review_chunks(session_id, db)
     papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+    paper_titles = await _get_paper_titles(papers)
 
-    review_text, provider = await generate_review(chunks_by_paper, llm)
+    review_text, provider = await generate_review(chunks_by_paper, llm, paper_titles)
 
     return {
         "review": review_text,
@@ -126,8 +164,10 @@ async def stream_literature_review(
 
     try:
         chunks_by_paper = await _gather_review_chunks(session_id, db)
+        papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+        paper_titles = await _get_paper_titles(papers)
 
-        async for token, provider_obj in stream_review(chunks_by_paper, llm):
+        async for token, provider_obj in stream_review(chunks_by_paper, llm, paper_titles):
             full_text += token
             provider = provider_obj.value
             yield sse_event("token", {"token": token})

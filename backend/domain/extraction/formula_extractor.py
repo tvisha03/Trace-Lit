@@ -257,6 +257,46 @@ def _deduplicate_formulas(formulas: list[ExtractedFormula]) -> list[ExtractedFor
     return deduplicated
 
 
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+
+def _extract_surrounding_context(text: str, formula_content: str, radius: int = 300) -> str:
+    pos = text.find(formula_content)
+    if pos == -1:
+        stripped = formula_content.strip("$").strip()
+        pos = text.find(stripped)
+    if pos == -1:
+        return ""
+
+    before = text[max(0, pos - radius):pos]
+    after = text[pos + len(formula_content):pos + len(formula_content) + radius]
+
+    before_sentences = _SENTENCE_BOUNDARY.split(before.strip())
+    after_sentences = _SENTENCE_BOUNDARY.split(after.strip())
+
+    parts: list[str] = []
+    if before_sentences:
+        parts.append(before_sentences[-1].strip())
+    if after_sentences:
+        parts.append(after_sentences[0].strip())
+
+    context = " ".join(p for p in parts if p)
+    return context[:500]
+
+
+def _populate_formula_contexts(
+    formulas: list[ExtractedFormula], text: str
+) -> None:
+    for formula in formulas:
+        if formula.context and formula.context not in (
+            "equation", "align", "gather", "multline", "eqnarray",
+        ):
+            continue
+        surrounding = _extract_surrounding_context(text, formula.content)
+        if surrounding:
+            formula.context = surrounding
+
+
 _FORMULA_TYPES = ("display", "inline", "numbered", "unicode")
 
 
@@ -318,11 +358,13 @@ def extract_formulas_from_pages(
         page_text = getattr(page, "text", "")
 
         box_formulas = _extract_box_formulas(page)
+        _populate_formula_contexts(box_formulas, page_text)
         all_formulas.extend(box_formulas)
 
         page_formulas = extract_formulas(page_text)
         for f in page_formulas:
             f.page_number = page_num
+        _populate_formula_contexts(page_formulas, page_text)
         all_formulas.extend(page_formulas)
 
     seen: set[str] = set()

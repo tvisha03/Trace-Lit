@@ -73,10 +73,31 @@ def _resolve_image_path(img_info, figure_dir: Path) -> Path | None:
 
 _MD_IMAGE_RE = re.compile(r"!\[.*?\]\((.+?)\)")
 
+_FIGURE_CAPTION_RE = re.compile(
+    r"(?:Fig(?:ure|\.)?|FIGURE)\s+(\d+)[.:]?\s*(.*)",
+    re.IGNORECASE,
+)
+
+
+def _find_figure_caption(page_text: str, image_pos: int) -> str:
+    search_after = page_text[image_pos:image_pos + 400]
+    search_before = page_text[max(0, image_pos - 400):image_pos]
+
+    for region in (search_after, search_before):
+        lines = region.strip().split("\n")
+        candidates = lines[:6] if region is search_after else lines[-6:]
+        for line in candidates:
+            match = _FIGURE_CAPTION_RE.search(line.strip())
+            if match:
+                num = match.group(1)
+                desc = match.group(2).strip().rstrip(".")
+                return f"Figure {num}: {desc}" if desc else f"Figure {num}"
+    return ""
+
 
 def _add_figure_if_new(
     img_info, figure_dir: Path, seen: set[str], page_num: int,
-    figures: list[ExtractedFigure], bbox=None,
+    figures: list[ExtractedFigure], bbox=None, caption: str = "",
 ) -> None:
     resolved = _resolve_image_path(img_info, figure_dir)
     if resolved is None:
@@ -89,6 +110,7 @@ def _add_figure_if_new(
         image_path=rp,
         page_number=page_num,
         bbox=tuple(bbox) if bbox else None,
+        caption=caption,
     ))
 
 
@@ -100,11 +122,16 @@ def _extract_figures_from_pages(
     seen_paths: set[str] = set()
     for page_data in page_chunks:
         page_num = page_data.get("metadata", {}).get("page", 0)
+        page_text = page_data.get("text", "")
         for img_info in page_data.get("images", []):
             bbox = img_info.get("bbox") if isinstance(img_info, dict) else None
             _add_figure_if_new(img_info, figure_dir, seen_paths, page_num, figures, bbox)
-        for match in _MD_IMAGE_RE.finditer(page_data.get("text", "")):
-            _add_figure_if_new(match.group(1), figure_dir, seen_paths, page_num, figures)
+        for match in _MD_IMAGE_RE.finditer(page_text):
+            caption = _find_figure_caption(page_text, match.end())
+            _add_figure_if_new(
+                match.group(1), figure_dir, seen_paths, page_num, figures,
+                caption=caption,
+            )
     return figures
 
 
@@ -116,7 +143,50 @@ def _get_picture_boxes(page_data: dict) -> list[dict]:
     ]
 
 
-def _render_box(page, rect, page_num: int, idx: int, figure_dir: Path) -> ExtractedFigure | None:
+def _is_nearby_caption_box(box: dict, pic_top: float, pic_bottom: float) -> bool:
+    if not isinstance(box, dict) or box.get("class") != "caption":
+        return False
+    cap_bbox = box.get("bbox")
+    if not cap_bbox or len(cap_bbox) < 4:
+        return False
+    cap_top = cap_bbox[1]
+    return abs(cap_top - pic_bottom) < 40 or abs(cap_top - pic_top) < 40
+
+
+def _parse_caption_text(raw: str) -> str:
+    match = _FIGURE_CAPTION_RE.search(raw)
+    if match:
+        num = match.group(1)
+        desc = match.group(2).strip().rstrip(".")
+        return f"Figure {num}: {desc}" if desc else f"Figure {num}"
+    return raw[:200] if raw else ""
+
+
+def _extract_box_text(box: dict, page_text: str) -> str:
+    pos = box.get("pos")
+    if not pos or len(pos) < 2:
+        return ""
+    return page_text[pos[0]:pos[1]].strip()
+
+
+def _find_caption_for_box(page_boxes: list[dict], picture_bbox: list, page_text: str) -> str:
+    if not picture_bbox or len(picture_bbox) < 4:
+        return ""
+    pic_bottom = picture_bbox[3]
+    pic_top = picture_bbox[1]
+
+    for box in page_boxes:
+        if not _is_nearby_caption_box(box, pic_top, pic_bottom):
+            continue
+        raw = _extract_box_text(box, page_text)
+        if raw:
+            return _parse_caption_text(raw)
+    return ""
+
+
+def _render_box(
+    page, rect, page_num: int, idx: int, figure_dir: Path, caption: str = ""
+) -> ExtractedFigure | None:
     bbox = (rect.x0, rect.y0, rect.x1, rect.y1)
     img_name = f"page{page_num}_fig{idx}.{FIGURE_IMAGE_FORMAT}"
     img_path = figure_dir / img_name
@@ -129,6 +199,7 @@ def _render_box(page, rect, page_num: int, idx: int, figure_dir: Path) -> Extrac
         image_path=str(img_path),
         page_number=page_num,
         bbox=bbox,
+        caption=caption,
     )
 
 
@@ -147,6 +218,9 @@ def _render_page_figures(
     page_area = abs(page.rect.width * page.rect.height)
     rendered: list[ExtractedFigure] = []
 
+    page_boxes = page_data.get("page_boxes", [])
+    page_text = page_data.get("text", "")
+
     for idx, box in enumerate(picture_boxes):
         bbox = box.get("bbox")
         if not bbox or len(bbox) < 4:
@@ -156,7 +230,8 @@ def _render_page_figures(
         if abs(rect.width * rect.height) / max(page_area, 1) < FIGURE_MIN_SIZE_RATIO:
             continue
 
-        fig = _render_box(page, rect, page_num, idx, figure_dir)
+        caption = _find_caption_for_box(page_boxes, bbox, page_text)
+        fig = _render_box(page, rect, page_num, idx, figure_dir, caption=caption)
         if fig:
             rendered.append(fig)
 

@@ -34,6 +34,7 @@ class AnalyzedFigure:
     figure_type: str
     description: str
     bbox: tuple[float, float, float, float] | None = None
+    caption: str = ""
 
 
 def _parse_vision_response(raw: str) -> tuple[str, str]:
@@ -115,6 +116,7 @@ async def _analyze_single_figure(
                 figure_type=figure_type,
                 description=description,
                 bbox=figure.bbox,
+                caption=getattr(figure, "caption", "") or "",
             )
 
         except asyncio.TimeoutError:

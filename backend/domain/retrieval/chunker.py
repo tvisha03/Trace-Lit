@@ -170,30 +170,35 @@ def create_figure_chunks(
 
         text = fig.description
         fig_type = getattr(fig, "figure_type", "figure")
+        caption = getattr(fig, "caption", "") or ""
 
         prefix_parts = []
         if paper_title:
             prefix_parts.append(f"[Paper: {paper_title}]")
         prefix_parts.append(f"[Figure on page {fig.page_number}, type: {fig_type}]")
+        if caption:
+            prefix_parts.append(f"[Caption: {caption}]")
         prefix = " ".join(prefix_parts)
         enriched_text = f"{prefix} {text}"
 
+        display_text = f"{caption}\n{text}" if caption else text
+
         sentence_map = {
             f"{paragraph_id}_S0": {
-                "text": text,
+                "text": display_text,
                 "start": 0,
-                "end": len(text),
-                "tokens": estimate_tokens(text),
+                "end": len(display_text),
+                "tokens": estimate_tokens(display_text),
             }
         }
 
         chunks.append(Chunk(
             paragraph_id=paragraph_id,
-            text=text,
+            text=display_text,
             enriched_text=enriched_text,
             section_title=f"Figure (page {fig.page_number})",
             page_number=fig.page_number,
-            token_count=estimate_tokens(text),
+            token_count=estimate_tokens(display_text),
             sentence_map=sentence_map,
             chunk_type=ChunkType.FIGURE,
             image_path=fig.image_path,
