@@ -294,16 +294,16 @@ def extract_tables_from_pdf(file_path: str | Path) -> list[ExtractedTable]:
     tables: list[ExtractedTable] = []
     table_counter = {"count": 0}
 
-    doc = pymupdf.open(str(file_path))
+    try:
+        doc = pymupdf.open(str(file_path))
+    except Exception as exc:
+        logger.warning(f"Could not open PDF for table extraction: {exc}")
+        return []
+
     try:
         for page_idx, page in enumerate(doc):
-            try:
-                tab_finder = page.find_tables(strategy="lines_strict")
-            except Exception as exc:
-                logger.warning(f"Table detection failed on page {page_idx}: {exc}")
-                continue
-
-            for tab in tab_finder.tables:
+            found = _find_tables_safe(page, page_idx)
+            for tab in found:
                 processed = _process_pdf_table(tab, page_idx, table_counter)
                 if processed:
                     tables.append(processed)
@@ -312,6 +312,17 @@ def extract_tables_from_pdf(file_path: str | Path) -> list[ExtractedTable]:
 
     logger.info(f"Extracted {len(tables)} tables via pymupdf find_tables from {file_path.name}")
     return tables
+
+
+def _find_tables_safe(page, page_idx: int) -> list:
+    for strategy in ("lines_strict", "lines", "text"):
+        try:
+            tab_finder = page.find_tables(strategy=strategy)
+            return list(tab_finder.tables)
+        except Exception as exc:
+            logger.debug(f"find_tables({strategy}) failed page {page_idx}: {exc}")
+            continue
+    return []
 
 
 def merge_tables(

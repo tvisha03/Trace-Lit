@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from dataclasses import dataclass, field
 
 try:
@@ -70,23 +71,40 @@ def _resolve_image_path(img_info, figure_dir: Path) -> Path | None:
     return alt if alt.exists() else None
 
 
+_MD_IMAGE_RE = re.compile(r"!\[.*?\]\((.+?)\)")
+
+
+def _add_figure_if_new(
+    img_info, figure_dir: Path, seen: set[str], page_num: int,
+    figures: list[ExtractedFigure], bbox=None,
+) -> None:
+    resolved = _resolve_image_path(img_info, figure_dir)
+    if resolved is None:
+        return
+    rp = str(resolved)
+    if rp in seen:
+        return
+    seen.add(rp)
+    figures.append(ExtractedFigure(
+        image_path=rp,
+        page_number=page_num,
+        bbox=tuple(bbox) if bbox else None,
+    ))
+
+
 def _extract_figures_from_pages(
     page_chunks: list[dict],
     figure_dir: Path,
 ) -> list[ExtractedFigure]:
     figures: list[ExtractedFigure] = []
+    seen_paths: set[str] = set()
     for page_data in page_chunks:
         page_num = page_data.get("metadata", {}).get("page", 0)
         for img_info in page_data.get("images", []):
-            resolved = _resolve_image_path(img_info, figure_dir)
-            if resolved is None:
-                continue
             bbox = img_info.get("bbox") if isinstance(img_info, dict) else None
-            figures.append(ExtractedFigure(
-                image_path=str(resolved),
-                page_number=page_num,
-                bbox=tuple(bbox) if bbox else None,
-            ))
+            _add_figure_if_new(img_info, figure_dir, seen_paths, page_num, figures, bbox)
+        for match in _MD_IMAGE_RE.finditer(page_data.get("text", "")):
+            _add_figure_if_new(match.group(1), figure_dir, seen_paths, page_num, figures)
     return figures
 
 
@@ -99,17 +117,13 @@ def _get_picture_boxes(page_data: dict) -> list[dict]:
 
 
 def _render_box(page, rect, page_num: int, idx: int, figure_dir: Path) -> ExtractedFigure | None:
-    import pymupdf as _pmu
-
     bbox = (rect.x0, rect.y0, rect.x1, rect.y1)
     img_name = f"page{page_num}_fig{idx}.{FIGURE_IMAGE_FORMAT}"
     img_path = figure_dir / img_name
 
-    if img_path.exists():
-        return None
-
-    pix = page.get_pixmap(clip=rect, dpi=FIGURE_IMAGE_DPI)
-    pix.save(str(img_path))
+    if not img_path.exists():
+        pix = page.get_pixmap(clip=rect, dpi=FIGURE_IMAGE_DPI)
+        pix.save(str(img_path))
 
     return ExtractedFigure(
         image_path=str(img_path),
@@ -259,11 +273,16 @@ def _assemble_document(
 
     figures = _extract_figures_from_pages(page_chunks, figure_dir)
     rendered = _render_missing_figures(file_path, page_chunks, figure_dir)
-    all_figures = figures + rendered
+    existing_paths = {f.image_path for f in figures}
+    for fig in rendered:
+        if fig.image_path not in existing_paths:
+            figures.append(fig)
+            existing_paths.add(fig.image_path)
+    all_figures = figures
     pages = _build_pages(page_chunks)
 
     text_tables = extract_tables_from_pages(pages)
-    pdf_tables = extract_tables_from_pdf(file_path)
+    pdf_tables = [] if _LAYOUT_MODE else extract_tables_from_pdf(file_path)
     all_tables = merge_tables(text_tables, pdf_tables)
 
     all_formulas = extract_formulas_from_pages(pages)
