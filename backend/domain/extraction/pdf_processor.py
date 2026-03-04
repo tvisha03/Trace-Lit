@@ -243,11 +243,14 @@ def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
         "force_text": True,
     }
 
-    if not _LAYOUT_MODE:
+    if _LAYOUT_MODE:
+        kwargs["table_strategy"] = ""
+    else:
         kwargs["image_size_limit"] = FIGURE_MIN_SIZE_RATIO
-        ocr_fn = _get_ocr_function()
-        if ocr_fn:
-            kwargs["ocr"] = ocr_fn
+
+    ocr_fn = _get_ocr_function()
+    if ocr_fn:
+        kwargs["ocr"] = ocr_fn
 
     logger.info(
         f"Running {'layout' if _LAYOUT_MODE else 'legacy'} extraction on {file_path.name}"

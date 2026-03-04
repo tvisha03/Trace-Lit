@@ -6,6 +6,7 @@ from domain.extraction.pdf_processor import extract_pdf
 from domain.extraction.section_parser import parse_sections
 from domain.extraction.metadata_extractor import extract_metadata
 from domain.extraction.figure_analyzer import analyze_figures
+from domain.extraction.ocr_helper import ocr_author_region
 from domain.retrieval.chunker import (
     create_chunks,
     create_figure_chunks,
@@ -72,6 +73,11 @@ async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
         pdf_metadata=extracted.pdf_metadata,
         pages=extracted.pages,
     )
+
+    if not metadata.authors:
+        ocr_authors = ocr_author_region(paper.file_path, extracted.pages)
+        if ocr_authors:
+            metadata.authors = ocr_authors
 
     return extracted, sections, metadata
 
@@ -278,6 +284,7 @@ async def _run_extraction_phase(
         progress_callback,
         title=metadata.title, authors=metadata.authors,
         year=metadata.year, abstract=metadata.abstract,
+        doi=metadata.doi,
     )
 
     analyzed_figures = await _analyze_paper_figures(extracted, llm_chain)

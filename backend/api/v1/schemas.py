@@ -53,6 +53,7 @@ class PaperResponse(BaseModel):
     authors: Optional[str] = None
     year: Optional[int] = None
     abstract: Optional[str] = None
+    doi: Optional[str] = None
     status: str
     progress: float = 0.0
     page_count: Optional[int] = None

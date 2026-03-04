@@ -27,6 +27,7 @@ class Paper(Base):
     authors: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
+    doi: Mapped[str | None] = mapped_column(String(256), nullable=True)
     status: Mapped[str] = mapped_column(
         SAEnum(PaperStatus), default=PaperStatus.REGISTERED, index=True
     )

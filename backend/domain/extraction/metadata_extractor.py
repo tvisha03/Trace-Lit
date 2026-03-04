@@ -12,6 +12,7 @@ class PaperMetadata:
     authors: str | None = None
     year: int | None = None
     abstract: str | None = None
+    doi: str | None = None
 
 
 _TEMPLATE_TITLE_PATTERNS = [
@@ -423,7 +424,7 @@ def _extract_year_from_text(head: str) -> int | None:
 
 
 def _extract_abstract_from_text(text: str) -> str | None:
-    search_area = text[:10000]
+    search_area = text[:20000]
 
     abstract_match = re.search(
         r"[_*]*\bAbstract\b[_*]*",
@@ -434,7 +435,8 @@ def _extract_abstract_from_text(text: str) -> str | None:
         return None
 
     after = search_area[abstract_match.end():]
-    after = re.sub(r"^[\s_*—\-:.]+", "", after)
+    after = re.sub(r"^[^\S\n]*[_*—\-:.]+[^\S\n]*", "", after)
+    after = after.lstrip()
 
     end_match = re.search(
         r"(?:"
@@ -450,11 +452,37 @@ def _extract_abstract_from_text(text: str) -> str | None:
 
     end_pos = min(end_match.start() if end_match else len(after), 3000)
     abstract = after[:end_pos].strip()
+    abstract = re.sub(r"^[_*—\s.]+", "", abstract)
     abstract = re.sub(r"\n+", " ", abstract)
     abstract = re.sub(r"\s{2,}", " ", abstract)
 
+    if re.match(r"^(?:Keywords?|Index\s+Terms|CCS\s+Concepts)\b", abstract, re.IGNORECASE):
+        return None
+
     if 30 < len(abstract) < 5000:
         return abstract
+    return None
+
+
+_DOI_PATTERN = re.compile(
+    r"(?:doi[:\s]*|https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/[^\s,;\"')\]]+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_doi(markdown_text: str, pdf_metadata: dict | None) -> str | None:
+    if pdf_metadata:
+        for key in ("doi", "subject", "keywords"):
+            raw = pdf_metadata.get(key, "")
+            if raw:
+                m = _DOI_PATTERN.search(raw)
+                if m:
+                    return m.group(1).rstrip(".")
+
+    head = markdown_text[:8000]
+    m = _DOI_PATTERN.search(head)
+    if m:
+        return m.group(1).rstrip(".")
     return None
 
 
@@ -483,10 +511,15 @@ def extract_metadata(
 
     abstract = _extract_abstract_from_text(markdown_text)
 
-    meta = PaperMetadata(title=title, authors=authors, year=year, abstract=abstract)
+    doi = _extract_doi(markdown_text, pdf_metadata)
+
+    meta = PaperMetadata(
+        title=title, authors=authors, year=year, abstract=abstract, doi=doi,
+    )
     logger.info(
         f"Extracted metadata: title={meta.title!r}, "
         f"authors={meta.authors!r:.80}, year={meta.year}, "
+        f"doi={meta.doi!r}, "
         f"abstract_len={len(meta.abstract) if meta.abstract else 0}"
     )
     return meta

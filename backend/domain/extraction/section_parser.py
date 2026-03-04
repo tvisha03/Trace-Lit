@@ -10,6 +10,17 @@ _MD_HEADING = re.compile(r"^(#{1,4})\s+(.+)$", re.MULTILINE)
 _NUMBERED_HEADING = re.compile(
     r"^(\d+(?:\.\d+)*)\s+([A-Z][A-Za-z\s:,\-–—]+)$", re.MULTILINE
 )
+_ROMAN_HEADING = re.compile(
+    r"^([IVXLC]+)[.\)]\s+([A-Z][A-Za-z\s:,\-–—]+)$", re.MULTILINE
+)
+_CHAPTER_HEADING = re.compile(
+    r"^(?:Chapter|CHAPTER)\s+(\d+|[IVXLC]+|[A-Za-z]+)"
+    r"(?:\s*[:.–—]\s*|\s+)([A-Z][A-Za-z\s:,\-–—]+)$",
+    re.MULTILINE,
+)
+_ALLCAPS_HEADING = re.compile(
+    r"^([A-Z][A-Z\s]{2,50})$", re.MULTILINE
+)
 _BOLD_NUMBERED_SPLIT = re.compile(
     r"^\*{2}(\d+(?:\.\d+)*|[IVXLC]+|[A-Z])[.\)\s]*\*{2}\s*\*{2}([^*\n]+)\*{2}\s*$",
     re.MULTILINE,
@@ -36,6 +47,9 @@ _KNOWN_SECTIONS = {
     "case study", "case studies", "implementation", "design",
     "overview", "problem statement", "research questions",
     "materials and methods", "procedures", "ethical considerations",
+    "table of contents", "list of figures", "list of tables",
+    "dedication", "preface", "glossary", "abbreviations",
+    "executive summary", "scope", "objectives", "contributions",
 }
 
 
@@ -76,14 +90,40 @@ def _find_bold_headings(markdown_text: str) -> list[Match]:
     return [h for h in all_named if _is_plausible_section_name(h.group(1).strip())]
 
 
+def _filter_allcaps_headings(matches: list[Match]) -> list[Match]:
+    return [
+        m for m in matches
+        if _is_plausible_section_name(m.group(1).strip())
+        and not _is_likely_person_name(m.group(1).strip().title())
+    ]
+
+
 def _find_headings(markdown_text: str) -> list[Match]:
     headings = list(_MD_HEADING.finditer(markdown_text))
     if headings:
         return headings
+
+    chap = list(_CHAPTER_HEADING.finditer(markdown_text))
+    if chap:
+        return chap
+
     headings = list(_NUMBERED_HEADING.finditer(markdown_text))
     if headings:
         return headings
-    return _find_bold_headings(markdown_text)
+
+    roman = list(_ROMAN_HEADING.finditer(markdown_text))
+    if len(roman) >= 2:
+        return roman
+
+    bold = _find_bold_headings(markdown_text)
+    if bold:
+        return bold
+
+    caps = _filter_allcaps_headings(list(_ALLCAPS_HEADING.finditer(markdown_text)))
+    if len(caps) >= 3:
+        return caps
+
+    return []
 
 
 def _extract_box_heading_text(text: str, start: int, stop: int) -> str:
@@ -92,6 +132,26 @@ def _extract_box_heading_text(text: str, start: int, stop: int) -> str:
     raw = raw.strip("*").strip()
     raw = re.sub(r"^\d+(\.\d+)*[.\)\s]+", "", raw).strip()
     return raw
+
+
+_SECTION_NUM_PREFIX = re.compile(
+    r"^(?:\d+(?:\.\d+)*|[IVXLC]+|[A-Z])[\s.)]+",
+)
+
+_PERSON_NAME_PATTERN = re.compile(
+    r"^(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})$",
+)
+
+
+def _is_likely_person_name(text: str) -> bool:
+    cleaned = text.strip()
+    if cleaned.lower() in _KNOWN_SECTIONS:
+        return False
+    if _SECTION_NUM_PREFIX.match(cleaned):
+        return False
+    if len(cleaned.split()) > 5:
+        return False
+    return bool(_PERSON_NAME_PATTERN.match(cleaned))
 
 
 def _parse_single_box(box: dict, page_text: str, page_num: int) -> dict | None:
@@ -105,6 +165,8 @@ def _parse_single_box(box: dict, page_text: str, page_num: int) -> dict | None:
         return None
     heading_text = _extract_box_heading_text(page_text, pos[0], pos[1])
     if not heading_text or len(heading_text) < 2:
+        return None
+    if _is_likely_person_name(heading_text):
         return None
     return {"text": heading_text, "class": cls, "page": page_num, "pos_start": pos[0]}
 
