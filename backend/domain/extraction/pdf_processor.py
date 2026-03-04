@@ -12,6 +12,7 @@ import pymupdf4llm
 import pymupdf.layout  # activates ONNX layout model — suppresses FutureWarning and enables improved page analysis
 from loguru import logger
 
+from domain.extraction.table_extractor import extract_tables, tables_to_markdown_sections
 from shared.errors import ExtractionError
 
 
@@ -96,7 +97,18 @@ def extract_pdf(pdf_path: str) -> Dict[str, Any]:
     metadata = _parse_metadata(raw_pages[0] if raw_pages else "", total_pages)
     sections = _detect_sections(raw_pages)
 
-    logger.info("Extraction complete: {} sections, {} pages", len(sections), total_pages)
+    # --- Table extraction ---------------------------------------------------
+    try:
+        tables = extract_tables(pdf_path, markdown_pages=raw_pages)
+        if tables:
+            table_sections = tables_to_markdown_sections(tables)
+            sections.extend(table_sections)
+            logger.info("Added {} table sections from PDF", len(table_sections))
+    except Exception as exc:
+        logger.warning("Table extraction failed (non-fatal): {}", exc)
+
+    logger.info("Extraction complete: {} sections ({} tables), {} pages",
+                len(sections), sum(1 for s in sections if s.get('is_table')), total_pages)
     return {"metadata": metadata, "sections": sections, "raw_pages": raw_pages}
 
 

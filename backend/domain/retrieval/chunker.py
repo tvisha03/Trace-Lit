@@ -72,8 +72,30 @@ class SentenceAwareChunker:
             section_title = section.get("title", "Unknown Section")
             section_page = section.get("page_start", 0)
             content = section.get("content", "")
+            is_table = section.get("is_table", False)
 
             if not content.strip():
+                continue
+
+            # Tables are kept as single chunks — never split into paragraphs
+            if is_table:
+                sentences = self._split_sentences(content)
+                sentence_map = self._build_sentence_map(sentences, content, global_para_idx)
+                enriched_text = f"[Paper: {paper_title}] [Section: {section_title}] {content}"
+
+                all_chunks.append({
+                    "paragraph_id": f"P{global_para_idx}",
+                    "text": content,
+                    "enriched_text": enriched_text,
+                    "sentences": sentence_map,
+                    "section": section_title,
+                    "page": section_page,
+                    "paper_id": paper_id,
+                    "paper_title": paper_title,
+                    "token_count": self._estimate_tokens(content),
+                    "is_table": True,
+                })
+                global_para_idx += 1
                 continue
 
             for para_text in self._split_paragraphs(content):
