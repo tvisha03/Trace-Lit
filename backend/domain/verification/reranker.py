@@ -74,6 +74,7 @@ def _update_source_reference(
     best_source = source_sentences[best_idx]
     result["source_sentence"] = best_source["text"]
     result["paragraph_id"] = best_source["paragraph_id"]
+    result["paper_id"] = best_source.get("paper_id")
     result["sentence_key"] = best_source.get("sentence_key")
 
 def _process_result(

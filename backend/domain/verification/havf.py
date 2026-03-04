@@ -23,6 +23,7 @@ class VerificationResult:
     score: float
     source_sentence: str | None
     paragraph_id: str | None
+    paper_id: str | None
     sentence_key: str | None
     verification_method: "VerificationMethod | None" = None
 
@@ -30,11 +31,13 @@ def build_source_sentences(chunks: list) -> list[dict]:
     sources = []
     for chunk in chunks:
         s_map = chunk.sentence_map if hasattr(chunk, "sentence_map") else {}
+        paper_id = str(chunk.paper_id) if hasattr(chunk, "paper_id") else None
         if isinstance(s_map, dict):
             for s_key, info in s_map.items():
                 sources.append({
                     "text": info["text"],
                     "paragraph_id": chunk.paragraph_id if hasattr(chunk, "paragraph_id") else None,
+                    "paper_id": paper_id,
                     "sentence_key": s_key,
                 })
     return sources
@@ -85,6 +88,7 @@ def _handle_missing_sources(claims: list[str]) -> list[VerificationResult]:
             score=0.0,
             source_sentence=None,
             paragraph_id=None,
+            paper_id=None,
             sentence_key=None,
             verification_method=VerificationMethod.SKIPPED,
         )
@@ -132,6 +136,7 @@ def _build_final_results(
             score=r.get("best_score", 0.0),
             source_sentence=r.get("source_sentence"),
             paragraph_id=r.get("paragraph_id"),
+            paper_id=r.get("paper_id"),
             sentence_key=r.get("sentence_key"),
             verification_method=method,
         ))

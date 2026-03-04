@@ -75,6 +75,7 @@ async def _emit_havf_results(full_text: str, chunks: list):
             "score": r.score,
             "source_sentence": r.source_sentence,
             "paragraph_id": r.paragraph_id,
+            "paper_id": r.paper_id,
             "sentence_key": r.sentence_key,
             "verification_method": r.verification_method.value if r.verification_method else None,
         }

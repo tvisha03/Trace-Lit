@@ -16,6 +16,10 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+_NON_TEXT_TYPES = frozenset({"figure", "table", "formula"})
+_NON_TEXT_RESERVED_SLOTS = 3
+_NON_TEXT_MIN_SCORE = 0.15
+
 @dataclass
 class RetrievedChunk:
     paragraph_id: str
@@ -77,6 +81,62 @@ async def _build_chunks(
     retrieved.sort(key=lambda r: r.score, reverse=True)
     return retrieved
 
+async def _boost_non_text_chunks(
+    retrieved: list[RetrievedChunk],
+    para_by_paper: dict[str, list[str]],
+    db_session,
+    query_vector,
+    faiss_store: FAISSStore,
+    paper_ids: list[str],
+) -> list[RetrievedChunk]:
+    existing_pids = {(c.paper_id, c.paragraph_id) for c in retrieved}
+    non_text_added = await _collect_non_text_chunks(paper_ids, db_session, existing_pids)
+
+    if non_text_added:
+        logger.info(
+            f"Diversity boost: added {len(non_text_added)} non-text chunks "
+            f"(figure/table/formula) to retrieval results"
+        )
+    return retrieved + non_text_added
+
+
+def _is_non_text_chunk(chunk) -> bool:
+    ct = chunk.chunk_type if hasattr(chunk, "chunk_type") else "text"
+    ct_val = ct.value if hasattr(ct, "value") else str(ct)
+    return ct_val in _NON_TEXT_TYPES
+
+
+def _chunk_to_retrieved(chunk) -> RetrievedChunk:
+    return RetrievedChunk(
+        paragraph_id=chunk.paragraph_id,
+        paper_id=str(chunk.paper_id),
+        text=chunk.text,
+        enriched_text=chunk.enriched_text,
+        section_title=chunk.section_title,
+        score=_NON_TEXT_MIN_SCORE,
+        sentence_map=chunk.sentence_map or {},
+    )
+
+
+async def _collect_non_text_chunks(
+    paper_ids: list[str],
+    db_session,
+    existing_pids: set[tuple[str, str]],
+) -> list[RetrievedChunk]:
+    non_text_added: list[RetrievedChunk] = []
+    for paper_id in paper_ids:
+        all_chunks = await get_chunks_by_paper(db_session, paper_id)
+        for chunk in all_chunks:
+            if not _is_non_text_chunk(chunk):
+                continue
+            if (str(chunk.paper_id), chunk.paragraph_id) in existing_pids:
+                continue
+            non_text_added.append(_chunk_to_retrieved(chunk))
+            if len(non_text_added) >= _NON_TEXT_RESERVED_SLOTS:
+                return non_text_added
+    return non_text_added
+
+
 async def retrieve(
     query: str,
     paper_ids: list[str],
@@ -106,6 +166,12 @@ async def retrieve(
 
     score_map, para_by_paper = _process_faiss_results(results)
     retrieved = await _build_chunks(results, para_by_paper, score_map, db_session)
+
+    retrieved = await _boost_non_text_chunks(
+        retrieved, para_by_paper, db_session,
+        query_vector, faiss_store, paper_ids,
+    )
+
     use_balanced = _should_use_balanced_budget(classification)
 
     return _apply_token_budget(retrieved, balanced=use_balanced)

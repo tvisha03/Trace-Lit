@@ -19,6 +19,15 @@ _PRIORITY_SECTIONS = frozenset({
     "abstract", "introduction", "conclusion",
     "summary", "discussion", "results",
 })
+_SUMMARY_PRIORITY_SECTIONS = frozenset({
+    "abstract", "introduction", "conclusion",
+    "summary", "discussion", "results",
+    "methodology", "methods", "approach",
+    "contributions", "findings", "evaluation",
+})
+_SUMMARY_MAX_CHUNKS = 25
+_SUMMARY_PRIORITY_SLOTS = 15
+_SUMMARY_BODY_SLOTS = 10
 
 
 def _prepare_keyword_text(
@@ -189,6 +198,29 @@ async def stream_literature_review(
         }))
 
 
+def _select_summary_chunks(chunks: list, max_total: int = _SUMMARY_MAX_CHUNKS) -> list:
+    priority: list = []
+    body: list = []
+
+    for c in chunks:
+        section = (getattr(c, "section_title", None) or "").lower()
+        if any(s in section for s in _SUMMARY_PRIORITY_SECTIONS):
+            priority.append(c)
+        else:
+            body.append(c)
+
+    selected = priority[:_SUMMARY_PRIORITY_SLOTS]
+    remaining_slots = max_total - len(selected)
+
+    if remaining_slots > 0:
+        selected.extend(body[:remaining_slots])
+
+    if not selected:
+        selected = chunks[:max_total]
+
+    return selected
+
+
 async def generate_paper_summary(
     paper_id: str,
     db: AsyncSession,
@@ -206,7 +238,8 @@ async def generate_paper_summary(
             "Please wait for processing to complete before requesting a summary."
         )
 
-    context = build_context_block(chunks[:20])
+    selected = _select_summary_chunks(chunks)
+    context = build_context_block(selected)
     user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
         context=context, question=user_question
     )
@@ -214,10 +247,12 @@ async def generate_paper_summary(
     summary_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
+        max_tokens=4096,
     )
 
     logger.info(
-        f"Generated summary for paper {paper_id} using {provider.value}"
+        f"Generated summary for paper {paper_id} "
+        f"({len(selected)} chunks selected) using {provider.value}"
     )
     return {
         "paper_id": paper_id,

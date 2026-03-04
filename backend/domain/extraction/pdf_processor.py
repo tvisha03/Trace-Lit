@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -7,6 +8,9 @@ try:
     _LAYOUT_MODE = True
 except ImportError:
     _LAYOUT_MODE = False
+
+logging.getLogger("pymupdf").setLevel(logging.ERROR)
+logging.getLogger("pymupdf4llm").setLevel(logging.ERROR)
 
 from shared.logger import get_logger
 from shared.errors import PDFExtractionError

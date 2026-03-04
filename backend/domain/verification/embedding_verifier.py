@@ -40,6 +40,7 @@ def _build_result(
         "best_score": best_score,
         "source_sentence": best_source["text"],
         "paragraph_id": best_source["paragraph_id"],
+        "paper_id": best_source.get("paper_id"),
         "sentence_key": best_source.get("sentence_key"),
         "needs_reranking": needs_reranking,
     }
@@ -74,6 +75,7 @@ def verify_claims_embedding(
                 "best_score": 0.0,
                 "source_sentence": None,
                 "paragraph_id": None,
+                "paper_id": None,
                 "sentence_key": None,
                 "needs_reranking": False,
             }

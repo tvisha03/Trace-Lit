@@ -227,6 +227,7 @@ async def generate_comparison(
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
+        max_tokens=4096,
     )
     return response_text, provider
 
@@ -243,6 +244,7 @@ async def generate_summary(
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
+        max_tokens=4096,
     )
     return response_text, provider
 
