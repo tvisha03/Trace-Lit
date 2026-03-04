@@ -26,6 +26,12 @@ _MIN_SOURCE_SENTENCE_WORDS: int = 5
 # Inline image markdown pattern: ![alt](url) — from formula/figure extraction.
 _IMG_MD_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
+# Metadata patterns to exclude: table/figure/equation headers and structural labels
+_TABLE_HEADER_RE = re.compile(r"^Table\s+\d+\s*:", re.IGNORECASE)
+_FIGURE_HEADER_RE = re.compile(r"^Figure\s+\d+\s*:|^Fig\.\s+\d+\s*:", re.IGNORECASE)
+_EQUATION_HEADER_RE = re.compile(r"^Eq(?:uation)?\s+\d+\s*:|^Formula\s+\d+\s*:", re.IGNORECASE)
+_STRUCTURAL_LABEL_RE = re.compile(r"^(?:Stack|Goal|State|Input|Output)\s+\d*\s*:", re.IGNORECASE)
+
 # Pattern for paragraph-id citation tags emitted by the LLM.
 # Format: [<8-hex-chars>_<type><digits>] where type ∈ {P, T, F, E}.
 # Example: [e35139f3_T100], [1d91788c_P354], [fa79fa43_E917]
@@ -91,42 +97,42 @@ def _apply_citation_correction(
     return corrected
 
 
+def _is_metadata_header(text: str) -> bool:
+    """Check if text is a metadata header (table/figure/equation/structure label)."""
+    return bool(
+        _TABLE_HEADER_RE.match(text)
+        or _FIGURE_HEADER_RE.match(text)
+        or _EQUATION_HEADER_RE.match(text)
+        or _STRUCTURAL_LABEL_RE.match(text)
+    )
+
+
+def _has_meaningful_content_after_images(text: str) -> bool:
+    """Check if text has meaningful content after removing inline image markdown."""
+    without_images = _IMG_MD_RE.sub("", text).strip()
+    return len(without_images.split()) >= _MIN_SOURCE_SENTENCE_WORDS
+
+
 def _is_noise_source(text: str) -> bool:
     """Return True for sentences that should not be used as verification sources.
 
     Filters out:
-    - Very short entries (< _MIN_SOURCE_SENTENCE_WORDS words)
-    - Bibliography list markers that start with "- [" (e.g. "- [43] Art of Problem …")
-    - Markdown table rows starting with "|…" (inline tables extracted from PDF text)
-    - Entries whose only real content is inline image markdown ``![alt](url)``
-      (these come from formula/figure chunks that embed file-system paths)
+    - Very short entries (< 5 words)
+    - Bibliography markers ("- [...")
+    - Markdown table rows ("|...")
+    - Metadata headers (table/figure/equation/structure labels)
+    - Only image markdown with no real content
     """
     stripped = text.strip()
-    if len(stripped.split()) < _MIN_SOURCE_SENTENCE_WORDS:
-        return True
-    # Reference-list entries produced by markdown rendering of bibliography sections
-    if stripped.startswith("- ["):
-        return True
-    # Markdown table rows embedded in text chunks (e.g. "|**Model**|**Chat**|...")
-    # These are structural, not human-readable sentences.
-    if stripped.startswith("|"):
-        return True
-    # Strip inline image markdown and check if anything meaningful remains.
-    # A sentence like "![](data/uploads/…)" has no verifiable text content.
-    without_images = _IMG_MD_RE.sub("", stripped).strip()
-    if len(without_images.split()) < _MIN_SOURCE_SENTENCE_WORDS:
-        return True
-    return False
 
+    # Too short or structural markers
+    if (len(stripped.split()) < _MIN_SOURCE_SENTENCE_WORDS
+        or stripped.startswith(("- [", "|"))
+        or _is_metadata_header(stripped)):
+        return True
 
-def _get_short_sentence_threshold() -> int:
-    """Get the short sentence threshold from config, fallback to constants."""
-    try:
-        from app.config import get_settings
-        return get_settings().HAVF_SHORT_SENTENCE_WORDS
-    except Exception:
-        return _DEFAULT_SHORT_WORDS
-
+    # Must have content after removing inline images
+    return not _has_meaningful_content_after_images(stripped)
 @dataclass
 class VerificationResult:
     claim: str

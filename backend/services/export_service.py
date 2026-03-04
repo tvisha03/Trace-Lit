@@ -57,6 +57,7 @@ async def _export_chat_as_pdf(
 
 async def _export_chat_as_excel(
     session_id: str,
+    session_title: str,
     messages: list[dict],
     filename: str,
     file_storage: FileStorage,
@@ -66,6 +67,8 @@ async def _export_chat_as_excel(
         export_citations_to_excel,
         citations=_flatten_citations(messages),
         output_path=output_path,
+        session_title=session_title,
+        messages=messages,
     )
     _check_export_size(result)
     return result
@@ -214,6 +217,7 @@ async def _export_comparison_as_pdf(
 
 async def _export_comparison_as_excel(
     session_id: str,
+    comparison_content: str,
     paper_titles: list[str],
     filename: str,
     file_storage: FileStorage,
@@ -234,6 +238,7 @@ async def _export_comparison_as_excel(
         export_comparison_to_excel,
         paper_data=paper_data,
         output_path=output_path,
+        comparison_content=comparison_content,
     )
     _check_export_size(result)
     return result
@@ -323,13 +328,12 @@ async def export_comparison(
 
     handler = handlers[export_format]
     if export_format == ExportFormat.EXCEL:
-        # Bug-6 fix: use keyword args so parameter reordering can never cause
-        # a silent mismatch between the caller and _export_comparison_as_excel.
         return await handler(
-            session_id,
-            paper_titles,
-            filename,
-            file_storage,
+            session_id=session_id,
+            comparison_content=comparison_content,
+            paper_titles=paper_titles,
+            filename=filename,
+            file_storage=file_storage,
             paper_ids=paper_ids,
             db=db,
         )

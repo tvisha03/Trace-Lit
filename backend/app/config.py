@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
-    USE_LOCAL_LLM: bool = False
-    OLLAMA_MODEL: str = "llama3.2:3b"
+    USE_LOCAL_LLM: bool = True
+    OLLAMA_MODEL: str = "mistral:latest"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     @field_validator("OLLAMA_BASE_URL")

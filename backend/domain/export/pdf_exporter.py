@@ -1,9 +1,8 @@
 
 from pathlib import Path
-from html import escape
-
 from shared.logger import get_logger
 from shared.errors import PDFExportError
+from shared.utils.export_text import clean_for_export, sanitize_for_pdf
 from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
@@ -39,7 +38,7 @@ def _render_havf_results(pdf, havf_results: list[dict]) -> None:
 
     for result in havf_results:
         confidence = result.get("confidence", "low")
-        claim = result.get("claim", "")[:120]
+        claim = sanitize_for_pdf(result.get("claim", "")[:120])
         paragraph_id = result.get("paragraph_id", "")
         score = result.get("score", 0)
 
@@ -50,7 +49,7 @@ def _render_havf_results(pdf, havf_results: list[dict]) -> None:
         line = f"  {confidence.upper()} ({score:.2f})"
         if paragraph_id:
             line += f" [{paragraph_id}]"
-        line += f" — \"{claim}\""
+        line += f' -- "{claim}"'
         pdf.multi_cell(w=0, h=3.5, text=line)
 
     pdf.set_text_color(0, 0, 0)
@@ -63,7 +62,7 @@ def _render_message_block(pdf, msg: dict) -> None:
 
     _render_message_role(pdf, role)
     pdf.set_font("Helvetica", "", 9)
-    pdf.multi_cell(w=0, h=4, text=escape(content))
+    pdf.multi_cell(w=0, h=4, text=clean_for_export(content))
 
     if havf_results:
         _render_havf_results(pdf, havf_results)
@@ -89,7 +88,7 @@ def export_chat_to_pdf(
             pdf.add_page()
 
             pdf.set_font("Helvetica", "B", 14)
-            pdf.cell(w=0, h=10, text=_truncate_text(session_title, 200), ln=True, align="C")
+            pdf.cell(w=0, h=10, text=sanitize_for_pdf(_truncate_text(session_title, 200)), ln=True, align="C")
             pdf.ln(3)
 
             for msg in messages:
@@ -122,7 +121,7 @@ def export_comparison_to_pdf(
         pdf.add_page()
 
         pdf.set_font("Helvetica", "B", 14)
-        pdf.cell(w=0, h=10, text=_truncate_text(title, 200), ln=True, align="C")
+        pdf.cell(w=0, h=10, text=sanitize_for_pdf(_truncate_text(title, 200)), ln=True, align="C")
 
         pdf.ln(3)
         pdf.set_font("Helvetica", "B", 11)
@@ -130,16 +129,16 @@ def export_comparison_to_pdf(
         pdf.set_font("Helvetica", "", 9)
 
         for paper in paper_titles:
-            truncated_paper = _truncate_text(paper, 200)
-            pdf.cell(w=5, h=4, text="•")
-            pdf.multi_cell(w=0, h=4, text=escape(truncated_paper))
+            truncated_paper = sanitize_for_pdf(_truncate_text(paper, 200))
+            pdf.cell(w=5, h=4, text="*")
+            pdf.multi_cell(w=0, h=4, text=truncated_paper)
 
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 11)
         pdf.cell(w=0, h=6, text="Comparison:", ln=True)
         pdf.set_font("Helvetica", "", 9)
 
-        pdf.multi_cell(w=0, h=4, text=escape(comparison_content))
+        pdf.multi_cell(w=0, h=4, text=clean_for_export(comparison_content))
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         pdf.output(str(output_path))

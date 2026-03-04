@@ -226,6 +226,54 @@ def create_figure_chunks(
     return chunks
 
 
+def _build_table_semantic_description(
+    paper_title: str | None,
+    caption: str,
+    rows: int,
+    cols: int,
+) -> str:
+    """Build semantic description for table (for LLM context)."""
+    parts = []
+    if paper_title:
+        parts.append(f"This table is from the paper '{paper_title}'.")
+    if caption:
+        parts.append(f"It presents: {caption}.")
+    if rows or cols:
+        parts.append(f"The table contains {rows} data rows across {cols} columns.")
+    return " ".join(parts)
+
+
+def _build_table_text_variants(
+    paper_title: str | None,
+    caption: str,
+    rows: int,
+    cols: int,
+    page_number: int,
+    table_content: str,
+) -> tuple[str, str, str]:
+    """Build display_text, enriched_text, and havf_text for a table chunk.
+
+    Returns: (display_text, enriched_text, havf_text)
+    """
+    # Build prefix with metadata
+    prefix_parts = []
+    if paper_title:
+        prefix_parts.append(f"[Paper: {paper_title}]")
+    prefix_parts.append(f"[TABLE, page {page_number}, {rows} rows × {cols} cols]")
+    if caption:
+        prefix_parts.append(f"[Caption: {caption}]")
+    prefix = " ".join(prefix_parts)
+
+    semantic_desc = _build_table_semantic_description(paper_title, caption, rows, cols)
+
+    # Construct the three text variants
+    display_text = f"{caption}\n{table_content}" if caption else table_content
+    enriched_text = f"{prefix}\n{semantic_desc}\n{table_content}" if semantic_desc else f"{prefix}\n{table_content}"
+    havf_text = caption if caption else f"Table on page {page_number}"
+
+    return display_text, enriched_text, havf_text
+
+
 def create_table_chunks(
     tables: list,
     paper_title: str | None = None,
@@ -236,45 +284,16 @@ def create_table_chunks(
 
     for offset, table in enumerate(tables):
         idx = start_idx + offset
+        paragraph_id = f"{paper_id[:8]}_T{idx}" if paper_id else f"T{idx}"
 
-        if paper_id:
-            paragraph_id = f"{paper_id[:8]}_T{idx}"
-        else:
-            paragraph_id = f"T{idx}"
-
-        text = table.content
         caption = getattr(table, "caption", "") or ""
         rows = getattr(table, "row_count", 0)
         cols = getattr(table, "col_count", 0)
 
-        prefix_parts = []
-        if paper_title:
-            prefix_parts.append(f"[Paper: {paper_title}]")
-        prefix_parts.append(f"[TABLE, page {table.page_number}, {rows} rows \u00d7 {cols} cols]")
-        if caption:
-            prefix_parts.append(f"[Caption: {caption}]")
-        prefix = " ".join(prefix_parts)
+        display_text, enriched_text, havf_text = _build_table_text_variants(
+            paper_title, caption, rows, cols, table.page_number, table.content
+        )
 
-        # Semantic description in plain English so the LLM understands what this
-        # table represents and how it relates to the paper, enabling accurate
-        # [T#] citations and fact-checking during HAVF verification.
-        semantic_parts = []
-        if paper_title:
-            semantic_parts.append(f"This table is from the paper '{paper_title}'.")
-        if caption:
-            semantic_parts.append(f"It presents: {caption}.")
-        if rows or cols:
-            semantic_parts.append(f"The table contains {rows} data rows across {cols} columns.")
-        semantic_desc = " ".join(semantic_parts)
-
-        enriched_text = f"{prefix}\n{semantic_desc}\n{text}" if semantic_desc else f"{prefix}\n{text}"
-
-        display_text = f"{caption}\n{text}" if caption else text
-
-        # Use only the caption as the HAVF verification sentence.
-        # The full markdown table body is unsuitable for embedding-based
-        # similarity checks; the caption is concise and verifiable.
-        havf_text = caption if caption else f"Table on page {table.page_number}"
         sentence_map = {
             f"{paragraph_id}_S0": {
                 "text": havf_text,

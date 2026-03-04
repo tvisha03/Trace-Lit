@@ -428,6 +428,58 @@ async def _collect_paper_image_paths(paper_id: str, db: AsyncSession) -> list[st
     return [c.image_path for c in chunks if c.image_path]
 
 
+def _remove_paper_from_faiss(
+    paper_id: str,
+    faiss_store: FAISSStore,
+) -> None:
+    """Remove paper vectors from FAISS index.
+
+    Logs but doesn't raise; index reconciles on restart if needed.
+    """
+    try:
+        faiss_store.remove_paper(paper_id)
+        faiss_store.save()
+    except Exception as exc:
+        logger.warning(
+            f"FAISS removal for paper {paper_id} failed after DB delete — "
+            f"index will be reconciled on restart: {exc}"
+        )
+
+
+def _delete_paper_pdf(
+    paper_id: str,
+    pdf_path: "Path | None",
+) -> None:
+    """Delete uploaded PDF file if it exists."""
+    from pathlib import Path
+
+    if not pdf_path:
+        return
+    try:
+        pdf_path.unlink(missing_ok=True)
+        logger.info(f"Deleted uploaded PDF for paper {paper_id}: {pdf_path}")
+    except Exception as exc:
+        logger.warning(f"Could not delete PDF for paper {paper_id}: {exc}")
+
+
+def _delete_paper_images(
+    paper_id: str,
+    image_paths: list[str],
+) -> None:
+    """Delete figure/chart images extracted from the paper."""
+    from pathlib import Path
+
+    deleted_images = 0
+    for img_str in image_paths:
+        try:
+            Path(img_str).unlink(missing_ok=True)
+            deleted_images += 1
+        except Exception as exc:
+            logger.warning(f"Could not delete image {img_str}: {exc}")
+    if deleted_images:
+        logger.info(f"Deleted {deleted_images} figure image(s) for paper {paper_id}")
+
+
 async def delete_paper(
     paper_id: str,
     db: AsyncSession,
@@ -447,34 +499,10 @@ async def delete_paper(
     await delete_chunks_by_paper(db, paper_id)
     await db_delete_paper(db, paper_id)
 
-    # Remove FAISS vectors — log but don't raise; index reconciles on restart.
-    try:
-        faiss_store.remove_paper(paper_id)
-        faiss_store.save()
-    except Exception as exc:
-        logger.warning(
-            f"FAISS removal for paper {paper_id} failed after DB delete — "
-            f"index will be reconciled on restart: {exc}"
-        )
-
-    # Delete uploaded PDF file.
-    if pdf_path:
-        try:
-            pdf_path.unlink(missing_ok=True)
-            logger.info(f"Deleted uploaded PDF for paper {paper_id}: {pdf_path}")
-        except Exception as exc:
-            logger.warning(f"Could not delete PDF for paper {paper_id}: {exc}")
-
-    # Delete figure/chart images extracted from this paper.
-    deleted_images = 0
-    for img_str in image_paths:
-        try:
-            Path(img_str).unlink(missing_ok=True)
-            deleted_images += 1
-        except Exception as exc:
-            logger.warning(f"Could not delete image {img_str}: {exc}")
-    if deleted_images:
-        logger.info(f"Deleted {deleted_images} figure image(s) for paper {paper_id}")
+    # Clean up FAISS, PDF file, and extracted images.
+    _remove_paper_from_faiss(paper_id, faiss_store)
+    _delete_paper_pdf(paper_id, pdf_path)
+    _delete_paper_images(paper_id, image_paths)
 
     return True
 

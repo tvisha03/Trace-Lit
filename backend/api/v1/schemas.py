@@ -237,6 +237,8 @@ class VerifyResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+    use_local_llm: bool = False
+    provider_order: list[str] = []
     providers: dict[str, bool] = {}
     db: bool = False
     faiss: bool = False

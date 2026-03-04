@@ -71,6 +71,28 @@ def _create_theme_clusters(
 
     return themes
 
+def _create_singleton_themes(
+    unclustered_keywords: list[str],
+    keyword_to_papers: dict[str, set[str]],
+    total_papers: int,
+) -> list[ThemeCluster]:
+    """Fallback: create one ThemeCluster per unclustered keyword.
+
+    Ensures the user always sees keyword coverage data even when DBSCAN
+    cannot form multi-keyword clusters (common with small paper sets).
+    """
+    themes: list[ThemeCluster] = []
+    for kw in unclustered_keywords:
+        covering = keyword_to_papers.get(kw, set())
+        coverage_ratio = len(covering) / total_papers if total_papers > 0 else 0.0
+        themes.append(ThemeCluster(
+            theme_label=kw,
+            keywords=[kw],
+            papers_covering=list(covering),
+            coverage_ratio=coverage_ratio,
+        ))
+    return themes
+
 def find_gaps(
     paper_keywords: dict[str, list[dict]],
     min_coverage_ratio: float = 0.5,
@@ -83,12 +105,20 @@ def find_gaps(
     embeddings = encode_texts(all_keywords)
 
     from sklearn.cluster import DBSCAN
-    clustering = DBSCAN(eps=0.4, min_samples=2, metric="cosine")
+    clustering = DBSCAN(eps=0.55, min_samples=2, metric="cosine")
     labels = clustering.fit_predict(embeddings)
 
     cluster_map = _build_cluster_map(embeddings, labels, all_keywords)
     total_papers = len(paper_keywords)
     themes = _create_theme_clusters(cluster_map, keyword_to_papers, total_papers)
+
+    # Fallback: if DBSCAN produced no clusters, promote unclustered keywords
+    # so the gap analysis still returns meaningful coverage data.
+    if not themes:
+        unclustered = [kw for idx, kw in enumerate(all_keywords) if labels[idx] == -1]
+        themes = _create_singleton_themes(
+            unclustered, keyword_to_papers, total_papers,
+        )
 
     underexplored = [t for t in themes if t.coverage_ratio < min_coverage_ratio]
     themes.sort(key=lambda t: t.coverage_ratio, reverse=True)

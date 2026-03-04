@@ -20,7 +20,8 @@ class RuntimeConfig:
     """Thread-safe runtime configuration that persists across requests."""
 
     def __init__(self):
-        self._use_local_llm: bool = False
+        from app.config import get_settings
+        self._use_local_llm: bool = get_settings().USE_LOCAL_LLM
 
     @property
     def use_local_llm(self) -> bool:
@@ -70,7 +71,9 @@ async def toggle_ollama(request: Request, body: OllamaToggleRequest):
 
         llm = getattr(request.app.state, "llm", None)
         if llm is not None:
-            new_chain = llm._build_chain()
+            # Pass the explicit toggle value so _build_chain uses it
+            # instead of reading from the frozen settings singleton.
+            new_chain = llm._build_chain(use_local_llm=body.use_local_llm)
             llm._providers = new_chain
             logger.info(
                 f"Ollama toggle: USE_LOCAL_LLM={body.use_local_llm}, "

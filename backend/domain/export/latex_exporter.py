@@ -1,9 +1,8 @@
 
 from pathlib import Path
-import re
-
 from shared.logger import get_logger
 from shared.errors import TraceLitError
+from shared.utils.export_text import strip_markdown
 
 logger = get_logger(__name__)
 
@@ -32,6 +31,26 @@ def _confidence_color(confidence: str) -> str:
     if confidence == "medium":
         return "orange!80!black"
     return "red!70!black"
+
+
+def _add_verification_section_latex(lines: list[str], havf_results: list) -> None:
+    """Add verification items LaTeX lines to the document."""
+    lines.append(r"\smallskip")
+    lines.append(r"\noindent\textit{Verification:}")
+    lines.append(r"\begin{itemize}[leftmargin=1.5em,itemsep=0pt]")
+    for r in havf_results:
+        confidence = r.get("confidence", "low")
+        claim = r.get("claim", "")[:200]
+        paragraph_id = r.get("paragraph_id", "")
+        score = r.get("score", 0)
+        label = f"{confidence.upper()} ({score:.2f})"
+        if paragraph_id:
+            label += f" [{_escape_latex(paragraph_id)}]"
+        label += f' --- ``{_escape_latex(claim)}``'
+        color = _confidence_color(confidence)
+        lines.append(r"  \item \textcolor{" + color + "}{" + label + "}")
+    lines.append(r"\end{itemize}")
+    lines.append("")
 
 
 _LATEX_PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
@@ -71,30 +90,11 @@ def export_chat_to_latex(
         lines.append(r"\subsection*{[" + _escape_latex(role) + "]}")
         lines.append("")
 
-        lines.append(_escape_latex(content))
+        lines.append(_escape_latex(strip_markdown(content)))
         lines.append("")
 
         if havf_results:
-            lines.append(r"\smallskip")
-            lines.append(r"\noindent\textit{Verification:}")
-            lines.append(r"\begin{itemize}[leftmargin=1.5em,itemsep=0pt]")
-            for r in havf_results:
-                confidence = r.get("confidence", "low")
-                claim = r.get("claim", "")[:200]
-                paragraph_id = r.get("paragraph_id", "")
-                score = r.get("score", 0)
-
-                label = f"{confidence.upper()} ({score:.2f})"
-                if paragraph_id:
-                    label += f" [{_escape_latex(paragraph_id)}]"
-                label += f' --- ``{_escape_latex(claim)}``'
-
-                color = _confidence_color(confidence)
-                lines.append(
-                    r"  \item \textcolor{" + color + "}{" + label + "}"
-                )
-            lines.append(r"\end{itemize}")
-            lines.append("")
+            _add_verification_section_latex(lines, havf_results)
 
     lines.append(r"\end{document}")
     lines.append("")
@@ -135,7 +135,7 @@ def export_comparison_to_latex(
     lines.append("")
 
     lines.append(r"\section*{Comparison}")
-    lines.append(_escape_latex(comparison_content))
+    lines.append(_escape_latex(strip_markdown(comparison_content)))
     lines.append("")
 
     lines.append(r"\end{document}")
