@@ -40,6 +40,11 @@ data/
 # Test papers (copyrighted PDFs)
 test_papers/
 
+# Postman VS Code extension workspace (auto-generated YAML exploded from JSON)
+# The canonical collection lives at backend/postman/*.json
+.postman/
+postman/
+
 
 #Ignore vscode AI rules
 .github\instructions\codacy.instructions.md

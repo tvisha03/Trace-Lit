@@ -21,6 +21,7 @@ from shared.constants import (
     PAPER_PROCESSING_TIMEOUT_SECONDS,
 )
 from shared.errors import FileValidationError, ForbiddenError, NotFoundError, TraceLitError
+from shared.enums import PaperStatus
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
 from shared.utils.file_utils import check_disk_space
 from shared.logger import get_logger
@@ -85,16 +86,22 @@ async def _validate_upload_preconditions(
 async def _validate_session_capacity(
     session_id: str, files: list[UploadFile], db: AsyncSession,
 ) -> set[str]:
+    from pathlib import Path as _Path
+
     existing_papers = await get_session_papers(db, session_id)
-    if len(existing_papers) + len(files) > MAX_PAPERS_PER_SESSION:
-        allowed = MAX_PAPERS_PER_SESSION - len(existing_papers)
+    # Only count non-failed papers toward capacity and duplicate checks.
+    # Failed papers have no file on disk; users should be able to retry.
+    active_papers = [p for p in existing_papers if p.status != PaperStatus.FAILED]
+    if len(active_papers) + len(files) > MAX_PAPERS_PER_SESSION:
+        allowed = MAX_PAPERS_PER_SESSION - len(active_papers)
         raise FileValidationError(
-            f"Session already has {len(existing_papers)} paper(s). "
+            f"Session already has {len(active_papers)} paper(s). "
             f"Maximum {MAX_PAPERS_PER_SESSION} papers per session; "
             f"you can upload at most {max(0, allowed)} more."
         )
-    existing_filenames = {p.filename for p in existing_papers}
-    incoming_filenames = [f.filename for f in files if f.filename]
+    existing_filenames = {p.filename for p in active_papers}
+    # Compare basenames only — some clients send full filesystem paths
+    incoming_filenames = [_Path(f.filename).name for f in files if f.filename]
     duplicates = [fn for fn in incoming_filenames if fn in existing_filenames]
     if duplicates:
         dup_list = ", ".join(duplicates[:5])
@@ -153,13 +160,17 @@ async def _register_paper(
     file_storage: FileStorage,
 ) -> str:
     """Save file and register paper record in DB. Does not start processing."""
+    from pathlib import Path as _Path
+
     size_mb = len(content) / (1024 * 1024)
     file_path = file_storage.save_upload(content, upload_file.filename, session_id)
+    # Use the basename so the DB record never stores a raw client-side path
+    safe_filename = _Path(upload_file.filename).name
 
     paper_id = await register_paper(
         db,
         session_id=session_id,
-        filename=upload_file.filename,
+        filename=safe_filename,
         file_path=str(file_path),
         file_size_mb=round(size_mb, 2),
         content_hash=content_hash,
@@ -324,6 +335,7 @@ async def list_papers(
             authors=p.authors,
             year=p.year,
             abstract=p.abstract,
+            doi=p.doi,
             status=p.status.value if hasattr(p.status, "value") else p.status,
             progress=p.progress or 0.0,
             page_count=p.page_count,
@@ -357,6 +369,7 @@ async def get_paper(
         authors=paper.authors,
         year=paper.year,
         abstract=paper.abstract,
+        doi=paper.doi,
         status=paper.status.value if hasattr(paper.status, "value") else paper.status,
         progress=paper.progress or 0.0,
         page_count=paper.page_count,

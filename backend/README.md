@@ -29,9 +29,25 @@ python -m scripts.download_models
 
 ### 4. Run the server
 
+**macOS / Linux**
 ```bash
-uvicorn app.main:app --reload --port 8000
+make dev
 ```
+
+**Windows (PowerShell)**
+```powershell
+$env:KMP_DUPLICATE_LIB_OK="TRUE"
+.venv\Scripts\uvicorn app.main:app --reload --port 8000
+```
+
+**Windows (CMD)**
+```cmd
+set KMP_DUPLICATE_LIB_OK=TRUE && .venv\Scripts\uvicorn app.main:app --reload --port 8000
+```
+
+> **Why `KMP_DUPLICATE_LIB_OK=TRUE`?** `torch` and `faiss-cpu` both ship their own OpenMP runtime. Without this flag Python crashes on import. `make dev` sets it automatically on macOS/Linux. Windows users must set it in their shell session or add it to their system environment variables.
+>
+> Windows users can also install `make` (`choco install make` / `scoop install make`) and then use `make dev` identically.
 
 The API is available at `http://localhost:8000/api/v1`.  
 Interactive docs at `http://localhost:8000/docs`.

@@ -23,9 +23,18 @@ class FileStorage:
             content = file.read()
         if not content:
             raise ValueError(f"File '{filename}' is empty; refusing to save.")
+
+        # SEC: Strip directory components to prevent path traversal.
+        # Some clients (e.g. Postman) send the full filesystem path as the
+        # filename, causing Path(dest_dir / absolute_path) to resolve outside
+        # the uploads directory.  Using Path.name extracts only the basename.
+        safe_name = Path(filename).name
+        if not safe_name:
+            raise ValueError(f"Invalid filename: '{filename}'")
+
         dest_dir = self._uploads / session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / filename
+        dest = dest_dir / safe_name
         try:
             dest.write_bytes(content)
         except OSError as exc:

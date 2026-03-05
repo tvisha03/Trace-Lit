@@ -10,7 +10,7 @@ MAX_SESSIONS: int = 50  # Max concurrent sessions
 
 # ============== Processing Limits ==============
 MAX_PARALLEL_PAPERS: int = 3  # Concurrent paper processing limit
-MEMORY_PRESSURE_THRESHOLD: float = 0.75  # 75% memory usage triggers pressure handling
+MEMORY_PRESSURE_THRESHOLD: float = 0.85  # 85% memory usage triggers pressure handling
 PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600  # 10 minute timeout per paper
 
 # ============== Embedding Configuration ==============
