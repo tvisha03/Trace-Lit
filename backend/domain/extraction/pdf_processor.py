@@ -292,23 +292,26 @@ def _get_ocr_function():
         logger.info("RapidOCR not available — OCR disabled for scanned pages")
         return None
 
-def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
-    import pymupdf4llm
-
-    kwargs = {
+def _build_layout_kwargs(write_images: bool, figure_dir: Path) -> dict:
+    kwargs: dict = {
         "page_chunks": True,
-        "write_images": True,
-        "image_path": str(figure_dir),
-        "image_format": FIGURE_IMAGE_FORMAT,
-        "dpi": FIGURE_IMAGE_DPI,
+        "write_images": write_images,
         "force_text": True,
     }
-
+    if write_images:
+        kwargs["image_path"] = str(figure_dir)
+        kwargs["image_format"] = FIGURE_IMAGE_FORMAT
+        kwargs["dpi"] = FIGURE_IMAGE_DPI
     if _LAYOUT_MODE:
         kwargs["table_strategy"] = ""
     else:
         kwargs["image_size_limit"] = FIGURE_MIN_SIZE_RATIO
+    return kwargs
 
+def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
+    import pymupdf4llm
+
+    kwargs = _build_layout_kwargs(write_images=True, figure_dir=figure_dir)
     ocr_fn = _get_ocr_function()
     if ocr_fn:
         kwargs["ocr"] = ocr_fn
@@ -316,8 +319,135 @@ def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
     logger.info(
         f"Running {'layout' if _LAYOUT_MODE else 'legacy'} extraction on {file_path.name}"
     )
-
     return pymupdf4llm.to_markdown(str(file_path), **kwargs)
+
+def _run_layout_extraction_no_images(file_path: Path, figure_dir: Path) -> list[dict]:
+    import pymupdf4llm
+
+    kwargs = _build_layout_kwargs(write_images=False, figure_dir=figure_dir)
+    ocr_fn = _get_ocr_function()
+    if ocr_fn:
+        kwargs["ocr"] = ocr_fn
+
+    logger.info(
+        f"Running {'layout' if _LAYOUT_MODE else 'legacy'} (no-image) extraction on {file_path.name}"
+    )
+    return pymupdf4llm.to_markdown(str(file_path), **kwargs)
+
+def _run_plain_text_extraction(file_path: Path) -> list[dict]:
+    import pymupdf
+
+    logger.info(f"Running plain-text fallback extraction on {file_path.name}")
+    doc = pymupdf.open(str(file_path))
+    page_chunks: list[dict] = []
+    try:
+        for page_num, page in enumerate(doc):
+            text = page.get_text("text")
+            page_chunks.append({
+                "metadata": {"page": page_num},
+                "text": text,
+                "tables": [],
+                "images": [],
+                "toc_items": [],
+                "page_boxes": [],
+            })
+    finally:
+        doc.close()
+
+    logger.info(
+        f"Plain-text fallback extracted {len(page_chunks)} pages from {file_path.name}"
+    )
+    return page_chunks
+
+def _build_page_text_map(page_chunks: list[dict]) -> dict[int, str]:
+    return {
+        chunk.get("metadata", {}).get("page", i): chunk.get("text", "")
+        for i, chunk in enumerate(page_chunks)
+    }
+
+def _try_render_image_on_page(
+    page,
+    idx: int,
+    img_info: dict,
+    page_num: int,
+    page_area: float,
+    figure_dir: Path,
+    page_text: str,
+) -> ExtractedFigure | None:
+    import pymupdf
+
+    bbox = img_info.get("bbox")
+    if not bbox or len(bbox) < 4:
+        return None
+
+    rect = pymupdf.Rect(bbox)
+    if abs(rect.width * rect.height) / max(page_area, 1) < FIGURE_MIN_SIZE_RATIO:
+        return None
+
+    img_name = f"page{page_num}_rendered{idx}.{FIGURE_IMAGE_FORMAT}"
+    img_path = figure_dir / img_name
+
+    try:
+        if not img_path.exists():
+            pix = page.get_pixmap(clip=rect, dpi=FIGURE_IMAGE_DPI)
+            pix.save(str(img_path))
+    except Exception as exc:  # pragma: no cover
+        logger.debug(f"Pixmap render failed for page {page_num} img {idx}: {exc}")
+        return None
+
+    caption = _find_figure_caption(page_text, 0) if page_text else ""
+    return ExtractedFigure(
+        image_path=str(img_path),
+        page_number=page_num,
+        bbox=tuple(bbox),
+        caption=caption,
+    )
+
+def _render_figures_by_rendering(
+    file_path: Path,
+    figure_dir: Path,
+    page_chunks: list[dict],
+) -> list[ExtractedFigure]:
+    import pymupdf
+
+    page_text_map = _build_page_text_map(page_chunks)
+    doc = pymupdf.open(str(file_path))
+    figures: list[ExtractedFigure] = []
+    try:
+        for page_num, page in enumerate(doc):
+            page_area = abs(page.rect.width * page.rect.height)
+            page_text = page_text_map.get(page_num, "")
+            try:
+                image_infos = page.get_image_info()
+            except Exception as exc:  # pragma: no cover
+                logger.debug(f"get_image_info failed on page {page_num}: {exc}")
+                continue
+
+            for idx, img_info in enumerate(image_infos):
+                fig = _try_render_image_on_page(
+                    page, idx, img_info, page_num, page_area, figure_dir, page_text,
+                )
+                if fig:
+                    figures.append(fig)
+    finally:
+        doc.close()
+
+    logger.info(
+        f"Render-based figure extraction found {len(figures)} figures in {file_path.name}"
+    )
+    return figures
+
+def _merge_figures(
+    base: list[ExtractedFigure],
+    supplement: list[ExtractedFigure],
+) -> list[ExtractedFigure]:
+    seen = {f.image_path for f in base}
+    merged = list(base)
+    for fig in supplement:
+        if fig.image_path not in seen:
+            merged.append(fig)
+            seen.add(fig.image_path)
+    return merged
 
 def _assemble_document(
     file_path: Path,
@@ -325,6 +455,7 @@ def _assemble_document(
     page_count: int,
     figure_dir: Path,
     pdf_metadata: dict | None = None,
+    supplement_figures: list[ExtractedFigure] | None = None,
 ) -> ExtractedDocument:
     md_text = "\n\n".join(p.get("text", "") for p in page_chunks)
 
@@ -336,12 +467,9 @@ def _assemble_document(
 
     figures = _extract_figures_from_pages(page_chunks, figure_dir)
     rendered = _render_missing_figures(file_path, page_chunks, figure_dir)
-    existing_paths = {f.image_path for f in figures}
-    for fig in rendered:
-        if fig.image_path not in existing_paths:
-            figures.append(fig)
-            existing_paths.add(fig.image_path)
-    all_figures = figures
+    all_figures = _merge_figures(figures, rendered)
+    if supplement_figures:
+        all_figures = _merge_figures(all_figures, supplement_figures)
     pages = _build_pages(page_chunks)
 
     text_tables = extract_tables_from_pages(pages)
@@ -368,20 +496,72 @@ def _assemble_document(
         layout_mode=_LAYOUT_MODE,
     )
 
+def _is_too_short_error(err: PDFExtractionError) -> bool:
+    return "too short" in str(err)
+
 def extract_pdf(file_path: str | Path) -> ExtractedDocument:
     file_path = Path(file_path)
     if not file_path.exists():
         raise PDFExtractionError(file_path.name, "file not found")
 
+    page_count, pdf_metadata = _validate_pdf(file_path)
+    figure_dir = _ensure_figure_dir(file_path)
+
+    # Tier 1: full layout extraction with images (best quality).
     try:
-        page_count, pdf_metadata = _validate_pdf(file_path)
-        figure_dir = _ensure_figure_dir(file_path)
         page_chunks = _run_layout_extraction(file_path, figure_dir)
         return _assemble_document(file_path, page_chunks, page_count, figure_dir, pdf_metadata)
+    except PDFExtractionError as err:
+        if not _is_too_short_error(err):
+            raise
+        logger.warning(
+            f"Tier 1 extraction too short for {file_path.name} — retrying without images"
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Tier 1 extraction failed for {file_path.name}: {exc} — retrying without images"
+        )
 
+    # Tier 2: layout extraction without image rendering, skipping zlib-compressed
+    # image streams that cause MuPDF errors.  Tables, formulas, and sections are
+    # still extracted via pymupdf4llm.  Figures are recovered separately through
+    # page.get_image_info() + page.get_pixmap(clip=rect) — both are pure render
+    # operations that never touch raw compressed streams, so they succeed even
+    # when zlib decompression fails.  Full functionality is preserved.
+    try:
+        page_chunks = _run_layout_extraction_no_images(file_path, figure_dir)
+        rendered_figs = _render_figures_by_rendering(file_path, figure_dir, page_chunks)
+        return _assemble_document(
+            file_path, page_chunks, page_count, figure_dir, pdf_metadata,
+            supplement_figures=rendered_figs,
+        )
+    except PDFExtractionError as err:
+        if not _is_too_short_error(err):
+            raise
+        logger.warning(
+            f"Tier 2 extraction too short for {file_path.name} — falling back to plain text"
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Tier 2 extraction failed for {file_path.name}: {exc} — falling back to plain text"
+        )
+
+    # Tier 3: plain-text fallback — no tables/figures/formulas, but recovers
+    # text from PDFs that have heavily corrupted or missing image streams.
+    return _extract_pdf_plain_fallback(file_path, page_count, figure_dir, pdf_metadata)
+
+def _extract_pdf_plain_fallback(
+    file_path: Path,
+    page_count: int,
+    figure_dir: Path,
+    pdf_metadata: dict | None,
+) -> ExtractedDocument:
+    try:
+        page_chunks = _run_plain_text_extraction(file_path)
+        return _assemble_document(file_path, page_chunks, page_count, figure_dir, pdf_metadata)
     except PDFExtractionError:
         raise
-    except Exception as exc:
-        logger.error(f"PDF extraction failed for {file_path.name}: {exc}")
-        raise PDFExtractionError(file_path.name, str(exc))
+    except Exception as fallback_exc:
+        logger.error(f"Plain-text fallback also failed for {file_path.name}: {fallback_exc}")
+        raise PDFExtractionError(file_path.name, str(fallback_exc)) from fallback_exc
 
