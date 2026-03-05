@@ -1,3 +1,8 @@
+import os
+
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
@@ -10,7 +15,6 @@ logger = get_logger(__name__)
 
 _encoder: SentenceTransformer | None = None
 
-
 def _mps_available() -> bool:
     try:
         import torch
@@ -18,7 +22,6 @@ def _mps_available() -> bool:
         return torch.backends.mps.is_available()
     except ImportError:
         return False
-
 
 def _get_encoder() -> SentenceTransformer:
     global _encoder
@@ -46,7 +49,6 @@ def _get_encoder() -> SentenceTransformer:
                 logger.info("Using CPU for embeddings")
     return _encoder
 
-
 def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
     encoder = _get_encoder()
     with timer(f"Encode {len(texts)} texts"):
@@ -58,7 +60,6 @@ def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
         )
     return embeddings.astype(np.float32)
 
-
 def encode_query(text: str) -> np.ndarray:
     encoder = _get_encoder()
     vec: np.ndarray = encoder.encode(
@@ -66,7 +67,6 @@ def encode_query(text: str) -> np.ndarray:
         normalize_embeddings=True,
     )
     return vec.astype(np.float32)
-
 
 async def index_chunks(
     chunks: list,

@@ -57,12 +57,10 @@ class ExtractedDocument:
     pdf_metadata: dict | None = None
     layout_mode: bool = False
 
-
 def _ensure_figure_dir(file_path: Path) -> Path:
     figure_dir = file_path.parent / "figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
     return figure_dir
-
 
 def _resolve_image_path(img_info, figure_dir: Path) -> Path | None:
     img_path = img_info if isinstance(img_info, str) else img_info.get("path", "")
@@ -74,14 +72,12 @@ def _resolve_image_path(img_info, figure_dir: Path) -> Path | None:
     alt = figure_dir / Path(img_path).name
     return alt if alt.exists() else None
 
-
 _MD_IMAGE_RE = re.compile(r"!\[.*?\]\((.+?)\)")
 
 _FIGURE_CAPTION_RE = re.compile(
     r"(?:Fig(?:ure|\.)?|FIGURE)\s+(\d+)[.:]?\s*(.*)",
     re.IGNORECASE,
 )
-
 
 def _find_figure_caption(page_text: str, image_pos: int) -> str:
     search_after = page_text[image_pos:image_pos + 400]
@@ -97,7 +93,6 @@ def _find_figure_caption(page_text: str, image_pos: int) -> str:
                 desc = match.group(2).strip().rstrip(".")
                 return f"Figure {num}: {desc}" if desc else f"Figure {num}"
     return ""
-
 
 def _add_figure_if_new(
     img_info, figure_dir: Path, seen: set[str], page_num: int,
@@ -116,7 +111,6 @@ def _add_figure_if_new(
         bbox=tuple(bbox) if bbox else None,
         caption=caption,
     ))
-
 
 def _extract_figures_from_pages(
     page_chunks: list[dict],
@@ -138,14 +132,12 @@ def _extract_figures_from_pages(
             )
     return figures
 
-
 def _get_picture_boxes(page_data: dict) -> list[dict]:
     page_boxes = page_data.get("page_boxes", [])
     return [
         b for b in page_boxes
         if isinstance(b, dict) and b.get("class") == "picture"
     ]
-
 
 def _is_nearby_caption_box(box: dict, pic_top: float, pic_bottom: float) -> bool:
     if not isinstance(box, dict) or box.get("class") != "caption":
@@ -156,7 +148,6 @@ def _is_nearby_caption_box(box: dict, pic_top: float, pic_bottom: float) -> bool
     cap_top = cap_bbox[1]
     return abs(cap_top - pic_bottom) < 40 or abs(cap_top - pic_top) < 40
 
-
 def _parse_caption_text(raw: str) -> str:
     match = _FIGURE_CAPTION_RE.search(raw)
     if match:
@@ -165,13 +156,11 @@ def _parse_caption_text(raw: str) -> str:
         return f"Figure {num}: {desc}" if desc else f"Figure {num}"
     return raw[:200] if raw else ""
 
-
 def _extract_box_text(box: dict, page_text: str) -> str:
     pos = box.get("pos")
     if not pos or len(pos) < 2:
         return ""
     return page_text[pos[0]:pos[1]].strip()
-
 
 def _find_caption_for_box(page_boxes: list[dict], picture_bbox: list, page_text: str) -> str:
     if not picture_bbox or len(picture_bbox) < 4:
@@ -186,7 +175,6 @@ def _find_caption_for_box(page_boxes: list[dict], picture_bbox: list, page_text:
         if raw:
             return _parse_caption_text(raw)
     return ""
-
 
 def _render_box(
     page, rect, page_num: int, idx: int, figure_dir: Path, caption: str = ""
@@ -205,7 +193,6 @@ def _render_box(
         bbox=bbox,
         caption=caption,
     )
-
 
 def _render_page_figures(
     doc, page_data: dict, figure_dir: Path
@@ -241,7 +228,6 @@ def _render_page_figures(
 
     return rendered
 
-
 def _render_missing_figures(
     file_path: Path,
     page_chunks: list[dict],
@@ -259,7 +245,6 @@ def _render_missing_figures(
 
     return rendered
 
-
 def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
     pages: list[ExtractedPage] = []
     for page_data in page_chunks:
@@ -273,7 +258,6 @@ def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
             page_boxes=page_data.get("page_boxes", []),
         ))
     return pages
-
 
 def _validate_pdf(file_path: Path) -> tuple[int, dict]:
     import pymupdf
@@ -291,7 +275,6 @@ def _validate_pdf(file_path: Path) -> tuple[int, dict]:
     logger.info(f"PDF validated: {file_path.name}, {page_count} pages, meta keys={list(pdf_metadata.keys())}")
     return page_count, pdf_metadata
 
-
 def _get_ocr_function():
     try:
         from rapidocr_onnxruntime import RapidOCR
@@ -308,7 +291,6 @@ def _get_ocr_function():
     except ImportError:
         logger.info("RapidOCR not available — OCR disabled for scanned pages")
         return None
-
 
 def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
     import pymupdf4llm
@@ -336,7 +318,6 @@ def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
     )
 
     return pymupdf4llm.to_markdown(str(file_path), **kwargs)
-
 
 def _assemble_document(
     file_path: Path,
@@ -386,7 +367,6 @@ def _assemble_document(
         pdf_metadata=pdf_metadata,
         layout_mode=_LAYOUT_MODE,
     )
-
 
 def extract_pdf(file_path: str | Path) -> ExtractedDocument:
     file_path = Path(file_path)

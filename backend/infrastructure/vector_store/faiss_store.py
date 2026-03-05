@@ -15,14 +15,17 @@ else:
         np = None  # type: ignore
         faiss = None  # type: ignore
 
-from shared.constants import FAISS_INDEX_DIR, EMBEDDING_DIMENSIONS, FAISS_TOP_K_PER_PAPER, FAISS_MAX_VECTORS
+from app.config import get_settings
+from shared.constants import EMBEDDING_DIMENSIONS, FAISS_TOP_K_PER_PAPER, FAISS_MAX_VECTORS
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 class FAISSStore:
 
-    def __init__(self, index_dir: str = FAISS_INDEX_DIR) -> None:
+    def __init__(self, index_dir: str | None = None) -> None:
+        if index_dir is None:
+            index_dir = get_settings().FAISS_INDEX_DIR
         self._index_dir = Path(index_dir)
         self._index: Any | None = None
         self._id_map: list[str] = []
@@ -102,7 +105,6 @@ class FAISSStore:
         if self._index.ntotal == 0:
             return []
 
-        # FIXED MED-003: Explicit check for empty paper_ids to avoid returning all results
         if not paper_ids:
             logger.warning("search called with empty paper_ids list - returning empty results")
             return []

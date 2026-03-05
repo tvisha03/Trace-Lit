@@ -6,12 +6,12 @@ from api.v1.schemas import HealthResponse
 from api.v1.routes.settings import _runtime_config
 from app.config import get_settings
 from infrastructure.db.database import async_session_factory
+from shared.enums import LLMProvider
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter()
-
 
 def _check_cross_encoder() -> bool:
     try:
@@ -19,7 +19,6 @@ def _check_cross_encoder() -> bool:
         return _get_cross_encoder() is not None
     except Exception:
         return False
-
 
 def _check_faiss(request) -> tuple[bool, dict | None]:
     faiss_store = getattr(request.app.state, "faiss_store", None)
@@ -33,20 +32,21 @@ def _check_faiss(request) -> tuple[bool, dict | None]:
         logger.warning(f"Health check: FAISS status check failed: {exc}")
         return False, None
 
-
 async def _check_providers(request: Request) -> dict[str, bool]:
     providers: dict[str, bool] = {}
     llm = getattr(request.app.state, "llm", None)
     if not llm:
         return providers
     for provider in llm.providers:
-        try:
-            ok = await provider.health_check()
-            providers[provider.__class__.__name__] = ok
-        except Exception:
-            providers[provider.__class__.__name__] = False
+        if provider.provider == LLMProvider.OLLAMA:
+            providers[provider.__class__.__name__] = _runtime_config.use_local_llm
+        else:
+            try:
+                ok = await provider.health_check()
+                providers[provider.__class__.__name__] = ok
+            except Exception:
+                providers[provider.__class__.__name__] = False
     return providers
-
 
 async def _check_db() -> bool:
     try:
@@ -56,7 +56,6 @@ async def _check_db() -> bool:
     except Exception as exc:
         logger.warning(f"Health check: DB connectivity failed: {exc}")
         return False
-
 
 def _compute_overall(db_ok: bool, cross_encoder_ok: bool) -> str:
     if not db_ok:
@@ -69,7 +68,6 @@ def _compute_overall(db_ok: bool, cross_encoder_ok: bool) -> str:
         )
         return "degraded"
     return "ok"
-
 
 @router.get("", response_model=HealthResponse)
 async def health_check(request: Request):

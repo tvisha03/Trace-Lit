@@ -1,8 +1,5 @@
 
-from shared.constants import (
-    CROSS_ENCODER_MODEL as _DEFAULT_CROSS_ENCODER_MODEL,
-    HAVF_CROSS_ENCODER_THRESHOLD,
-)
+from app.config import get_settings
 from shared.enums import ConfidenceLevel
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
@@ -15,11 +12,7 @@ def _get_cross_encoder():
     global _cross_encoder
     if _cross_encoder is None:
         try:
-            try:
-                from app.config import get_settings
-                model_name = get_settings().CROSS_ENCODER_MODEL
-            except Exception:
-                model_name = _DEFAULT_CROSS_ENCODER_MODEL
+            model_name = get_settings().CROSS_ENCODER_MODEL
 
             with timer("Load cross-encoder"):
                 from sentence_transformers import CrossEncoder
@@ -33,15 +26,16 @@ def _get_cross_encoder():
             return None
     return _cross_encoder
 
-
 async def async_get_cross_encoder():
     import asyncio
     return await asyncio.to_thread(_get_cross_encoder)
 
 def _update_result_confidence(
     best_score: float,
-    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
+    cross_encoder_threshold: float | None = None,
 ) -> ConfidenceLevel:
+    if cross_encoder_threshold is None:
+        cross_encoder_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
     if best_score >= cross_encoder_threshold:
         return ConfidenceLevel.MEDIUM
     return ConfidenceLevel.LOW
@@ -82,8 +76,10 @@ def _process_result(
     cross_encoder,
     source_sentences: list[dict] | None = None,
     top_k_sources: int = 3,
-    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
+    cross_encoder_threshold: float | None = None,
 ) -> dict:
+    if cross_encoder_threshold is None:
+        cross_encoder_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
     claim = result["claim"]
     candidates = _build_candidates(claim, result, source_sentences, top_k_sources)
 
@@ -107,7 +103,7 @@ def rerank_claims(
     top_k_sources: int = 3,
     source_sentences: list[dict] | None = None,
     *,
-    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
+    cross_encoder_threshold: float | None = None,
 ) -> list[dict]:
     if not uncertain_results:
         return []

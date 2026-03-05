@@ -2,18 +2,18 @@ import os
 import shutil
 from pathlib import Path
 
-from shared.constants import UPLOADS_DIR, EXPORTS_DIR, FAISS_INDEX_DIR, MIN_DISK_SPACE_MB
+from app.config import get_settings
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 def ensure_directories() -> None:
-    for directory in (UPLOADS_DIR, EXPORTS_DIR, FAISS_INDEX_DIR):
+    settings = get_settings()
+    for directory in (settings.UPLOADS_DIR, settings.EXPORTS_DIR, settings.FAISS_INDEX_DIR):
         Path(directory).mkdir(parents=True, exist_ok=True)
 
 def save_upload(content: bytes, filename: str) -> Path:
-    dest = Path(UPLOADS_DIR) / filename
+    dest = Path(get_settings().UPLOADS_DIR) / filename
     dest.write_bytes(content)
     return dest
 
@@ -34,8 +34,11 @@ def delete_directory(path: str | Path) -> bool:
 def get_file_size_mb(path: str | Path) -> float:
     return os.path.getsize(path) / (1024 * 1024)
 
-
-def check_disk_space(path: str | Path = UPLOADS_DIR, min_mb: int = MIN_DISK_SPACE_MB) -> bool:
+def check_disk_space(path: str | Path | None = None, min_mb: int | None = None) -> bool:
+    if path is None:
+        path = get_settings().UPLOADS_DIR
+    if min_mb is None:
+        min_mb = get_settings().MIN_DISK_SPACE_MB
     try:
         usage = shutil.disk_usage(str(path) if Path(path).exists() else ".")
         free_mb = usage.free / (1024 * 1024)

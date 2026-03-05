@@ -8,7 +8,6 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 def _resolve_client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
@@ -16,7 +15,6 @@ def _resolve_client_ip(request: Request) -> str:
     if request.client:
         return request.client.host
     return "unknown"
-
 
 class SlidingWindowRateLimiter:
 
@@ -59,10 +57,6 @@ class SlidingWindowRateLimiter:
         self._calls[client_ip].append(now)
 
     def _cleanup_stale_clients(self, cutoff: float) -> None:
-        # Bug-5 fix: always prune stale clients unconditionally rather than
-        # waiting until total_entries > 100.  Without this, entries for
-        # thousands of short-lived clients accumulate over the server's
-        # lifetime because the threshold was rarely triggered.
         stale_ips = [
             ip for ip, ts in self._calls.items()
             if not ts or ts[-1] <= cutoff

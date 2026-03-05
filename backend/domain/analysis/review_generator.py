@@ -15,7 +15,6 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 def _build_paper_header(
     paper_id: str,
     paper_titles: dict[str, str] | None = None,
@@ -24,7 +23,6 @@ def _build_paper_header(
     if title:
         return f"--- Paper: {title} ---"
     return f"--- Paper {paper_id} ---"
-
 
 def _build_review_prompt(
     chunks_by_paper: dict[str, list],
@@ -38,19 +36,31 @@ def _build_review_prompt(
     combined_context = "\n\n".join(context_parts)
     return LITERATURE_REVIEW_PROMPT_TEMPLATE.format(context=combined_context)
 
-
 def _build_gap_prompt(
     chunks_by_paper: dict[str, list],
     paper_titles: dict[str, str] | None = None,
 ) -> str:
+    titles = paper_titles or {}
+    paper_count = len(chunks_by_paper)
+
+    paper_listing_lines = []
+    for i, paper_id in enumerate(chunks_by_paper, start=1):
+        name = titles.get(paper_id, f"Paper {paper_id[:8]}")
+        paper_listing_lines.append(f"  {i}. {name}")
+    paper_listing = "\n".join(paper_listing_lines)
+
     context_parts = []
     for paper_id, chunks in chunks_by_paper.items():
         block = build_context_block(chunks)
         header = _build_paper_header(paper_id, paper_titles)
         context_parts.append(f"{header}\n{block}")
     combined_context = "\n\n".join(context_parts)
-    return GAP_ANALYSIS_PROMPT_TEMPLATE.format(context=combined_context)
 
+    return GAP_ANALYSIS_PROMPT_TEMPLATE.format(
+        paper_count=paper_count,
+        paper_listing=paper_listing,
+        context=combined_context,
+    )
 
 async def generate_review(
     chunks_by_paper: dict[str, list],
@@ -67,7 +77,6 @@ async def generate_review(
     logger.info(f"Generated literature review using {provider.value}")
     return response_text, provider
 
-
 async def generate_gap_narrative(
     chunks_by_paper: dict[str, list],
     llm: FallbackChain,
@@ -82,7 +91,6 @@ async def generate_gap_narrative(
 
     logger.info(f"Generated gap analysis narrative using {provider.value}")
     return response_text, provider
-
 
 async def stream_review(
     chunks_by_paper: dict[str, list],

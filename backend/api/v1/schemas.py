@@ -11,7 +11,6 @@ _INJECT_PATTERNS: list[re.Pattern] = [
     re.compile(r"new\s+system\s+prompt", re.IGNORECASE),
     re.compile(r"disregard\s+(all|previous|prior)\s+(instructions?|prompts?)", re.IGNORECASE),
     re.compile(r"\[INST\]|\[\/INST\]|<\|system\|>|<\|user\|>", re.IGNORECASE),
-    # FIXED MED-002: Added more prompt injection patterns
     re.compile(r"override\s+your\s+(instructions?|programming|guidelines)", re.IGNORECASE),
     re.compile(r"do\s+not\s+(follow|obey|listen\s+to)", re.IGNORECASE),
     re.compile(r"jailbreak", re.IGNORECASE),
@@ -20,7 +19,6 @@ _INJECT_PATTERNS: list[re.Pattern] = [
     re.compile(r"pretend\s+to\s+be", re.IGNORECASE),
     re.compile(r"access\s+developer\s+mode", re.IGNORECASE),
 ]
-
 
 def _sanitize_user_text(value: str) -> str:
     value = value.strip()
@@ -101,9 +99,7 @@ class VerificationItem(BaseModel):
     paper_id: Optional[str] = None
     sentence_key: Optional[str] = None
     verification_method: Optional[str] = None
-    # Content type: "text", "figure", "table", or "formula"
     chunk_type: Optional[str] = None
-    # Brief citation reference (e.g. "F3", "T1", "E2", "P5") matching the paragraph suffix
     citation_ref: Optional[str] = None
 
 class ChatResponse(BaseModel):
@@ -244,7 +240,6 @@ class HealthResponse(BaseModel):
     faiss: bool = False
     faiss_stats: Optional[dict] = None
     cross_encoder: bool = False
-
 
 class SSEQueryTypeEvent(BaseModel):
     type: str

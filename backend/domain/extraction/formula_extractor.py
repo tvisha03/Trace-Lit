@@ -45,7 +45,6 @@ _NATURAL_WORDS = re.compile(r"\b[a-zA-Z]{4,}\b")
 _MIN_FORMULA_LENGTH = 3
 _MAX_INLINE_LENGTH = 500
 
-
 @dataclass
 class ExtractedFormula:
     content: str
@@ -54,12 +53,10 @@ class ExtractedFormula:
     equation_number: str | None = None
     context: str = ""
 
-
 def _clean_formula(raw: str) -> str:
     cleaned = raw.strip()
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned
-
 
 def _is_table_fragment(content: str) -> bool:
     if _TABLE_GARBAGE.search(content):
@@ -71,20 +68,16 @@ def _is_table_fragment(content: str) -> bool:
         return True
     return False
 
-
 def _has_common_symbols(content: str) -> bool:
     return bool(_COMMON_SYMBOLS.search(content))
-
 
 def _has_operators(content: str) -> bool:
     operator_count = sum(1 for ch in content if ch in "+-*/=<>^_{}()[]")
     return operator_count >= 2
 
-
 def _has_numerical_relation(content: str) -> bool:
     digit_count = sum(1 for ch in content if ch.isdigit())
     return digit_count > 0 and any(ch in content for ch in "=<>≤≥≠≈")
-
 
 def _is_meaningful_formula(content: str) -> bool:
     if len(content) < _MIN_FORMULA_LENGTH:
@@ -99,7 +92,6 @@ def _is_meaningful_formula(content: str) -> bool:
         return True
     return False
 
-
 def _count_math_signals(content: str) -> int:
     count = 0
     if "=" in content and len(content) < 200:
@@ -109,7 +101,6 @@ def _count_math_signals(content: str) -> int:
     if any(ch in content for ch in "^_{}\\≤≥≠≈"):
         count += 1
     return count
-
 
 def _has_math_content(content: str) -> bool:
     if _has_common_symbols(content):
@@ -121,7 +112,6 @@ def _has_math_content(content: str) -> bool:
     if len(words) > 3 and signals == 0:
         return False
     return signals > 0
-
 
 def _find_display_equations(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
@@ -138,7 +128,6 @@ def _find_display_equations(text: str) -> list[ExtractedFormula]:
         ))
 
     return formulas
-
 
 def _find_latex_environments(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
@@ -158,7 +147,6 @@ def _find_latex_environments(text: str) -> list[ExtractedFormula]:
         ))
 
     return formulas
-
 
 def _find_numbered_equations(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
@@ -180,7 +168,6 @@ def _find_numbered_equations(text: str) -> list[ExtractedFormula]:
 
     return formulas
 
-
 def _find_inline_equations(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
 
@@ -199,19 +186,15 @@ def _find_inline_equations(text: str) -> list[ExtractedFormula]:
 
     return formulas
 
-
 _UNICODE_MATH_CHARS = set("∑∏∫∂∇∞≈±÷√∀∃⊂⊃∪∩")
-
 
 def _is_table_like_line(line: str) -> bool:
     if "|" in line and line.count("|") >= 2:
         return True
     return "<br>" in line or "<tr" in line
 
-
 def _has_unicode_math(line: str) -> bool:
     return any(ch in _UNICODE_MATH_CHARS for ch in line)
-
 
 def _passes_unicode_basic_checks(stripped: str) -> bool:
     return (
@@ -220,14 +203,12 @@ def _passes_unicode_basic_checks(stripped: str) -> bool:
         and _has_unicode_math(stripped)
     )
 
-
 def _passes_unicode_content_checks(content: str) -> bool:
     if len(content) > 200 or not _is_meaningful_formula(content):
         return False
     words = _NATURAL_WORDS.findall(content)
     unicode_count = sum(1 for ch in content if ch in _UNICODE_MATH_CHARS)
     return not (len(words) > 5 and unicode_count <= 2)
-
 
 def _find_unicode_equations(text: str) -> list[ExtractedFormula]:
     formulas: list[ExtractedFormula] = []
@@ -245,7 +226,6 @@ def _find_unicode_equations(text: str) -> list[ExtractedFormula]:
         ))
     return formulas
 
-
 def _deduplicate_formulas(formulas: list[ExtractedFormula]) -> list[ExtractedFormula]:
     seen: set[str] = set()
     deduplicated: list[ExtractedFormula] = []
@@ -256,9 +236,7 @@ def _deduplicate_formulas(formulas: list[ExtractedFormula]) -> list[ExtractedFor
             deduplicated.append(f)
     return deduplicated
 
-
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
-
 
 def _extract_surrounding_context(text: str, formula_content: str, radius: int = 300) -> str:
     pos = text.find(formula_content)
@@ -283,7 +261,6 @@ def _extract_surrounding_context(text: str, formula_content: str, radius: int = 
     context = " ".join(p for p in parts if p)
     return context[:500]
 
-
 def _populate_formula_contexts(
     formulas: list[ExtractedFormula], text: str
 ) -> None:
@@ -296,14 +273,11 @@ def _populate_formula_contexts(
         if surrounding:
             formula.context = surrounding
 
-
 _FORMULA_TYPES = ("display", "inline", "numbered", "unicode")
-
 
 def _count_formula_types(formulas: list[ExtractedFormula]) -> dict[str, int]:
     counts = Counter(f.formula_type for f in formulas)
     return {t: counts.get(t, 0) for t in _FORMULA_TYPES}
-
 
 def extract_formulas(markdown_text: str) -> list[ExtractedFormula]:
     all_formulas: list[ExtractedFormula] = []
@@ -322,7 +296,6 @@ def extract_formulas(markdown_text: str) -> list[ExtractedFormula]:
         f"numbered={counts['numbered']}, unicode={counts['unicode']})"
     )
     return deduplicated
-
 
 def _extract_box_formulas(page) -> list[ExtractedFormula]:
     page_boxes = getattr(page, "page_boxes", None) or []
@@ -346,7 +319,6 @@ def _extract_box_formulas(page) -> list[ExtractedFormula]:
         ))
 
     return formulas
-
 
 def extract_formulas_from_pages(
     pages: list,

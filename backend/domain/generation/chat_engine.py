@@ -214,12 +214,25 @@ async def generate_comparison(
     paper_contexts: dict[str, str],
     llm: FallbackChain,
     question: str = "Compare these papers across all dimensions.",
+    paper_titles: dict[str, str] | None = None,
 ) -> tuple[str, LLMProvider]:
+    titles = paper_titles or {}
+    paper_count = len(paper_ids)
+
+    paper_listing_lines = []
+    for i, pid in enumerate(paper_ids, start=1):
+        name = titles.get(pid, f"Paper {pid[:8]}")
+        paper_listing_lines.append(f"  {i}. {name}")
+    paper_listing = "\n".join(paper_listing_lines)
+
     formatted_contexts = "\n\n---\n\n".join(
-        f"Paper: {pid}\n{ctx}" for pid, ctx in paper_contexts.items()
+        f"Paper {i}: {titles.get(pid, pid[:8])}\n{ctx}"
+        for i, (pid, ctx) in enumerate(paper_contexts.items(), start=1)
     )
 
     user_prompt = COMPARISON_PROMPT_TEMPLATE.format(
+        paper_count=paper_count,
+        paper_listing=paper_listing,
         paper_contexts=formatted_contexts,
         question=question,
     )

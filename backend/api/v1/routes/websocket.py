@@ -15,13 +15,10 @@ router = APIRouter()
 
 _WS_HEARTBEAT_INTERVAL: float = 30.0
 
-# FIXED MED-001: Cache session existence to avoid creating new DB connection on every WS connect
 _session_cache: dict[str, tuple[bool, float]] = {}
-_SESSION_CACHE_TTL: float = 60.0  # Cache for 60 seconds
-
+_SESSION_CACHE_TTL: float = 60.0
 
 async def _session_exists(session_id: str) -> bool:
-    # Check cache first
     now = time.time()
     if session_id in _session_cache:
         cached_result, cached_time = _session_cache[session_id]
@@ -34,7 +31,6 @@ async def _session_exists(session_id: str) -> bool:
         async with async_session_factory() as db:
             session = await get_session(db, session_id)
             result = session is not None
-            # Update cache
             _session_cache[session_id] = (result, now)
             return result
     except Exception as exc:

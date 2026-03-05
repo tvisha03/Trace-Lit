@@ -62,7 +62,6 @@ def sanitize_filename(name: str) -> str:
 def extract_paragraph_ids(text: str) -> list[str]:
     return re.findall(r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]", text)
 
-
 def normalize_paragraph_ids(
     cited_ids: set[str], valid_ids: set[str]
 ) -> tuple[set[str], dict[str, str]]:

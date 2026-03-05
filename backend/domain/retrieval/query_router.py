@@ -9,7 +9,6 @@ logger = get_logger(__name__)
 
 _MAX_QUERY_CHARS = 5_000
 
-
 def _sanitize_query(query: str) -> str:
     sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", query)
     return sanitized[:_MAX_QUERY_CHARS]
@@ -108,7 +107,6 @@ def _compute_scores(
     return scores
 
 _MIN_CLASSIFICATION_CONFIDENCE = 0.3
-
 
 def classify_query(
     query: str,

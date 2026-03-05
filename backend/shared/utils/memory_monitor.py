@@ -1,5 +1,5 @@
 
-from shared.constants import MEMORY_PRESSURE_THRESHOLD
+from app.config import get_settings
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -14,7 +14,9 @@ except ImportError:
         "Install with: pip install psutil"
     )
 
-def is_memory_pressure_high(threshold: float = MEMORY_PRESSURE_THRESHOLD) -> bool:
+def is_memory_pressure_high(threshold: float | None = None) -> bool:
+    if threshold is None:
+        threshold = get_settings().MEMORY_PRESSURE_THRESHOLD
     if not _PSUTIL_AVAILABLE:
         return False
 

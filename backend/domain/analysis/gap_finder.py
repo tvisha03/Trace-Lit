@@ -76,11 +76,6 @@ def _create_singleton_themes(
     keyword_to_papers: dict[str, set[str]],
     total_papers: int,
 ) -> list[ThemeCluster]:
-    """Fallback: create one ThemeCluster per unclustered keyword.
-
-    Ensures the user always sees keyword coverage data even when DBSCAN
-    cannot form multi-keyword clusters (common with small paper sets).
-    """
     themes: list[ThemeCluster] = []
     for kw in unclustered_keywords:
         covering = keyword_to_papers.get(kw, set())
@@ -112,8 +107,6 @@ def find_gaps(
     total_papers = len(paper_keywords)
     themes = _create_theme_clusters(cluster_map, keyword_to_papers, total_papers)
 
-    # Fallback: if DBSCAN produced no clusters, promote unclustered keywords
-    # so the gap analysis still returns meaningful coverage data.
     if not themes:
         unclustered = [kw for idx, kw in enumerate(all_keywords) if labels[idx] == -1]
         themes = _create_singleton_themes(

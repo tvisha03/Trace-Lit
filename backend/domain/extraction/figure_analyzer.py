@@ -9,23 +9,9 @@ from shared.constants import (
     FIGURE_ANALYSIS_TIMEOUT,
 )
 from domain.extraction.pdf_processor import ExtractedFigure
+from domain.generation.prompts import FIGURE_ANALYSIS_PROMPT
 
 logger = get_logger(__name__)
-
-FIGURE_ANALYSIS_PROMPT = (
-    "You are an expert academic research analyst. "
-    "Analyze this figure/chart from a research paper. Provide:\n"
-    "1. A concise description of what the figure shows\n"
-    "2. The type of visualization (bar chart, line graph, scatter plot, "
-    "flowchart, diagram, table, photograph, etc.)\n"
-    "3. Key data points, trends, or relationships visible\n"
-    "4. Any axis labels, legends, or annotations present\n\n"
-    "Format your response as:\n"
-    "TYPE: <figure_type>\n"
-    "DESCRIPTION: <detailed_description>\n"
-    "Keep the description under 200 words and focused on factual observations."
-)
-
 
 @dataclass
 class AnalyzedFigure:
@@ -35,7 +21,6 @@ class AnalyzedFigure:
     description: str
     bbox: tuple[float, float, float, float] | None = None
     caption: str = ""
-
 
 def _parse_vision_response(raw: str) -> tuple[str, str]:
     figure_type = "unknown"
@@ -54,7 +39,6 @@ def _parse_vision_response(raw: str) -> tuple[str, str]:
 
     return figure_type, description
 
-
 _MIME_MAP = {
     "png": "image/png",
     "jpg": "image/jpeg",
@@ -62,7 +46,6 @@ _MIME_MAP = {
     "webp": "image/webp",
     "gif": "image/gif",
 }
-
 
 def _read_image(img_path: Path) -> tuple[bytes, str] | None:
     if not img_path.exists():
@@ -76,7 +59,6 @@ def _read_image(img_path: Path) -> tuple[bytes, str] | None:
     mime_type = _MIME_MAP.get(suffix, "image/png")
     return image_data, mime_type
 
-
 async def _call_vision(llm_chain, image_data: bytes, mime_type: str) -> tuple[str, object]:
     return await asyncio.wait_for(
         llm_chain.analyze_image(
@@ -87,7 +69,6 @@ async def _call_vision(llm_chain, image_data: bytes, mime_type: str) -> tuple[st
         ),
         timeout=FIGURE_ANALYSIS_TIMEOUT,
     )
-
 
 async def _analyze_single_figure(
     figure: ExtractedFigure,
@@ -131,7 +112,6 @@ async def _analyze_single_figure(
         except Exception as exc:
             logger.error(f"Figure analysis failed for {img_path}: {exc}")
             return None
-
 
 async def analyze_figures(
     figures: list[ExtractedFigure],

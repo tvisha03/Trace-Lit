@@ -12,9 +12,9 @@ from api.v1.schemas import (
 from api.v1.routes.websocket import ws_manager
 from api.v1.routes.papers import _session_upload_locks
 from app.dependencies import get_db, get_faiss_store
+from app.config import get_settings
 from infrastructure.storage.file_storage import FileStorage
 from services import session_service
-from shared.constants import MAX_SESSIONS
 from shared.errors import TraceLitError
 from shared.logger import get_logger
 
@@ -27,10 +27,11 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
 ):
     existing = await session_service.list_all_sessions(db)
-    if len(existing) >= MAX_SESSIONS:
+    settings = get_settings()
+    if len(existing) >= settings.MAX_SESSIONS:
         raise TraceLitError(
             message=(
-                f"Maximum session limit ({MAX_SESSIONS}) reached. "
+                f"Maximum session limit ({settings.MAX_SESSIONS}) reached. "
                 "Please delete an existing session before creating a new one."
             ),
             status_code=409,

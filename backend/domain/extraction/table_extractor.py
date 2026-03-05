@@ -20,7 +20,6 @@ _CAPTION_PATTERN = re.compile(
 
 _SYMBOL_ONLY = re.compile(r"^[\s✓✗×☑☐●○◯■□▪▫\-–—|,.\d<>br/\s]+$")
 
-
 @dataclass
 class ExtractedTable:
     content: str
@@ -31,11 +30,9 @@ class ExtractedTable:
     bbox: tuple[float, float, float, float] | None = None
     table_number: int | None = None
 
-
 def _extract_data_rows(markdown_table: str) -> list[str]:
     lines = [ln for ln in markdown_table.strip().split("\n") if ln.strip()]
     return [ln for ln in lines if not _SEPARATOR_ROW.match(ln.strip())]
-
 
 def _compute_text_ratio(data_rows: list[str]) -> float:
     total_cells = 0
@@ -49,14 +46,12 @@ def _compute_text_ratio(data_rows: list[str]) -> float:
                 text_cells += 1
     return text_cells / total_cells if total_cells > 0 else 0.0
 
-
 def _get_all_cell_text(data_rows: list[str]) -> str:
     return " ".join(
         c.strip()
         for row in data_rows
         for c in row.split("|")[1:-1]
     )
-
 
 def _count_table_dimensions(markdown_table: str) -> tuple[int, int]:
     data_rows = _extract_data_rows(markdown_table)
@@ -67,13 +62,11 @@ def _count_table_dimensions(markdown_table: str) -> tuple[int, int]:
         col_count = max(col_count, 1)
     return row_count, col_count
 
-
 def _has_meaningful_content(markdown_table: str) -> bool:
     data_rows = _extract_data_rows(markdown_table)
     if _compute_text_ratio(data_rows) < 0.15:
         return False
     return not _SYMBOL_ONLY.match(_get_all_cell_text(data_rows))
-
 
 def _find_caption_near(text: str, table_start: int) -> str:
     search_start = max(0, table_start - 300)
@@ -85,7 +78,6 @@ def _find_caption_near(text: str, table_start: int) -> str:
         if match:
             return f"Table {match.group(1)}: {match.group(2)}".strip().rstrip(":")
     return ""
-
 
 def extract_tables_from_text(
     markdown_text: str,
@@ -118,7 +110,6 @@ def extract_tables_from_text(
 
     return tables
 
-
 def _validate_table_content(content: str) -> tuple[int, int] | None:
     if not content or len(content.strip()) < 10:
         return None
@@ -129,13 +120,11 @@ def _validate_table_content(content: str) -> tuple[int, int] | None:
         return None
     return rows, cols
 
-
 def _extract_bbox(raw_table: dict) -> tuple[float, float, float, float] | None:
     bbox_raw = raw_table.get("bbox")
     if bbox_raw and len(bbox_raw) >= 4:
         return tuple(bbox_raw)
     return None
-
 
 def _process_raw_table(
     raw_table: dict | list,
@@ -160,7 +149,6 @@ def _process_raw_table(
         table_number=table_counter["count"],
     )
 
-
 def _deduplicate_tables(tables: list[ExtractedTable]) -> list[ExtractedTable]:
     seen: set[str] = set()
     deduplicated: list[ExtractedTable] = []
@@ -171,7 +159,6 @@ def _deduplicate_tables(tables: list[ExtractedTable]) -> list[ExtractedTable]:
             deduplicated.append(t)
     return deduplicated
 
-
 def _extract_box_text(box: dict, page_text: str) -> str | None:
     if not isinstance(box, dict) or box.get("class") != "table":
         return None
@@ -181,13 +168,11 @@ def _extract_box_text(box: dict, page_text: str) -> str | None:
     raw = page_text[pos[0]:pos[1]].strip()
     return raw if len(raw) >= 10 else None
 
-
 def _extract_box_bbox(box: dict) -> tuple | None:
     bbox_raw = box.get("bbox")
     if bbox_raw and len(bbox_raw) >= 4:
         return tuple(bbox_raw[:4])
     return None
-
 
 def _parse_table_box(
     box: dict,
@@ -202,7 +187,6 @@ def _parse_table_box(
     pos = box.get("pos")
     caption = _find_caption_near(page_text, pos[0])
     return raw, dims[0], dims[1], _extract_box_bbox(box), caption
-
 
 def _extract_box_tables(page, table_counter: dict) -> list[ExtractedTable]:
     page_boxes = getattr(page, "page_boxes", None) or []
@@ -227,7 +211,6 @@ def _extract_box_tables(page, table_counter: dict) -> list[ExtractedTable]:
         ))
 
     return tables
-
 
 def extract_tables_from_pages(
     pages: list,
@@ -257,7 +240,6 @@ def extract_tables_from_pages(
     logger.info(f"Extracted {len(deduplicated)} tables ({len(tables) - len(deduplicated)} duplicates removed)")
     return deduplicated
 
-
 def _process_pdf_table(
     tab,
     page_idx: int,
@@ -282,7 +264,6 @@ def _process_pdf_table(
         bbox=bbox,
         table_number=table_counter["count"],
     )
-
 
 def extract_tables_from_pdf(file_path: str | Path) -> list[ExtractedTable]:
     import pymupdf
@@ -313,7 +294,6 @@ def extract_tables_from_pdf(file_path: str | Path) -> list[ExtractedTable]:
     logger.info(f"Extracted {len(tables)} tables via pymupdf find_tables from {file_path.name}")
     return tables
 
-
 def _find_tables_safe(page, page_idx: int) -> list:
     for strategy in ("lines_strict", "lines", "text"):
         try:
@@ -323,7 +303,6 @@ def _find_tables_safe(page, page_idx: int) -> list:
             logger.debug(f"find_tables({strategy}) failed page {page_idx}: {exc}")
             continue
     return []
-
 
 def merge_tables(
     text_tables: list[ExtractedTable],

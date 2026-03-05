@@ -6,16 +6,12 @@ from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
 
-# FIXED CRT-004: Use application state instead of global mutable state
-# Model is now managed through dependency injection pattern
-
 _MD_IMAGE = re.compile(r"!\[.*?\]\(.+?\)")
 _URL = re.compile(r"https?://\S+")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _ORCID = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]")
 _MD_FORMAT = re.compile(r"[*_#|`>]")
 _MULTI_SPACE = re.compile(r"\s+")
-
 
 def _clean_for_keywords(text: str) -> str:
     text = _MD_IMAGE.sub("", text)
@@ -25,47 +21,36 @@ def _clean_for_keywords(text: str) -> str:
     text = _MD_FORMAT.sub(" ", text)
     return _MULTI_SPACE.sub(" ", text).strip()
 
-
-# FIXED CRT-004: Model factory with proper lifecycle management
 class KeywordModelFactory:
-    """Factory for keyword extraction model with proper memory management."""
-    
     _instance = None
     _model = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def get_model(self):
-        """Get or create the KeyBERT model with lazy loading."""
         if self._model is None:
             with timer("Load KeyBERT model"):
                 from keybert import KeyBERT
                 self._model = KeyBERT(model="all-MiniLM-L6-v2")
                 logger.info("KeyBERT model loaded into memory")
         return self._model
-    
+
     def unload(self) -> None:
-        """Unload model to free memory."""
         if self._model is not None:
             self._model = None
             logger.info("KeyBERT model unloaded from memory")
 
-
 def _get_kw_model():
-    """Get keyword extraction model via factory - replaces global state pattern."""
     factory = KeywordModelFactory()
     return factory.get_model()
 
-
 def unload_kw_model() -> None:
-    """Unload the keyword model from memory."""
     factory = KeywordModelFactory()
     factory.unload()
     logger.info("KeyBERT model unloaded from memory via factory")
-
 
 def extract_keywords(
     text: str,
@@ -95,7 +80,6 @@ def extract_keywords(
     results = [{"keyword": kw, "score": round(score, 4)} for kw, score in keywords]
     logger.info(f"Extracted {len(results)} keywords")
     return results
-
 
 def extract_keywords_per_paper(
     paper_texts: dict[str, str],

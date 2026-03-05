@@ -32,14 +32,6 @@ class FallbackChain:
         return self._rate_monitor
 
     def _build_chain(self, use_local_llm: bool | None = None) -> List[BaseLLMProvider]:
-        """Build the provider fallback chain.
-
-        Parameters
-        ----------
-        use_local_llm:
-            Explicit override for local-LLM preference.  When ``None`` the
-            value is read from the application settings singleton.
-        """
         if use_local_llm is None:
             use_local_llm = get_settings().USE_LOCAL_LLM
         if use_local_llm:

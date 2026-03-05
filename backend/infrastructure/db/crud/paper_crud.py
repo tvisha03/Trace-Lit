@@ -16,7 +16,6 @@ async def create_paper(db: AsyncSession, **kwargs) -> Paper:
     return paper
 
 async def get_paper(db: AsyncSession, paper_id: str) -> Paper | None:
-    # FIXED HI-003: Add UUID validation to handle invalid UUID format gracefully
     try:
         _uuid.UUID(paper_id)
     except (ValueError, AttributeError):
@@ -60,7 +59,6 @@ async def delete_paper(db: AsyncSession, paper_id: str) -> bool:
         await db.flush()
         return True
     return False
-
 
 async def get_paper_by_content_hash(
     db: AsyncSession,

@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Callable, Awaitable
 
-from shared.constants import MAX_PARALLEL_PAPERS, PAPER_PROCESSING_TIMEOUT_SECONDS
+from app.config import get_settings
 from shared.utils.memory_monitor import is_memory_pressure_high
 from shared.logger import get_logger
 
@@ -29,7 +29,7 @@ class SmartPaperQueue:
 
     def __init__(self):
         self._queue: asyncio.PriorityQueue[tuple[int, int, PaperJob]] = asyncio.PriorityQueue()
-        self._semaphore = asyncio.Semaphore(MAX_PARALLEL_PAPERS)
+        self._semaphore = asyncio.Semaphore(get_settings().MAX_PARALLEL_PAPERS)
         self._active_jobs: set[str] = set()
         self._process_fn: Callable[[PaperJob], Awaitable[None]] | None = None
         self._running = False
@@ -131,12 +131,13 @@ class SmartPaperQueue:
                 logger.info(f"Processing paper {job.paper_id} (active: {len(self._active_jobs)})")
                 await asyncio.wait_for(
                     self._process_fn(job),
-                    timeout=PAPER_PROCESSING_TIMEOUT_SECONDS,
+                    timeout=get_settings().PAPER_PROCESSING_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
+                timeout_s = get_settings().PAPER_PROCESSING_TIMEOUT_SECONDS
                 logger.error(
                     f"Paper {job.paper_id} timed out after "
-                    f"{PAPER_PROCESSING_TIMEOUT_SECONDS}s — marking as failed"
+                    f"{timeout_s}s — marking as failed"
                 )
                 try:
                     from infrastructure.db.database import async_session_factory
@@ -144,7 +145,7 @@ class SmartPaperQueue:
                     async with async_session_factory() as db:
                         await mark_paper_failed(
                             db, job.paper_id,
-                            reason=f"Processing timed out after {PAPER_PROCESSING_TIMEOUT_SECONDS}s",
+                            reason=f"Processing timed out after {timeout_s}s",
                         )
                         await db.commit()
                 except Exception as db_exc:

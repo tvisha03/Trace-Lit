@@ -93,7 +93,6 @@ class NotFoundError(TraceLitError):
             status_code=404,
         )
 
-
 class ForbiddenError(TraceLitError):
 
     def __init__(self, resource: str, resource_id: str):
@@ -101,7 +100,6 @@ class ForbiddenError(TraceLitError):
             message=f"Access to {resource} '{resource_id}' is forbidden",
             status_code=403,
         )
-
 
 class FigureAnalysisError(TraceLitError):
 

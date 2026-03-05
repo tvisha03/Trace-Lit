@@ -2,7 +2,7 @@
 import numpy as np
 
 from domain.retrieval.indexer import encode_texts
-from shared.constants import HAVF_HIGH_THRESHOLD, HAVF_MEDIUM_THRESHOLD
+from app.config import get_settings
 from shared.enums import ConfidenceLevel
 from shared.logger import get_logger
 
@@ -10,9 +10,13 @@ logger = get_logger(__name__)
 
 def _determine_confidence(
     best_score: float,
-    high_threshold: float = HAVF_HIGH_THRESHOLD,
-    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
 ) -> tuple[ConfidenceLevel, bool]:
+    if high_threshold is None:
+        high_threshold = get_settings().HAVF_HIGH_THRESHOLD
+    if medium_threshold is None:
+        medium_threshold = get_settings().HAVF_MEDIUM_THRESHOLD
     if best_score >= high_threshold:
         return ConfidenceLevel.HIGH, False
     elif best_score >= medium_threshold:
@@ -25,8 +29,8 @@ def _build_result(
     claim: str,
     scores: np.ndarray,
     source_sentences: list[dict],
-    high_threshold: float = HAVF_HIGH_THRESHOLD,
-    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
 ) -> dict:
     best_idx = int(np.argmax(scores))
     best_score = float(scores[best_idx])
@@ -49,8 +53,8 @@ def _process_claims(
     claims: list[str],
     similarity_matrix: np.ndarray,
     source_sentences: list[dict],
-    high_threshold: float = HAVF_HIGH_THRESHOLD,
-    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
 ) -> list[dict]:
     return [
         _build_result(
@@ -64,8 +68,8 @@ def verify_claims_embedding(
     claims: list[str],
     source_sentences: list[dict],
     *,
-    high_threshold: float = HAVF_HIGH_THRESHOLD,
-    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
 ) -> list[dict]:
     if not claims or not source_sentences:
         return [

@@ -54,7 +54,6 @@ async def delete_messages_by_session(db: AsyncSession, session_id: str) -> None:
     await db.execute(sa_delete(Message).where(Message.session_id == session_id))
     await db.flush()
 
-
 async def prune_old_messages(
     db: AsyncSession,
     session_id: str,

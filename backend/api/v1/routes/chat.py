@@ -44,9 +44,7 @@ async def send_message(
     except TraceLitError:
         raise
     except Exception as exc:
-        # FIXED HI-002: Preserve original exception details for debugging
         logger.error(f"Chat failed for session {session_id}: {exc}", exc_info=True)
-        # Include original error type and message for better debugging
         error_detail = f"{type(exc).__name__}: {str(exc)}" if str(exc) else type(exc).__name__
         raise TraceLitError(
             message=f"An error occurred while processing your request: {error_detail}. Please try again.",

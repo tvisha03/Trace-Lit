@@ -29,7 +29,6 @@ _SUMMARY_MAX_CHUNKS = 25
 _SUMMARY_PRIORITY_SLOTS = 15
 _SUMMARY_BODY_SLOTS = 10
 
-
 def _prepare_keyword_text(
     chunks: list,
     max_length: int = _MAX_KEYWORD_TEXT_LENGTH,
@@ -43,10 +42,8 @@ def _prepare_keyword_text(
     combined = " ".join(priority + other)
     return combined[:max_length] if len(combined) > max_length else combined
 
-
 async def _get_paper_titles(papers: list) -> dict[str, str]:
     return {str(p.id): p.title or p.filename for p in papers}
-
 
 async def get_paper_keywords(
     paper_id: str,
@@ -132,7 +129,6 @@ async def generate_literature_review(
         "provider": provider.value,
     }
 
-
 async def _gather_review_chunks(
     session_id: str,
     db: AsyncSession,
@@ -158,7 +154,6 @@ async def _gather_review_chunks(
             "Please ensure papers have been fully processed before generating a review."
         )
     return chunks_by_paper
-
 
 async def stream_literature_review(
     session_id: str,
@@ -197,7 +192,6 @@ async def stream_literature_review(
             "error": True,
         }))
 
-
 def _select_summary_chunks(chunks: list, max_total: int = _SUMMARY_MAX_CHUNKS) -> list:
     priority: list = []
     body: list = []
@@ -219,7 +213,6 @@ def _select_summary_chunks(chunks: list, max_total: int = _SUMMARY_MAX_CHUNKS) -
         selected = chunks[:max_total]
 
     return selected
-
 
 async def generate_paper_summary(
     paper_id: str,

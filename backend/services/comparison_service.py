@@ -20,13 +20,16 @@ async def compare_papers(
 ) -> dict:
     paper_contexts: dict[str, str] = {}
     paper_titles: list[str] = []
+    paper_title_map: dict[str, str] = {}
 
     for pid in paper_ids:
         paper = await get_paper(db, pid)
         if not paper:
             raise NotFoundError("Paper", pid)
 
-        paper_titles.append(paper.title or paper.filename)
+        title = paper.title or paper.filename
+        paper_titles.append(title)
+        paper_title_map[pid] = title
         chunks = await get_chunks_by_paper(db, pid)
 
         selected: list = []
@@ -46,6 +49,7 @@ async def compare_papers(
         paper_ids=paper_ids,
         paper_contexts=paper_contexts,
         llm=llm,
+        paper_titles=paper_title_map,
     )
 
     logger.info(f"Compared {len(paper_ids)} papers using {provider.value}")

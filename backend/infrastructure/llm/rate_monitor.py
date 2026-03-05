@@ -99,7 +99,6 @@ class RateLimitMonitor:
         self._last_save_time: float = time.time()
         self._load_state()
 
-
     def _save_state(self) -> None:
         try:
             _PERSISTENCE_PATH.parent.mkdir(parents=True, exist_ok=True)

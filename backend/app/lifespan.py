@@ -18,7 +18,6 @@ from app.config import get_settings
 
 logger = get_logger(__name__)
 
-
 def _validate_llm_providers() -> None:
     settings = get_settings()
     missing_keys = settings.validate_keys()
@@ -33,7 +32,6 @@ def _validate_llm_providers() -> None:
             "Set GEMINI_API_KEY, GROQ_API_KEY, or USE_LOCAL_LLM=true in the .env file."
         )
 
-
 async def _requeue_stuck_papers(paper_queue) -> None:
     async with async_session_factory() as db:
         stuck = await get_stuck_papers(db)
@@ -46,6 +44,13 @@ async def _requeue_stuck_papers(paper_queue) -> None:
                 await paper_queue.enqueue(str(paper.id), str(paper.session_id))
             await db.commit()
 
+def _prewarm_encoder() -> None:
+    try:
+        from domain.retrieval.indexer import _get_encoder
+        _get_encoder()
+        logger.info("Embedding encoder pre-warmed at startup")
+    except Exception as exc:
+        logger.warning(f"Encoder pre-warm failed (will retry on first request): {exc}")
 
 async def _shutdown_services(paper_queue, faiss_store: FAISSStore) -> None:
     logger.info("TraceLit backend shutting down …")
@@ -58,7 +63,6 @@ async def _shutdown_services(paper_queue, faiss_store: FAISSStore) -> None:
         logger.warning(f"Could not save FAISS on shutdown: {exc}")
     from domain.analysis.keyword_extractor import unload_kw_model
     unload_kw_model()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -77,6 +81,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.faiss_store = faiss_store
     app.state.llm = FallbackChain()
 
+    _prewarm_encoder()
+
     paper_queue = create_paper_queue()
     set_ws_manager(ws_manager)
     set_faiss_store(faiss_store)
@@ -90,7 +96,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     await _shutdown_services(paper_queue, faiss_store)
-
 
 async def _reconcile_faiss_with_db(faiss_store: FAISSStore) -> None:
     if not faiss_store.is_ready() or faiss_store.total_vectors == 0:
@@ -112,33 +117,29 @@ async def _reconcile_faiss_with_db(faiss_store: FAISSStore) -> None:
         f"{faiss_store.total_vectors} vectors remain."
     )
 
-
 async def _get_orphaned_paper_ids(faiss_store: FAISSStore) -> list[str]:
     faiss_paper_ids: set[str] = {
         cid.split("::", 1)[0] for cid in faiss_store._id_map
     }
     if not faiss_paper_ids:
         return []
-    
-    # FIXED MED-007: Use batch query instead of N+1 queries
+
     async with async_session_factory() as db:
         from infrastructure.db.crud.chunk_crud import get_chunks_by_papers
         chunks_by_paper = await get_chunks_by_papers(db, list(faiss_paper_ids))
-        
+
         orphaned: list[str] = []
         for pid in faiss_paper_ids:
             if not chunks_by_paper.get(pid):
                 orphaned.append(pid)
-    
-    return orphaned
 
+    return orphaned
 
 def _cleanup_stale_exports() -> None:
     import time
     from pathlib import Path
-    from shared.constants import EXPORTS_DIR
 
-    exports_path = Path(EXPORTS_DIR)
+    exports_path = Path(get_settings().EXPORTS_DIR)
     if not exports_path.exists():
         return
 
@@ -148,7 +149,6 @@ def _cleanup_stale_exports() -> None:
 
     if removed:
         logger.info(f"Cleaned up {removed} stale export file(s) from previous run")
-
 
 def _remove_stale_files(exports_path, cutoff: float) -> int:
     removed = 0
@@ -164,13 +164,11 @@ def _remove_stale_files(exports_path, cutoff: float) -> int:
                     pass
     return removed
 
-
 def _is_stale_file(file_path, cutoff: float) -> bool:
     try:
         return file_path.stat().st_mtime < cutoff
     except Exception:
         return False
-
 
 def _cleanup_empty_directories(exports_path) -> None:
     for session_dir in exports_path.iterdir():

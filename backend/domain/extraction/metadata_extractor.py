@@ -5,7 +5,6 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 @dataclass
 class PaperMetadata:
     title: str | None = None
@@ -13,7 +12,6 @@ class PaperMetadata:
     year: int | None = None
     abstract: str | None = None
     doi: str | None = None
-
 
 _TEMPLATE_TITLE_PATTERNS = [
     re.compile(r"paper\s+title", re.IGNORECASE),
@@ -36,7 +34,6 @@ _PUBLISHER_NAMES = {
     "apple", "google", "meta", "openai",
 }
 
-
 def _clean_pdf_string(raw: str | None) -> str | None:
     if not raw:
         return None
@@ -46,10 +43,8 @@ def _clean_pdf_string(raw: str | None) -> str | None:
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", cleaned)
     return cleaned if len(cleaned) > 1 else None
 
-
 def _is_template_placeholder(text: str) -> bool:
     return any(p.search(text) for p in _TEMPLATE_TITLE_PATTERNS)
-
 
 def _extract_title_from_pdf_meta(pdf_meta: dict | None) -> str | None:
     if not pdf_meta:
@@ -62,14 +57,12 @@ def _extract_title_from_pdf_meta(pdf_meta: dict | None) -> str | None:
         return None
     return title
 
-
 _SKIP_HEADINGS = {
     "abstract", "introduction", "references", "contents",
     "related work", "related works", "background", "conclusion",
     "conclusions", "acknowledgements", "acknowledgments", "appendix",
     "bibliography", "methods", "methodology", "discussion",
 }
-
 
 def _is_valid_title_candidate(candidate: str) -> bool:
     if len(candidate) < 5 or len(candidate) > 300:
@@ -85,7 +78,6 @@ def _is_valid_title_candidate(candidate: str) -> bool:
         return False
     return True
 
-
 def _parse_title_box(box: dict, page_text: str) -> str | None:
     if not isinstance(box, dict) or box.get("class") not in ("title", "section-header"):
         return None
@@ -96,7 +88,6 @@ def _parse_title_box(box: dict, page_text: str) -> str | None:
     raw = re.sub(r"^#+\s*", "", raw).strip("*").strip()
     return raw if _is_valid_title_candidate(raw) else None
 
-
 def _find_title_box(page_boxes: list, page_text: str) -> str | None:
     for box in page_boxes:
         if isinstance(box, dict) and box.get("class") == "title":
@@ -105,7 +96,6 @@ def _find_title_box(page_boxes: list, page_text: str) -> str | None:
                 return title
     return None
 
-
 def _find_section_header_title(page_boxes: list, page_text: str) -> str | None:
     for box in page_boxes:
         if isinstance(box, dict) and box.get("class") == "section-header":
@@ -113,7 +103,6 @@ def _find_section_header_title(page_boxes: list, page_text: str) -> str | None:
             if title:
                 return title
     return None
-
 
 def _find_first_text_title(page_boxes: list, page_text: str) -> str | None:
     if not page_boxes:
@@ -126,7 +115,6 @@ def _find_first_text_title(page_boxes: list, page_text: str) -> str | None:
         return None
     raw = re.sub(r"^#+\s*", "", page_text[pos[0]:pos[1]].strip()).strip("*").strip()
     return raw if _is_valid_title_candidate(raw) and len(raw) > 10 else None
-
 
 def _extract_title_from_boxes(pages: list | None) -> str | None:
     if not pages:
@@ -145,7 +133,6 @@ def _extract_title_from_boxes(pages: list | None) -> str | None:
         or _find_first_text_title(boxes, text)
     )
 
-
 def _extract_title_from_text(head: str) -> str | None:
     heading = re.search(r"^#{1,2}\s+(.{5,200})$", head, re.MULTILINE)
     if heading:
@@ -163,7 +150,6 @@ def _extract_title_from_text(head: str) -> str | None:
             return stripped
     return None
 
-
 def _extract_authors_from_pdf_meta(pdf_meta: dict | None) -> str | None:
     if not pdf_meta:
         return None
@@ -178,7 +164,6 @@ def _extract_authors_from_pdf_meta(pdf_meta: dict | None) -> str | None:
     authors = re.sub(r"[,;\s]+$", "", authors)
     return authors if len(authors) > 3 else None
 
-
 _STOP_PREFIXES = ("abstract", "introduction", "#", "keyword", "index term")
 
 _AFFILIATION_MARKERS = re.compile(
@@ -189,13 +174,11 @@ _AFFILIATION_MARKERS = re.compile(
 
 _EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 
-
 def _is_pure_affiliation(line: str) -> bool:
     return bool(
         _AFFILIATION_MARKERS.search(line)
         and not re.search(r"[A-Z][a-z]+\s+[A-Z]", line)
     )
-
 
 def _is_author_line(line: str) -> bool:
     if len(line) > 1000 or len(line) < 3:
@@ -208,7 +191,6 @@ def _is_author_line(line: str) -> bool:
     has_separator = "," in line or " and " in line.lower() or ";" in line
     return has_separator or len(name_matches) >= 1
 
-
 def _clean_author_line(line: str) -> str:
     cleaned = re.sub(r"\[.*?\]", "", line)
     cleaned = re.sub(r"[_*]", "", cleaned)
@@ -220,10 +202,8 @@ def _clean_author_line(line: str) -> str:
     cleaned = re.sub(r"[,;\s]+$", "", cleaned)
     return cleaned
 
-
 def _should_stop_author_scan(line: str) -> bool:
     return not line or len(line) < 3 or line.lower().startswith(_STOP_PREFIXES)
-
 
 def _get_text_after_title(head: str, title: str | None) -> str:
     if not title:
@@ -232,7 +212,6 @@ def _get_text_after_title(head: str, title: str | None) -> str:
     if idx < 0:
         return head
     return head[idx + len(title):].strip()
-
 
 def _collect_author_lines(text: str) -> list[str]:
     author_lines: list[str] = []
@@ -252,7 +231,6 @@ def _collect_author_lines(text: str) -> list[str]:
             break
     return author_lines
 
-
 def _extract_authors_from_text(head: str, title: str | None) -> str | None:
     after = _get_text_after_title(head, title)
     author_lines = _collect_author_lines(after)
@@ -262,11 +240,9 @@ def _extract_authors_from_text(head: str, title: str | None) -> str | None:
     result = re.sub(r"[,;\s]+$", "", result)
     return result if len(result) > 3 else None
 
-
 _NAME_PATTERN = re.compile(
     r"(?:^|\s)([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]{1,7})?)"
 )
-
 
 def _extract_bold_names(text: str) -> list[str]:
     bold_matches = re.findall(r"\*\*(.+?)\*\*", text)
@@ -282,14 +258,12 @@ def _extract_bold_names(text: str) -> list[str]:
                 names.append(m.group(1).strip())
     return names
 
-
 def _clean_box_text_for_names(text: str) -> str:
     cleaned = re.sub(r"^#+\s*", "", text).strip()
     cleaned = re.sub(r"[_*]", "", cleaned).strip()
     cleaned = _EMAIL_PATTERN.sub("", cleaned)
     cleaned = re.sub(r"\[.*?\]", "", cleaned)
     return re.sub(r"[\d†‡§¶∗◦·•]", "", cleaned)
-
 
 def _extract_names_from_segments(cleaned: str) -> list[str]:
     segments = re.split(r"[,;]|\band\b", cleaned)
@@ -302,7 +276,6 @@ def _extract_names_from_segments(cleaned: str) -> list[str]:
                 names.append(m.group(1).strip())
     return [n for n in names if 3 < len(n) < 80]
 
-
 def _extract_names_from_box_text(text: str) -> list[str]:
     bold_names = _extract_bold_names(text)
     if bold_names:
@@ -313,7 +286,6 @@ def _extract_names_from_box_text(text: str) -> list[str]:
     if _AFFILIATION_MARKERS.search(cleaned):
         return []
     return _extract_names_from_segments(cleaned)
-
 
 def _find_author_boundaries(
     page_boxes: list, page_text: str, title_lower: str
@@ -332,7 +304,6 @@ def _find_author_boundaries(
             break
     return title_end, abstract_start
 
-
 def _collect_names_between(
     page_boxes: list, page_text: str, start: int, end: int
 ) -> list[str]:
@@ -347,7 +318,6 @@ def _collect_names_between(
                 names.append(name)
     return names
 
-
 def _get_first_page_data(pages: list | None) -> tuple[list, str] | None:
     if not pages or not pages[0]:
         return None
@@ -356,7 +326,6 @@ def _get_first_page_data(pages: list | None) -> tuple[list, str] | None:
     if not boxes:
         return None
     return boxes, getattr(page, "text", "")
-
 
 def _extract_authors_from_boxes(pages: list | None, title: str | None) -> str | None:
     page_data = _get_first_page_data(pages)
@@ -371,7 +340,6 @@ def _extract_authors_from_boxes(pages: list | None, title: str | None) -> str | 
     if not names:
         return None
     return re.sub(r"[,;\s]+$", "", "; ".join(names)) or None
-
 
 def _extract_year_from_pdf_meta(pdf_meta: dict | None) -> int | None:
     if not pdf_meta:
@@ -392,7 +360,6 @@ def _extract_year_from_pdf_meta(pdf_meta: dict | None) -> int | None:
             if 1900 <= year <= 2100:
                 return year
     return None
-
 
 def _extract_year_from_text(head: str) -> int | None:
     contextual = re.search(
@@ -421,7 +388,6 @@ def _extract_year_from_text(head: str) -> int | None:
     if year_match:
         return int(year_match.group(1))
     return None
-
 
 def _extract_abstract_from_text(text: str) -> str | None:
     search_area = text[:20000]
@@ -463,12 +429,10 @@ def _extract_abstract_from_text(text: str) -> str | None:
         return abstract
     return None
 
-
 _DOI_PATTERN = re.compile(
     r"(?:doi[:\s]*|https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/[^\s,;\"')\]]+)",
     re.IGNORECASE,
 )
-
 
 def _extract_doi(markdown_text: str, pdf_metadata: dict | None) -> str | None:
     if pdf_metadata:
@@ -484,7 +448,6 @@ def _extract_doi(markdown_text: str, pdf_metadata: dict | None) -> str | None:
     if m:
         return m.group(1).rstrip(".")
     return None
-
 
 def extract_metadata(
     markdown_text: str,

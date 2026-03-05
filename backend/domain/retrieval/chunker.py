@@ -8,23 +8,10 @@ from shared.enums import ChunkType
 
 logger = get_logger(__name__)
 
-# Compiled pattern for inline image markdown: ![alt](url)
-# Strips embedded image references such as ``![](data/uploads/…)`` that
-# formula and figure extractor results can embed inside their text fields.
-# These paths are meaningless for the HAVF verifier and the LLM.
 _IMG_MD_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
-
 def _strip_image_markdown(text: str) -> str:
-    """Remove ``![alt](url)`` tokens from *text*.
-
-    Formula and figure chunks sometimes embed image paths like
-    ``![](data/uploads/…)`` inside their extracted text content.  Stripping
-    these keeps source sentences readable and prevents the HAVF verifier from
-    treating them as meaningful claims.
-    """
     return _IMG_MD_RE.sub("", text).strip()
-
 
 @dataclass
 class Chunk:
@@ -169,7 +156,6 @@ def _split_large_paragraph(
 
     return chunks
 
-
 def create_figure_chunks(
     analyzed_figures: list,
     paper_title: str | None = None,
@@ -225,14 +211,13 @@ def create_figure_chunks(
     logger.info(f"Created {len(chunks)} figure chunks")
     return chunks
 
-
 def _build_table_semantic_description(
     paper_title: str | None,
     caption: str,
     rows: int,
     cols: int,
 ) -> str:
-    """Build semantic description for table (for LLM context)."""
+
     parts = []
     if paper_title:
         parts.append(f"This table is from the paper '{paper_title}'.")
@@ -242,7 +227,6 @@ def _build_table_semantic_description(
         parts.append(f"The table contains {rows} data rows across {cols} columns.")
     return " ".join(parts)
 
-
 def _build_table_text_variants(
     paper_title: str | None,
     caption: str,
@@ -251,11 +235,7 @@ def _build_table_text_variants(
     page_number: int,
     table_content: str,
 ) -> tuple[str, str, str]:
-    """Build display_text, enriched_text, and havf_text for a table chunk.
-
-    Returns: (display_text, enriched_text, havf_text)
-    """
-    # Build prefix with metadata
+    prefix_parts = []
     prefix_parts = []
     if paper_title:
         prefix_parts.append(f"[Paper: {paper_title}]")
@@ -266,13 +246,11 @@ def _build_table_text_variants(
 
     semantic_desc = _build_table_semantic_description(paper_title, caption, rows, cols)
 
-    # Construct the three text variants
     display_text = f"{caption}\n{table_content}" if caption else table_content
     enriched_text = f"{prefix}\n{semantic_desc}\n{table_content}" if semantic_desc else f"{prefix}\n{table_content}"
     havf_text = caption if caption else f"Table on page {page_number}"
 
     return display_text, enriched_text, havf_text
-
 
 def create_table_chunks(
     tables: list,
@@ -317,7 +295,6 @@ def create_table_chunks(
     logger.info(f"Created {len(chunks)} table chunks")
     return chunks
 
-
 def create_formula_chunks(
     formulas: list,
     paper_title: str | None = None,
@@ -348,8 +325,6 @@ def create_formula_chunks(
         prefix = " ".join(prefix_parts)
 
         display_text = f"{context}\n{text}" if context else text
-        # Strip inline image markdown (e.g. ![](data/uploads/…)) so the LLM
-        # context and the HAVF source sentence remain human-readable text.
         clean_text = _strip_image_markdown(display_text)
         enriched_text = f"{prefix}\n{clean_text}"
 

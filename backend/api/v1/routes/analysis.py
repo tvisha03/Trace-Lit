@@ -47,7 +47,6 @@ async def paper_keywords(
     if not paper:
         raise NotFoundError("Paper", paper_id)
 
-    # FIXED MED-007: Add paper ownership validation to prevent cross-session data leakage
     if str(paper.session_id) != session_id:
         raise ForbiddenError("Paper", paper_id)
 
@@ -112,7 +111,6 @@ async def literature_review(
     result = await generate_literature_review(session_id, db, llm)
     return ReviewResponse(**result)
 
-
 @router.get("/review/stream", response_class=StreamingResponse)
 async def literature_review_stream(
     session_id: str,
@@ -143,7 +141,6 @@ async def literature_review_stream(
             "X-Accel-Buffering": "no",
         },
     )
-
 
 @router.get("/summary/{paper_id}", response_model=SummaryResponse)
 async def paper_summary(

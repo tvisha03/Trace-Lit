@@ -27,14 +27,17 @@ User question: {question}
 Respond using ONLY the context above. Cite every claim with [P#], [F#], [T#], or [E#].
 """
 
-COMPARISON_PROMPT_TEMPLATE = """You are comparing multiple academic papers.
+COMPARISON_PROMPT_TEMPLATE = """You are comparing {paper_count} academic papers.
+
+Papers being compared:
+{paper_listing}
 
 Paper contexts:
 {paper_contexts}
 
 User question: {question}
 
-Compare these papers on the following dimensions:
+Compare ALL {paper_count} papers on the following dimensions:
 1. Research problem and motivation
 2. Methodology and approach
 3. Key findings and results
@@ -42,8 +45,9 @@ Compare these papers on the following dimensions:
 5. Limitations acknowledged
 
 If the user question focuses on a specific aspect, prioritise that dimension.
-For every comparison point, cite BOTH papers using [P#].
-Format your response as a structured comparison."""
+For every comparison point, cite ALL relevant papers using [P#].
+When discussing differences or similarities, explicitly name which papers agree or disagree.
+Format your response as a structured comparison covering every paper."""
 
 SUMMARY_PROMPT_TEMPLATE = """Context from the paper:
 {context}
@@ -60,17 +64,23 @@ If the user question requests a specific focus, address it directly.
 Cite every point with [P#].
 """
 
-GAP_ANALYSIS_PROMPT_TEMPLATE = """Context from multiple papers:
+GAP_ANALYSIS_PROMPT_TEMPLATE = """You are analysing {paper_count} academic papers together.
+
+Papers under analysis:
+{paper_listing}
+
+Context from the papers:
 {context}
 
-Analyse the research landscape represented by these papers:
-1. **Common themes**: What topics do multiple papers address? [P#]
-2. **Methodological gaps**: What approaches are underexplored?
-3. **Missing perspectives**: What viewpoints or datasets are absent?
-4. **Future directions**: Based on the limitations mentioned, what should be studied next?
+Analyse the research landscape represented by ALL {paper_count} papers above:
+1. **Common themes**: What topics do multiple papers address? Identify which specific papers cover each theme. [P#]
+2. **Methodological gaps**: What approaches are underexplored across the set of papers? Which papers use which methods?
+3. **Missing perspectives**: What viewpoints, datasets, or populations are absent from the collective body of work?
+4. **Contradictions & agreements**: Where do the papers agree or disagree? Cite specific papers for each point. [P#]
+5. **Future directions**: Based on the limitations mentioned across ALL papers, what should be studied next?
 
-Cite every observation with [P#].
-"""
+Ensure you reference ALL {paper_count} papers in your analysis, not just a subset.
+Cite every observation with [P#]."""
 
 LITERATURE_REVIEW_PROMPT_TEMPLATE = """Context from multiple papers:
 {context}
@@ -84,6 +94,39 @@ Write a structured literature review covering the papers above:
 Cite every claim with [P#]. Write in formal academic prose.
 """
 
+CONTRIBUTION_PROMPT = """You are an academic paper analysis assistant.
+Given the following paper sections, extract the paper's key contributions.
+
+Return your answer as a single valid JSON object with EXACTLY these 5 keys.
+Each key maps to an object with "text" (a concise 1-3 sentence summary) and "paragraph_id" (the [P#] citation from which you extracted it).
+
+{
+  "problem": {"text": "What research problem or question the paper addresses", "paragraph_id": "P#"},
+  "method": {"text": "The methodology, algorithm, or approach proposed", "paragraph_id": "P#"},
+  "dataset": {"text": "Datasets, benchmarks, or evaluation data used", "paragraph_id": "P#"},
+  "metrics": {"text": "Evaluation metrics and measures reported", "paragraph_id": "P#"},
+  "results": {"text": "Key findings, performance numbers, and conclusions", "paragraph_id": "P#"}
+}
+
+IMPORTANT:
+- Output ONLY the JSON object. No markdown fences, no extra text, no explanation.
+- If a field is not found in the context, set text to "Not mentioned" and paragraph_id to null.
+- Use the exact paragraph citation IDs from the context (e.g. "P12", "P45").
+- Keep each text field concise: 1-3 sentences maximum."""
+
+FIGURE_ANALYSIS_PROMPT = (
+    "You are an expert academic research analyst. "
+    "Analyze this figure/chart from a research paper. Provide:\n"
+    "1. A concise description of what the figure shows\n"
+    "2. The type of visualization (bar chart, line graph, scatter plot, "
+    "flowchart, diagram, table, photograph, etc.)\n"
+    "3. Key data points, trends, or relationships visible\n"
+    "4. Any axis labels, legends, or annotations present\n\n"
+    "Format your response as:\n"
+    "TYPE: <figure_type>\n"
+    "DESCRIPTION: <detailed_description>\n"
+    "Keep the description under 200 words and focused on factual observations."
+)
 
 _CHUNK_TYPE_TAG: dict[str, str] = {
     "figure": "FIGURE",
@@ -91,32 +134,23 @@ _CHUNK_TYPE_TAG: dict[str, str] = {
     "formula": "EQUATION",
 }
 
-
 def _get_chunk_type_tag(chunk) -> str | None:
-    """Return the FIGURE/TABLE/EQUATION tag for non-text chunks, else None."""
     chunk_type = getattr(chunk, "chunk_type", "text")
-    # chunk_type may be a ChunkType enum or a raw string — getattr handles both
-    # without a conditional branch.
     ct_value = getattr(chunk_type, "value", str(chunk_type))
     return _CHUNK_TYPE_TAG.get(ct_value)
 
-
 def _get_context_text(chunk, type_tag: str | None) -> str:
-    """Return enriched_text for non-text chunks (carries semantic labels), text otherwise."""
     if type_tag:
         return getattr(chunk, "enriched_text", None) or getattr(chunk, "text", str(chunk))
     return getattr(chunk, "text", str(chunk))
 
-
 def _build_chunk_header(pid: str, type_tag: str | None, section: str) -> str:
-    """Assemble the [PID] [TYPE] (Section: …) header line."""
     header = f"[{pid}]"
     if type_tag:
         header += f" [{type_tag}]"
     if section:
         header += f" (Section: {section})"
     return header
-
 
 def build_context_block(chunks: list) -> str:
     lines = []
@@ -129,7 +163,6 @@ def build_context_block(chunks: list) -> str:
         lines.append(f"{header}\n{text}")
 
     return "\n\n".join(lines)
-
 
 def build_history_block(messages: list, max_turns: int = 4) -> str:
     from enum import Enum

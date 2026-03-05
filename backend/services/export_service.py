@@ -13,7 +13,7 @@ from infrastructure.db.crud.message_crud import get_messages_by_session
 from infrastructure.db.crud.paper_crud import get_papers_by_session, get_paper
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
-from shared.constants import MAX_EXPORT_FILE_SIZE_MB
+from app.config import get_settings
 from shared.enums import ExportFormat
 from shared.errors import NotFoundError, TraceLitError
 from shared.logger import get_logger
@@ -21,17 +21,17 @@ from workers.export_worker import run_export_in_thread
 
 logger = get_logger(__name__)
 
-
 def _check_export_size(output_path: Path) -> None:
     if not output_path.exists():
         return
+    settings = get_settings()
     size_mb = output_path.stat().st_size / (1024 * 1024)
-    if size_mb > MAX_EXPORT_FILE_SIZE_MB:
+    if size_mb > settings.MAX_EXPORT_FILE_SIZE_MB:
         output_path.unlink(missing_ok=True)
         raise TraceLitError(
             message=(
                 f"Generated export is too large ({size_mb:.1f} MB, "
-                f"limit {MAX_EXPORT_FILE_SIZE_MB} MB). Try exporting fewer messages "
+                f"limit {settings.MAX_EXPORT_FILE_SIZE_MB} MB). Try exporting fewer messages "
                 "or a smaller range."
             ),
             status_code=413,
@@ -54,7 +54,6 @@ async def _export_chat_as_pdf(
     _check_export_size(result)
     return result
 
-
 async def _export_chat_as_excel(
     session_id: str,
     session_title: str,
@@ -72,7 +71,6 @@ async def _export_chat_as_excel(
     )
     _check_export_size(result)
     return result
-
 
 async def _export_chat_as_bibtex(
     session_id: str,
@@ -101,7 +99,6 @@ async def _export_chat_as_bibtex(
     _check_export_size(result)
     return result
 
-
 async def _export_chat_as_docx(
     session_id: str,
     session_title: str,
@@ -119,7 +116,6 @@ async def _export_chat_as_docx(
     _check_export_size(result)
     return result
 
-
 async def _export_chat_as_latex(
     session_id: str,
     session_title: str,
@@ -136,7 +132,6 @@ async def _export_chat_as_latex(
     )
     _check_export_size(result)
     return result
-
 
 async def export_chat(
     session_id: str,
@@ -195,7 +190,6 @@ async def _collect_paper_dicts(paper_ids: list[str], db: AsyncSession) -> list[d
             )
     return paper_dicts
 
-
 async def _export_comparison_as_pdf(
     session_id: str,
     comparison_content: str,
@@ -213,7 +207,6 @@ async def _export_comparison_as_pdf(
     )
     _check_export_size(result)
     return result
-
 
 async def _export_comparison_as_excel(
     session_id: str,
@@ -243,7 +236,6 @@ async def _export_comparison_as_excel(
     _check_export_size(result)
     return result
 
-
 async def _export_comparison_as_bibtex(
     session_id: str,
     filename: str,
@@ -260,7 +252,6 @@ async def _export_comparison_as_bibtex(
     )
     _check_export_size(result)
     return result
-
 
 async def _export_comparison_as_docx(
     session_id: str,
@@ -280,7 +271,6 @@ async def _export_comparison_as_docx(
     _check_export_size(result)
     return result
 
-
 async def _export_comparison_as_latex(
     session_id: str,
     comparison_content: str,
@@ -298,7 +288,6 @@ async def _export_comparison_as_latex(
     )
     _check_export_size(result)
     return result
-
 
 async def export_comparison(
     session_id: str,

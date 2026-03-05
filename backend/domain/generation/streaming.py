@@ -25,7 +25,6 @@ logger = get_logger(__name__)
 import re as _re
 from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_ids
 
-
 def _validate_and_strip_citations(
     full_text: str,
     chunks: list,
@@ -56,7 +55,6 @@ def _validate_and_strip_citations(
         )
     return full_text, has_citations
 
-
 async def _emit_havf_results(full_text: str, chunks: list):
     from domain.verification.havf import verify_response
     from app.config import get_settings
@@ -78,7 +76,6 @@ async def _emit_havf_results(full_text: str, chunks: list):
             "paper_id": r.paper_id,
             "sentence_key": r.sentence_key,
             "verification_method": r.verification_method.value if r.verification_method else None,
-            # Content type and brief citation reference for non-text chunks (figures, tables, formulas)
             "chunk_type": r.chunk_type,
             "citation_ref": r.citation_ref,
         }
@@ -142,7 +139,6 @@ async def _classify_and_validate_query(
         logger.error(f"Query classification failed: {exc}")
         raise
 
-
 async def _retrieve_and_filter_chunks(
     query: str,
     paper_ids: list[str],
@@ -168,7 +164,6 @@ async def _retrieve_and_filter_chunks(
         chunks = [c for c in chunks if any(kw in c.text.lower() for kw in lower_kw)]
     return chunks
 
-
 async def _persist_response(
     session_id: str,
     full_text: str,
@@ -190,7 +185,6 @@ async def _persist_response(
         await db_session.commit()
     except Exception as exc:
         logger.error(f"Failed to persist streaming assistant message for session {session_id}: {exc}")
-
 
 def _build_streaming_prompt(
     classification,
@@ -217,7 +211,6 @@ def _build_streaming_prompt(
         history=history_block,
         question=query,
     )
-
 
 async def stream_chat_response(
     query: str,

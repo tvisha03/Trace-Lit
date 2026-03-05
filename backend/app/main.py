@@ -13,9 +13,6 @@ from app.lifespan import lifespan
 from api.v1.router import api_v1_router
 from api.v1.routes.websocket import router as ws_router
 
-_REQUEST_TIMEOUT_SECONDS: float = 120.0
-
-
 class RequestIDMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
@@ -25,10 +22,9 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
         return response
 
-
 class TimeoutMiddleware(BaseHTTPMiddleware):
 
-    def __init__(self, app, timeout: float = _REQUEST_TIMEOUT_SECONDS):
+    def __init__(self, app, timeout: float):
         super().__init__(app)
         self.timeout = timeout
 
@@ -51,7 +47,6 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-
 def create_app() -> FastAPI:
     settings = get_settings()
 
@@ -71,8 +66,7 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(RequestIDMiddleware)
-
-    app.add_middleware(TimeoutMiddleware)
+    app.add_middleware(TimeoutMiddleware, timeout=settings.REQUEST_TIMEOUT)
 
     register_exception_handlers(app)
 

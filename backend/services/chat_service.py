@@ -15,15 +15,9 @@ from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_i
 
 logger = get_logger(__name__)
 
-
 async def validate_response_has_citations(
     response: str, context: list[dict], retrieved_paragraph_ids: list[str] | None = None,
 ) -> tuple[str, bool]:
-    """Validate that response has proper citations.
-    
-    Returns:
-        tuple of (validated_response, citations_were_stripped)
-    """
     citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]"
     citations_found = re.findall(citation_pattern, response)
     citations_stripped = False
@@ -61,7 +55,6 @@ async def validate_response_has_citations(
 
     return response, citations_stripped
 
-
 async def _format_havf_data(response: ChatResponse) -> list[dict]:
     return [
         {
@@ -73,13 +66,50 @@ async def _format_havf_data(response: ChatResponse) -> list[dict]:
             "paper_id": r.paper_id,
             "sentence_key": r.sentence_key,
             "verification_method": r.verification_method.value if r.verification_method else None,
-            # Content type and brief citation reference for non-text chunks (figures, tables, formulas)
             "chunk_type": r.chunk_type,
             "citation_ref": r.citation_ref,
         }
         for r in response.havf_results
     ]
 
+async def _validate_and_update_response_content(
+    response: ChatResponse,
+    paper_ids: list[str],
+) -> None:
+    retrieved_para_ids = [
+        str(r.paragraph_id)
+        for r in (response.retrieved_chunks or [])
+        if r.paragraph_id
+    ]
+    validated_content, citations_stripped = await validate_response_has_citations(
+        response.content,
+        [{"paper_id": pid} for pid in paper_ids],
+        retrieved_paragraph_ids=retrieved_para_ids or None,
+    )
+    response.content = validated_content
+    if citations_stripped:
+        logger.info("Citation validation: some citations were removed due to invalid references")
+
+async def _process_and_save_response(
+    response: ChatResponse,
+    session_id: str,
+    paper_ids: list[str],
+    db: AsyncSession,
+) -> None:
+    is_metadata = not response.retrieved_chunks and not response.havf_results
+    if not is_metadata:
+        await _validate_and_update_response_content(response, paper_ids)
+
+    await create_message(
+        db,
+        session_id=session_id,
+        role=MessageRole.ASSISTANT,
+        content=response.content,
+        provider=response.provider.value,
+        havf_results=await _format_havf_data(response),
+        token_count=response.token_count,
+        latency_ms=response.latency_ms,
+    )
 
 async def _prepare_chat_context(
     session_id: str, db: AsyncSession
@@ -106,7 +136,6 @@ async def _prepare_chat_context(
     history = await get_recent_messages(db, session_id, max_turns=4)
     return paper_ids, history
 
-
 async def chat(
     session_id: str,
     query: str,
@@ -132,34 +161,8 @@ async def chat(
         db_session=db,
         keywords=keywords,
     )
-    is_metadata = not response.retrieved_chunks and not response.havf_results
-    if not is_metadata:
-        retrieved_para_ids = [
-            str(r.paragraph_id)
-            for r in (response.retrieved_chunks or [])
-            if r.paragraph_id
-        ]
-        validated_content, citations_stripped = await validate_response_has_citations(
-            response.content,
-            [{"paper_id": pid} for pid in paper_ids],
-            retrieved_paragraph_ids=retrieved_para_ids or None,
-        )
-        response.content = validated_content
-        # Log if citations were stripped for visibility
-        if citations_stripped:
-            logger.info("Citation validation: some citations were removed due to invalid references")
-    await create_message(
-        db,
-        session_id=session_id,
-        role=MessageRole.ASSISTANT,
-        content=response.content,
-        provider=response.provider.value,
-        havf_results=await _format_havf_data(response),
-        token_count=response.token_count,
-        latency_ms=response.latency_ms,
-    )
+    await _process_and_save_response(response, session_id, paper_ids, db)
     return response
-
 
 async def chat_stream(
     session_id: str,

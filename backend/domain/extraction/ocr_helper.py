@@ -26,7 +26,6 @@ _MD_IMAGE_CHECK = re.compile(
 _OCR_DPI = 600
 _BBOX_MARGIN = 15
 
-
 def _load_ocr_engine():
     try:
         from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-untyped]
@@ -35,14 +34,12 @@ def _load_ocr_engine():
         logger.info("RapidOCR not available — OCR author extraction disabled")
         return None
 
-
 def _has_image_content(box: dict, text: str) -> bool:
     pos = box.get("pos", (0, 0))
     if len(pos) < 2:
         return False
     raw = text[pos[0]:pos[1]].strip()
     return bool(_MD_IMAGE_CHECK.search(raw)) or box.get("class") == "picture"
-
 
 def _get_title_end_pos(boxes: list[dict]) -> int:
     title_end = 0
@@ -57,7 +54,6 @@ def _get_title_end_pos(boxes: list[dict]) -> int:
         title_end = first_pos[1] if len(first_pos) >= 2 else 0
     return title_end
 
-
 def _get_abstract_start_pos(
     boxes: list[dict], text: str, title_end: int,
 ) -> int:
@@ -69,7 +65,6 @@ def _get_abstract_start_pos(
         if re.search(r"\babstract\b", raw, re.IGNORECASE):
             return pos[0]
     return len(text)
-
 
 def _find_author_region(pages: list) -> list[dict] | None:
     if not pages:
@@ -89,7 +84,6 @@ def _find_author_region(pages: list) -> list[dict] | None:
     ]
     return candidates if candidates else None
 
-
 def _is_candidate_box(
     box: dict, text: str, title_end: int, abstract_start: int,
 ) -> bool:
@@ -98,10 +92,8 @@ def _is_candidate_box(
         return False
     return pos[0] >= title_end and pos[0] < abstract_start and _has_image_content(box, text)
 
-
 def _extract_bbox_list(candidate_boxes: list[dict]) -> list:
     return [b.get("bbox") for b in candidate_boxes if b.get("bbox")]
-
 
 def _compute_combined_bbox(
     candidate_boxes: list[dict],
@@ -120,7 +112,6 @@ def _compute_combined_bbox(
     too_small = (x1 - x0 < 50) or (y1 - y0 < 10)
     return None if too_small else (x0, y0, x1, y1)
 
-
 def _render_region(doc_page, bbox: tuple) -> bytes | None:
     import pymupdf  # type: ignore[import-untyped]
 
@@ -130,10 +121,8 @@ def _render_region(doc_page, bbox: tuple) -> bytes | None:
     pix = doc_page.get_pixmap(clip=rect, dpi=_OCR_DPI)
     return pix.tobytes("png")
 
-
 _ROW_Y_THRESHOLD = 50
 _NAME_GAP_THRESHOLD = 100
-
 
 def _ocr_image_bytes(engine, img_bytes: bytes) -> list[tuple]:
     result, _ = engine(img_bytes)
@@ -141,13 +130,11 @@ def _ocr_image_bytes(engine, img_bytes: bytes) -> list[tuple]:
         return []
     return result
 
-
 def _clean_word(word: str) -> str:
     cleaned = _EMAIL_PATTERN.sub("", word)
     cleaned = re.sub(r"[\d†‡§¶∗◦·•\[\]{}<>]", "", cleaned)
     cleaned = re.sub(r"\*+[a-zA-Z]?", "", cleaned)
     return cleaned.strip()
-
 
 def _group_into_rows(detections: list[tuple]) -> list[list[tuple]]:
     if not detections:
@@ -176,14 +163,12 @@ def _group_into_rows(detections: list[tuple]) -> list[list[tuple]]:
     rows.append(current_row)
     return rows
 
-
 def _is_valid_name(name: str) -> bool:
     if not name or len(name) < 3:
         return False
     if _SINGLE_COMPANY.match(name):
         return False
     return not _AFFILIATION_MARKERS.search(name)
-
 
 def _group_words_by_gap(sorted_row: list[tuple]) -> list[list[str]]:
     groups: list[list[str]] = []
@@ -202,7 +187,6 @@ def _group_words_by_gap(sorted_row: list[tuple]) -> list[list[str]]:
     groups.append(current_group)
     return groups
 
-
 def _merge_row_into_names(row: list[tuple]) -> list[str]:
     sorted_row = sorted(row, key=lambda i: i[1])
     groups = _group_words_by_gap(sorted_row)
@@ -214,7 +198,6 @@ def _merge_row_into_names(row: list[tuple]) -> list[str]:
             names.append(name)
     return names
 
-
 def _extract_names_from_detections(detections: list[tuple]) -> list[str]:
     if not detections:
         return []
@@ -225,7 +208,6 @@ def _extract_names_from_detections(detections: list[tuple]) -> list[str]:
         row_names = _merge_row_into_names(row)
         names.extend(row_names)
     return names
-
 
 def _ocr_page_region(file_path: Path, candidate_boxes: list[dict]) -> list[tuple]:
     import pymupdf  # type: ignore[import-untyped]
@@ -248,7 +230,6 @@ def _ocr_page_region(file_path: Path, candidate_boxes: list[dict]) -> list[tuple
         return _ocr_image_bytes(engine, img_bytes)
     finally:
         doc.close()
-
 
 def ocr_author_region(
     file_path: str | Path,
