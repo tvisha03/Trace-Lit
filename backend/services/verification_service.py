@@ -35,8 +35,11 @@ async def verify_text_against_papers(
             "score": r.score,
             "source_sentence": r.source_sentence,
             "paragraph_id": r.paragraph_id,
+            "paper_id": r.paper_id,
             "sentence_key": r.sentence_key,
             "verification_method": r.verification_method.value if r.verification_method else None,
+            "chunk_type": r.chunk_type,
+            "citation_ref": r.citation_ref,
         }
         for r in havf_results
     ]

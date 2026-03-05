@@ -208,6 +208,56 @@ async def _export_comparison_as_pdf(
     _check_export_size(result)
     return result
 
+def _build_contrib_map(contributions: Optional[list[dict]]) -> dict[str, dict]:
+    if not contributions:
+        return {}
+    result: dict[str, dict] = {}
+    for c in contributions:
+        pid = c.get("paper_id", "")
+        if pid:
+            result[pid] = c.get("contributions", {})
+    return result
+
+def _apply_contributions(entry: dict, contribs: dict) -> None:
+    entry["problem"] = contribs.get("problem", {}).get("text", "")
+    entry["method"] = contribs.get("method", {}).get("text", "")
+    entry["results"] = contribs.get("results", {}).get("text", "")
+    parts = []
+    for field in ("dataset", "metrics"):
+        val = contribs.get(field, {}).get("text", "")
+        if val and val != "Not mentioned":
+            parts.append(val)
+    entry["keywords"] = "; ".join(parts)
+
+async def _enrich_from_db(entry: dict, pid: str, db: AsyncSession) -> None:
+    paper_obj = await get_paper(db, pid)
+    if not paper_obj:
+        return
+    entry["authors"] = paper_obj.authors or ""
+    entry["year"] = paper_obj.year or ""
+    entry["abstract"] = (paper_obj.abstract or "")[:2000]
+
+async def _build_paper_data(
+    paper_titles: list[str],
+    paper_ids: Optional[list[str]],
+    db: Optional[AsyncSession],
+    contrib_map: dict[str, dict],
+) -> list[dict]:
+    paper_data: list[dict] = []
+    for i, title in enumerate(paper_titles):
+        entry: dict = {
+            "title": title, "authors": "", "year": "",
+            "abstract": "", "problem": "", "method": "",
+            "results": "", "keywords": "",
+        }
+        pid = paper_ids[i] if paper_ids and i < len(paper_ids) else None
+        if pid and db:
+            await _enrich_from_db(entry, pid, db)
+        if pid and pid in contrib_map:
+            _apply_contributions(entry, contrib_map[pid])
+        paper_data.append(entry)
+    return paper_data
+
 async def _export_comparison_as_excel(
     session_id: str,
     comparison_content: str,
@@ -216,17 +266,11 @@ async def _export_comparison_as_excel(
     file_storage: FileStorage,
     paper_ids: Optional[list[str]] = None,
     db: Optional[AsyncSession] = None,
+    contributions: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
-    paper_data = []
-    for i, title in enumerate(paper_titles):
-        entry: dict = {"title": title, "authors": "", "year": "", "problem": "", "method": "", "results": "", "keywords": ""}
-        if paper_ids and db and i < len(paper_ids):
-            paper_obj = await get_paper(db, paper_ids[i])
-            if paper_obj:
-                entry["authors"] = paper_obj.authors or ""
-                entry["year"] = paper_obj.year or ""
-        paper_data.append(entry)
+    contrib_map = _build_contrib_map(contributions)
+    paper_data = await _build_paper_data(paper_titles, paper_ids, db, contrib_map)
     result = await run_export_in_thread(
         export_comparison_to_excel,
         paper_data=paper_data,
@@ -297,6 +341,7 @@ async def export_comparison(
     file_storage: FileStorage,
     paper_ids: Optional[list[str]] = None,
     db: Optional[AsyncSession] = None,
+    contributions: Optional[list[dict]] = None,
 ) -> Path:
     filename = f"comparison_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
 
@@ -325,6 +370,7 @@ async def export_comparison(
             file_storage=file_storage,
             paper_ids=paper_ids,
             db=db,
+            contributions=contributions,
         )
     else:
         return await handler(session_id, comparison_content, paper_titles, filename, file_storage)

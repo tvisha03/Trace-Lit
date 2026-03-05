@@ -1,8 +1,6 @@
-
 import asyncio
 import re
 from dataclasses import dataclass
-
 from domain.verification.embedding_verifier import verify_claims_embedding
 from domain.verification.noise_filter import clean_source_text, is_noise_source
 from domain.verification.reranker import rerank_claims
@@ -15,6 +13,38 @@ from shared.utils.time_utils import timer
 logger = get_logger(__name__)
 
 _CITATION_ID_RE = re.compile(r"\[([a-f0-9]{8}_[PTFE]\d+)\]")
+_MD_BOLD_RE = re.compile(r"\*{1,3}(.+?)\*{1,3}")
+_MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_MD_LIST_RE = re.compile(r"^[\s]*[-*+]\s+", re.MULTILINE)
+_MD_NUM_LIST_RE = re.compile(r"^[\s]*\d+\.\s+", re.MULTILINE)
+_NON_TEXT_PREFIXES = frozenset({"F", "T", "E"})
+
+def _is_non_text_paragraph(paragraph_id: str | None) -> bool:
+    if not paragraph_id:
+        return False
+    suffix = paragraph_id.split("_")[-1]
+    return suffix[:1] in _NON_TEXT_PREFIXES
+
+def _strip_markdown_for_claims(text: str) -> str:
+    text = _MD_BOLD_RE.sub(r"\1", text)
+    text = _MD_HEADING_RE.sub("", text)
+    text = _MD_LIST_RE.sub("", text)
+    text = _MD_NUM_LIST_RE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+def _split_into_verifiable_claims(text: str) -> list[str]:
+    cleaned = _strip_markdown_for_claims(text)
+    paragraphs = re.split(r"\n\s*\n", cleaned)
+    claims: list[str] = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        sentences = split_into_sentences(para)
+        claims.extend(sentences)
+    return [c for c in claims if c.strip()]
+
 
 def _extract_cited_para_id(claim: str) -> str | None:
     match = _CITATION_ID_RE.search(claim)
@@ -38,16 +68,25 @@ def _apply_citation_correction(
         if cited_pid and cited_pid in para_source_index:
             src = para_source_index[cited_pid]
             new_pid = src["paragraph_id"]
+            chunk_type = _chunk_type_from_paragraph_id(new_pid)
+
+            confidence = result.confidence
+            score = result.score
+            if chunk_type != "text" and _is_non_text_paragraph(new_pid):
+                if confidence == ConfidenceLevel.LOW:
+                    confidence = ConfidenceLevel.MEDIUM
+                score = max(score, 0.70)
+
             result = VerificationResult(
                 claim=result.claim,
-                confidence=result.confidence,
-                score=result.score,
+                confidence=confidence,
+                score=score,
                 source_sentence=src["text"],
                 paragraph_id=new_pid,
                 paper_id=src["paper_id"],
                 sentence_key=src["sentence_key"],
                 verification_method=result.verification_method,
-                chunk_type=_chunk_type_from_paragraph_id(new_pid),
+                chunk_type=chunk_type,
                 citation_ref=new_pid.split("_")[-1] if new_pid else None,
             )
         corrected.append(result)
@@ -74,10 +113,28 @@ def _chunk_type_from_paragraph_id(paragraph_id: str | None) -> str:
     suffix = paragraph_id.split("_")[-1]
     return _PARAGRAPH_TYPE_MAP.get(suffix[:1], "text")
 
+def _add_non_text_source(sources: list[dict], chunk, para_id: str | None, paper_id: str | None) -> None:
+    if not _is_non_text_paragraph(para_id):
+        return
+    full_text = getattr(chunk, "text", "") or ""
+    enriched_text = getattr(chunk, "enriched_text", "") or ""
+    best_text = enriched_text if len(enriched_text) > len(full_text) else full_text
+    if not best_text or len(best_text) <= 50:
+        return
+    cleaned = clean_source_text(best_text)
+    existing_texts = {s["text"] for s in sources}
+    if cleaned and cleaned not in existing_texts and not is_noise_source(cleaned):
+        sources.append({
+            "text": cleaned,
+            "paragraph_id": para_id,
+            "paper_id": paper_id,
+            "sentence_key": f"{para_id}_FULL" if para_id else None,
+        })
+
 def _extract_chunk_sources(chunk) -> list[dict]:
     s_map = getattr(chunk, "sentence_map", {})
     if not isinstance(s_map, dict):
-        return []
+        s_map = {}
     raw_paper_id = getattr(chunk, "paper_id", None)
     paper_id = str(raw_paper_id) if raw_paper_id is not None else None
     para_id = getattr(chunk, "paragraph_id", None)
@@ -91,6 +148,7 @@ def _extract_chunk_sources(chunk) -> list[dict]:
                 "paper_id": paper_id,
                 "sentence_key": s_key,
             })
+    _add_non_text_source(sources, chunk, para_id, paper_id)
     return sources
 
 def build_source_sentences(chunks: list) -> list[dict]:
@@ -98,6 +156,20 @@ def build_source_sentences(chunks: list) -> list[dict]:
     for chunk in chunks:
         sources.extend(_extract_chunk_sources(chunk))
     return sources
+
+def _initialize_havf_thresholds(
+    high_threshold: float | None,
+    medium_threshold: float | None,
+    cross_encoder_threshold: float | None,
+    short_sentence_words: int | None,
+) -> tuple[float, float, float, int]:
+    settings = get_settings()
+    return (
+        high_threshold or settings.HAVF_HIGH_THRESHOLD,
+        medium_threshold or settings.HAVF_MEDIUM_THRESHOLD,
+        cross_encoder_threshold or settings.HAVF_CROSS_ENCODER_THRESHOLD,
+        short_sentence_words or settings.HAVF_SHORT_SENTENCE_WORDS,
+    )
 
 async def verify_response(
     generated_text: str,
@@ -108,46 +180,29 @@ async def verify_response(
     cross_encoder_threshold: float | None = None,
     short_sentence_words: int | None = None,
 ) -> list[VerificationResult]:
-    settings = get_settings()
-    if high_threshold is None:
-        high_threshold = settings.HAVF_HIGH_THRESHOLD
-    if medium_threshold is None:
-        medium_threshold = settings.HAVF_MEDIUM_THRESHOLD
-    if cross_encoder_threshold is None:
-        cross_encoder_threshold = settings.HAVF_CROSS_ENCODER_THRESHOLD
-    if short_sentence_words is None:
-        short_sentence_words = settings.HAVF_SHORT_SENTENCE_WORDS
-
     with timer("HAVF verification"):
-        claims = split_into_sentences(generated_text)
+        h_thresh, m_thresh, ce_thresh, short_words = _initialize_havf_thresholds(
+            high_threshold, medium_threshold, cross_encoder_threshold, short_sentence_words
+        )
+        claims = _split_into_verifiable_claims(generated_text)
         source_sentences = build_source_sentences(retrieved_chunks)
-
         if not claims or not source_sentences:
             return _handle_missing_sources(claims)
-
-        short_claims, valid_claims = _filter_short_claims(claims, short_sentence_words)
-
+        short_claims, valid_claims = _filter_short_claims(claims, short_words)
         short_results = _create_skipped_results(short_claims)
-
         if not valid_claims:
             return short_results
-
         level1_results = await asyncio.to_thread(
             verify_claims_embedding, valid_claims, source_sentences,
-            high_threshold=high_threshold,
-            medium_threshold=medium_threshold,
+            high_threshold=h_thresh,
+            medium_threshold=m_thresh,
         )
-
         results = await _process_verification_results(
-            level1_results, valid_claims, source_sentences, cross_encoder_threshold
+            level1_results, valid_claims, source_sentences, ce_thresh
         )
-
         all_results = short_results + results
-
-        if source_sentences:
-            para_index = _build_para_source_index(source_sentences)
-            all_results = _apply_citation_correction(all_results, para_index)
-
+        para_index = _build_para_source_index(source_sentences)
+        all_results = _apply_citation_correction(all_results, para_index)
         _log_verification_summary(all_results)
         return all_results
 

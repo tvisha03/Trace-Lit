@@ -11,7 +11,7 @@ from infrastructure.db.crud.message_crud import create_message
 from infrastructure.llm.fallback_chain import FallbackChain
 from infrastructure.storage.file_storage import FileStorage
 from services.export_service import export_chat, export_comparison
-from services.comparison_service import compare_papers
+from services.comparison_service import compare_papers, extract_paper_contributions
 from shared.enums import ExportFormat, MessageRole
 from shared.errors import NotFoundError
 from shared.logger import get_logger
@@ -58,6 +58,24 @@ async def export_session(
         format=body.format,
     )
 
+async def _validate_paper_ownership(paper_ids: list[str], session_id: str, db: AsyncSession) -> None:
+    for pid in paper_ids:
+        paper = await get_paper(db, pid)
+        if not paper or str(paper.session_id) != session_id:
+            raise NotFoundError("Paper", pid)
+
+async def _gather_contributions(
+    paper_ids: list[str], db: AsyncSession, llm: FallbackChain,
+) -> list[dict]:
+    contributions: list[dict] = []
+    for pid in paper_ids:
+        try:
+            contributions.append(await extract_paper_contributions(pid, db, llm))
+        except Exception as exc:
+            logger.warning(f"Contribution extraction failed for {pid}: {exc}")
+            contributions.append({"paper_id": pid, "contributions": {}})
+    return contributions
+
 @router.post("/comparison", response_model=ExportResponse)
 async def export_comparison_route(
     session_id: str,
@@ -69,12 +87,7 @@ async def export_comparison_route(
     if not session:
         raise NotFoundError("Session", session_id)
 
-    for pid in body.paper_ids:
-        paper = await get_paper(db, pid)
-        if not paper:
-            raise NotFoundError("Paper", pid)
-        if str(paper.session_id) != session_id:
-            raise NotFoundError("Paper", pid)
+    await _validate_paper_ownership(body.paper_ids, session_id, db)
 
     llm = _get_llm(request)
     file_storage = FileStorage()
@@ -92,6 +105,11 @@ async def export_comparison_route(
     )
     await db.commit()
 
+    contributions = (
+        await _gather_contributions(body.paper_ids, db, llm)
+        if fmt == ExportFormat.EXCEL else None
+    )
+
     output_path = await export_comparison(
         session_id=session_id,
         comparison_content=comparison_result["comparison"],
@@ -100,6 +118,7 @@ async def export_comparison_route(
         file_storage=file_storage,
         paper_ids=body.paper_ids,
         db=db,
+        contributions=contributions,
     )
 
     return ExportResponse(

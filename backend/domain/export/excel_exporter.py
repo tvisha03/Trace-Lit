@@ -82,10 +82,11 @@ def _populate_comparison_rows(ws: Worksheet, paper_data: list[dict]) -> None:
         _set_cell(ws, row_idx, 1, str(paper.get("title", "")))
         _set_cell(ws, row_idx, 2, str(paper.get("authors", "")))
         ws.cell(row=row_idx, column=3, value=paper.get("year", "")).border = _THIN_BORDER
-        _set_cell(ws, row_idx, 4, str(paper.get("problem", "")))
-        _set_cell(ws, row_idx, 5, str(paper.get("method", "")))
-        _set_cell(ws, row_idx, 6, str(paper.get("results", "")))
-        _set_cell(ws, row_idx, 7, str(paper.get("keywords", "")))
+        _set_cell(ws, row_idx, 4, str(paper.get("abstract", "") or ""))
+        _set_cell(ws, row_idx, 5, str(paper.get("problem", "") or ""))
+        _set_cell(ws, row_idx, 6, str(paper.get("method", "") or ""))
+        _set_cell(ws, row_idx, 7, str(paper.get("results", "") or ""))
+        _set_cell(ws, row_idx, 8, str(paper.get("keywords", "") or ""))
 
 def _populate_citation_rows(ws: Worksheet, citations: list[dict]) -> None:
     for row_idx, cit in enumerate(citations, start=2):
@@ -141,7 +142,7 @@ def export_comparison_to_excel(
     ws_comp.column_dimensions["A"].width = 110
 
     ws_papers = wb.create_sheet(title="Paper Details")
-    headers = ["Title", "Authors", "Year", "Problem", "Method", "Results", "Keywords"]
+    headers = ["Title", "Authors", "Year", "Abstract", "Problem", "Method", "Results", "Keywords"]
     _set_header_row(ws_papers, headers)
     _populate_comparison_rows(ws_papers, paper_data)
     _apply_alternating_rows(ws_papers)

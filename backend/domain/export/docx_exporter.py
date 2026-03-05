@@ -73,8 +73,10 @@ def _add_verification_section(doc, havf_results, Pt, RGBColor):
 
     for r in havf_results:
         confidence = r.get("confidence", "low")
-        claim = r.get("claim", "")[:200]
+        raw_claim = r.get("claim", "")
+        claim = raw_claim[:500].rsplit(" ", 1)[0] + "..." if len(raw_claim) > 500 else raw_claim
         paragraph_id = r.get("paragraph_id", "")
+        chunk_type = r.get("chunk_type", "")
         score = r.get("score", 0)
 
         r_para = doc.add_paragraph()
@@ -90,6 +92,11 @@ def _add_verification_section(doc, havf_results, Pt, RGBColor):
             ref_run = r_para.add_run(f"  [{paragraph_id}]")
             ref_run.font.size = Pt(8)
             ref_run.font.color.rgb = RGBColor(100, 100, 100)
+
+        if chunk_type and chunk_type != "text":
+            type_run = r_para.add_run(f"  ({chunk_type})")
+            type_run.font.size = Pt(8)
+            type_run.font.color.rgb = RGBColor(100, 100, 100)
 
         claim_run = r_para.add_run(f'  "{claim}"')
         claim_run.font.size = Pt(8)

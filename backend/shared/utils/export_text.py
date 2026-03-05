@@ -29,7 +29,44 @@ def strip_markdown(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
+_MD_TABLE_SEP_RE = re.compile(r"^\|?[\s:]*-{2,}[\s:]*(?:\|[\s:]*-{2,}[\s:]*)+\|?\s*$")
+
+
+def _convert_markdown_table(text: str) -> str:
+
+    lines = text.split("\n")
+    result: list[str] = []
+    headers: list[str] = []
+    in_table = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not in_table and "|" in stripped and stripped.count("|") >= 2:
+            cells = [c.strip() for c in stripped.split("|") if c.strip()]
+            if cells:
+                headers = cells
+                in_table = True
+                continue
+        if in_table and _MD_TABLE_SEP_RE.match(stripped):
+            continue
+        if in_table and "|" in stripped:
+            cells = [c.strip() for c in stripped.split("|") if c.strip()]
+            if cells and headers:
+                for idx, cell in enumerate(cells):
+                    label = headers[idx] if idx < len(headers) else f"Col {idx + 1}"
+                    result.append(f"{label}: {cell}")
+                result.append("")
+            continue
+        if in_table:
+            in_table = False
+            headers = []
+        result.append(stripped)
+
+    return "\n".join(result)
+
+
 def format_structured_text(text: str) -> str:
+    text = _convert_markdown_table(text)
     text = re.sub(r"^#{1,2}\s+(.+)$", lambda m: m.group(1).upper(), text, flags=re.MULTILINE)
     text = re.sub(r"^#{3,6}\s+(.+)$", r"\1", text, flags=re.MULTILINE)
     text = _MD_BOLD_ITALIC.sub(r"\1", text)
@@ -75,7 +112,19 @@ _UNICODE_RE = re.compile(
 
 def sanitize_for_pdf(text: str) -> str:
     text = _UNICODE_RE.sub(lambda m: _UNICODE_REPLACEMENTS[m.group()], text)
-    return text.encode("latin-1", errors="ignore").decode("latin-1")
+
+
+    import unicodedata
+    out: list[str] = []
+    for ch in text:
+        try:
+            ch.encode("latin-1")
+            out.append(ch)
+        except UnicodeEncodeError:
+            decomposed = unicodedata.normalize("NFKD", ch)
+            ascii_approx = decomposed.encode("ascii", "ignore").decode("ascii")
+            out.append(ascii_approx if ascii_approx else "?")
+    return "".join(out)
 
 def clean_for_export(text: str) -> str:
     return sanitize_for_pdf(strip_markdown(text))

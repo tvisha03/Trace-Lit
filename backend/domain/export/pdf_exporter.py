@@ -9,13 +9,23 @@ from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
 
-_MAX_TEXT_CHARS = 10_000
+_MAX_TEXT_CHARS = 50_000
 _DATE_FMT = "%B %d, %Y"
 
 def _truncate_text(text: str, max_chars: int = _MAX_TEXT_CHARS) -> str:
     if len(text) > max_chars:
         return text[:max_chars] + "..."
     return text
+
+def _break_long_words(text: str, max_word: int = 80) -> str:
+
+    parts: list[str] = []
+    for token in text.split(" "):
+        while len(token) > max_word:
+            parts.append(token[:max_word])
+            token = token[max_word:]
+        parts.append(token)
+    return " ".join(parts)
 
 def _havf_confidence_color(confidence: str) -> tuple[int, int, int]:
     if confidence == "high":
@@ -53,8 +63,13 @@ def _render_havf_results(pdf, havf_results: list[dict]) -> None:
 
     for result in havf_results:
         confidence = result.get("confidence", "low")
-        claim = sanitize_for_pdf(result.get("claim", "")[:150])
+        raw_claim = result.get("claim", "")
+
+        if len(raw_claim) > 500:
+            raw_claim = raw_claim[:500].rsplit(" ", 1)[0] + "..."
+        claim = sanitize_for_pdf(raw_claim)
         paragraph_id = result.get("paragraph_id", "")
+        chunk_type = result.get("chunk_type", "")
         score = result.get("score", 0)
 
         cr, cg, cb = _havf_confidence_color(confidence)
@@ -64,6 +79,8 @@ def _render_havf_results(pdf, havf_results: list[dict]) -> None:
         badge = f"  [{confidence.upper()}] ({score:.0%})"
         if paragraph_id:
             badge += f"  [{paragraph_id}]"
+        if chunk_type and chunk_type != "text":
+            badge += f"  ({chunk_type})"
         pdf.cell(w=0, h=3.5, text=badge, ln=True)
 
         pdf.set_font("Helvetica", "", 7)
@@ -102,8 +119,8 @@ def _add_papers_compared_section(pdf, paper_titles: list[str]) -> None:
     pdf.set_font("Helvetica", "", 9)
     for i, paper in enumerate(paper_titles, start=1):
         truncated = sanitize_for_pdf(_truncate_text(paper, 200))
-        pdf.cell(w=8, h=5, text=f"  {i}.")
-        pdf.multi_cell(w=0, h=5, text=truncated)
+        safe = _break_long_words(truncated)
+        pdf.multi_cell(w=0, h=5, text=f"  {i}. {safe}")
     pdf.ln(3)
 
 def _render_message_block(pdf, msg: dict) -> None:
@@ -113,7 +130,8 @@ def _render_message_block(pdf, msg: dict) -> None:
 
     _render_message_role(pdf, role)
     pdf.set_font("Helvetica", "", 9)
-    pdf.multi_cell(w=0, h=4.5, text=clean_for_export(content))
+    safe_content = _break_long_words(clean_for_export(content))
+    pdf.multi_cell(w=0, h=4.5, text=safe_content)
 
     if havf_results:
         _render_havf_results(pdf, havf_results)
@@ -194,7 +212,11 @@ def export_comparison_to_pdf(
             paragraph = paragraph.strip()
             if not paragraph:
                 continue
-            pdf.multi_cell(w=0, h=4.5, text=paragraph)
+            safe = _break_long_words(paragraph)
+            try:
+                pdf.multi_cell(w=0, h=4.5, text=safe)
+            except Exception:
+                pdf.multi_cell(w=0, h=4.5, text=safe[:500] + "...")
             pdf.ln(2)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -51,8 +51,9 @@ def _build_user_prompt(
     history_block = build_history_block(history)
 
     if query_type == QueryType.COMPARISON:
-        return COMPARISON_PROMPT_TEMPLATE.format(
-            paper_contexts=context_block,
+        return CHAT_PROMPT_TEMPLATE.format(
+            context=context_block,
+            history=history_block,
             question=query,
         )
     if query_type == QueryType.SUMMARY:
@@ -222,10 +223,14 @@ async def generate_comparison(
     paper_count = len(paper_ids)
 
     paper_listing_lines = []
+    header_cols = []
     for i, pid in enumerate(paper_ids, start=1):
         name = titles.get(pid, f"Paper {pid[:8]}")
         paper_listing_lines.append(f"  {i}. {name}")
+        header_cols.append(f"Paper {i}: {name}")
     paper_listing = "\n".join(paper_listing_lines)
+    paper_listing_header = " | ".join(header_cols)
+    paper_header_sep = " | ".join(["---"] * len(header_cols))
 
     formatted_contexts = "\n\n---\n\n".join(
         f"Paper {i}: {titles.get(pid, pid[:8])}\n{ctx}"
@@ -235,6 +240,8 @@ async def generate_comparison(
     user_prompt = COMPARISON_PROMPT_TEMPLATE.format(
         paper_count=paper_count,
         paper_listing=paper_listing,
+        paper_listing_header=paper_listing_header,
+        paper_header_sep=paper_header_sep,
         paper_contexts=formatted_contexts,
         question=question,
     )
