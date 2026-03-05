@@ -8,8 +8,8 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
-_MEMORY_BACKOFF_SECONDS: float = 1.0
-_MAX_MEMORY_WAITS: int = 6
+_MEMORY_BACKOFF_SECONDS: float = 2.0
+_MAX_MEMORY_WAITS: int = 10
 
 @dataclass(order=False)
 class PaperJob:

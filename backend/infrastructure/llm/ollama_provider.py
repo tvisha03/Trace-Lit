@@ -27,12 +27,27 @@ class OllamaProvider(BaseLLMProvider):
         settings = get_settings()
         self._base_url = settings.OLLAMA_BASE_URL
         self._model = settings.OLLAMA_MODEL
+        self._keep_alive = settings.OLLAMA_KEEP_ALIVE
+        self._num_ctx = settings.OLLAMA_NUM_CTX
+        self._num_threads = settings.OLLAMA_NUM_THREADS
+        self._max_tokens = settings.OLLAMA_MAX_TOKENS
         self._httpx_timeout = httpx.Timeout(
             connect=10.0,
             read=float(settings.OLLAMA_TIMEOUT),
             write=10.0,
             pool=5.0,
         )
+
+    def _build_options(self, temperature: float, max_tokens: int) -> dict:
+        capped_tokens = min(max_tokens, self._max_tokens)
+        opts: dict = {
+            "temperature": temperature,
+            "num_predict": capped_tokens,
+            "num_ctx": self._num_ctx,
+        }
+        if self._num_threads > 0:
+            opts["num_thread"] = self._num_threads
+        return opts
 
     async def generate(
         self,
@@ -47,7 +62,8 @@ class OllamaProvider(BaseLLMProvider):
             "prompt": user_prompt,
             "stream": False,
             "think": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "keep_alive": self._keep_alive,
+            "options": self._build_options(temperature, max_tokens),
         }
         try:
             async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:
@@ -81,7 +97,8 @@ class OllamaProvider(BaseLLMProvider):
             "prompt": user_prompt,
             "stream": True,
             "think": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "keep_alive": self._keep_alive,
+            "options": self._build_options(temperature, max_tokens),
         }
         try:
             async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:
@@ -117,7 +134,8 @@ class OllamaProvider(BaseLLMProvider):
             "images": [b64_image],
             "stream": False,
             "think": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "keep_alive": self._keep_alive,
+            "options": self._build_options(temperature, max_tokens),
         }
         try:
             async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:

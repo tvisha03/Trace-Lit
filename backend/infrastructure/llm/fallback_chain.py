@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import AsyncGenerator, Tuple, Optional, List
 
 from infrastructure.llm.base import BaseLLMProvider
@@ -24,6 +25,7 @@ class FallbackChain:
         settings = get_settings()
         self._max_retries = settings.LLM_MAX_RETRIES
         self._retry_delay = settings.LLM_RETRY_DELAY_BASE
+        self._request_timeout = settings.REQUEST_TIMEOUT
         self._providers = self._build_chain()
         self._rate_monitor = RateLimitMonitor()
 
@@ -51,9 +53,16 @@ class FallbackChain:
         user_prompt: str,
         temperature: float,
         max_tokens: int,
+        deadline: float,
     ) -> Optional[Tuple[str, int]]:
         retries = 0
         while retries <= self._max_retries:
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    f"Aborting {provider.provider.value}: approaching request deadline"
+                )
+                return None
+
             try:
                 text = await provider.generate(
                     system_prompt, user_prompt, temperature, max_tokens
@@ -86,8 +95,13 @@ class FallbackChain:
         estimated_tokens: int = 8_500,
     ) -> Tuple[str, LLMProvider, dict]:
         errors: List[str] = []
+        deadline = time.monotonic() + self._request_timeout * 0.85
 
         for provider in self._providers:
+            if time.monotonic() >= deadline:
+                logger.warning("Aborting fallback chain: approaching request deadline")
+                break
+
             if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
                 logger.info(f"Skipping {provider.provider.value} — over rate budget")
                 errors.append(f"{provider.provider.value}: rate_budget_exceeded")
@@ -95,6 +109,7 @@ class FallbackChain:
 
             result = await self._try_provider(
                 provider, system_prompt, user_prompt, temperature, max_tokens,
+                deadline,
             )
             if result is None:
                 errors.append(f"{provider.provider.value}: failed")

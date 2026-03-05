@@ -43,9 +43,13 @@ class Settings(BaseSettings):
         return v.rstrip("/")
 
     LLM_TIMEOUT: int = 30
-    OLLAMA_TIMEOUT: int = 180
-    LLM_MAX_RETRIES: int = 2
-    LLM_RETRY_DELAY_BASE: float = 2.0
+    OLLAMA_TIMEOUT: int = 120
+    OLLAMA_KEEP_ALIVE: str = "10m"
+    OLLAMA_NUM_CTX: int = 4096
+    OLLAMA_NUM_THREADS: int = 0
+    OLLAMA_MAX_TOKENS: int = 1536
+    LLM_MAX_RETRIES: int = 1
+    LLM_RETRY_DELAY_BASE: float = 1.0
     LLM_TEMPERATURE: float = 0.3
     REQUEST_TIMEOUT: float = 300.0
 
@@ -57,10 +61,10 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = 50
     MAX_PAPERS_PER_SESSION: int = 20
     MAX_SESSIONS: int = 50
-    MAX_PARALLEL_PAPERS: int = 3
+    MAX_PARALLEL_PAPERS: int = 2
     MAX_EXPORT_FILE_SIZE_MB: int = 100
     MIN_DISK_SPACE_MB: int = 500
-    MEMORY_PRESSURE_THRESHOLD: float = 0.75
+    MEMORY_PRESSURE_THRESHOLD: float = 0.70
     PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600
 
     HAVF_HIGH_THRESHOLD: float = 0.85

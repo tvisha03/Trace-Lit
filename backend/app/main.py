@@ -31,6 +31,7 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if (
             request.url.path.startswith("/ws")
+            or request.url.path.endswith("/stream")
             or "text/event-stream" in request.headers.get("accept", "")
             or request.query_params.get("stream") == "true"
         ):

@@ -141,9 +141,11 @@ async def generate_response(
     )
 
     with timer("LLM generation"):
+        settings = get_settings()
         response_text, provider, _ = await llm.generate(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
+            max_tokens=settings.OLLAMA_MAX_TOKENS,
         )
 
     if not response_text or not response_text.strip():
