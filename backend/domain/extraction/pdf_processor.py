@@ -1,6 +1,8 @@
 from pathlib import Path
 import logging
 import re
+import tempfile
+import zlib
 from dataclasses import dataclass, field
 
 import pymupdf
