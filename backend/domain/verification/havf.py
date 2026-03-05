@@ -19,6 +19,110 @@ _MD_LIST_RE = re.compile(r"^[\s]*[-*+]\s+", re.MULTILINE)
 _MD_NUM_LIST_RE = re.compile(r"^[\s]*\d+\.\s+", re.MULTILINE)
 _NON_TEXT_PREFIXES = frozenset({"F", "T", "E"})
 
+_BRACKET_METADATA_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")
+_CAPTION_EXTRACT_RE = re.compile(r"\[Caption:\s*(.+?)\]")
+_TABLE_DESC_LINE_RE = re.compile(
+    r"This (?:table|figure) is from the paper\s*'.+?'\.\s*"
+    r"(?:It presents:.*?\.)?\s*"
+    r"(?:The table contains.*?columns\.)?\s*",
+    re.IGNORECASE,
+)
+_TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
+_MAX_DISPLAY_CHARS = 300
+
+def _clean_table_source(stripped: str, caption: str | None) -> str:
+    stripped = _TABLE_DESC_LINE_RE.sub("", stripped).strip()
+    if caption:
+        header_row = _find_first_table_header(stripped)
+        return f"{caption}\n{header_row}" if header_row else caption
+    lines = stripped.split("\n")
+    return lines[0].strip() if lines else stripped
+
+
+def _clean_figure_source(stripped: str, caption: str | None) -> str:
+    if caption:
+        return _MD_BOLD_RE.sub(r"\1", caption)
+    lines = stripped.split("\n")
+    return lines[0].strip() if lines else stripped
+
+
+def _clean_formula_source(stripped: str) -> str:
+    lines = stripped.split("\n")
+    meaningful = [
+        ln.strip() for ln in lines
+        if ln.strip() and not ln.strip().startswith("##")
+    ]
+    return " ".join(meaningful[:2])
+
+
+_CHUNK_SOURCE_CLEANERS = {
+    "table": _clean_table_source,
+    "figure": _clean_figure_source,
+}
+
+
+def _clean_source_for_display(
+    source_text: str | None,
+    chunk_type: str | None,
+) -> str | None:
+    if not source_text or chunk_type == "text" or chunk_type is None:
+        return source_text
+
+    caption_match = _CAPTION_EXTRACT_RE.search(source_text)
+    caption = caption_match.group(1).strip() if caption_match else None
+    stripped = _BRACKET_METADATA_RE.sub("", source_text).strip()
+
+    cleaner = _CHUNK_SOURCE_CLEANERS.get(chunk_type)
+    if cleaner:
+        result = cleaner(stripped, caption)
+    elif chunk_type == "formula":
+        result = _clean_formula_source(stripped)
+    else:
+        result = stripped
+
+    return _truncate_display(result, source_text)
+
+
+def _truncate_display(result: str, fallback: str) -> str:
+    if not result:
+        return fallback
+    if len(result) > _MAX_DISPLAY_CHARS:
+        return result[:_MAX_DISPLAY_CHARS].rstrip() + "..."
+    return result
+
+
+def _find_first_table_header(text: str) -> str | None:
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("|") and not _TABLE_SEPARATOR_RE.match(line):
+            return line
+    return None
+
+
+def _postprocess_display_sources(
+    results: list["VerificationResult"],
+) -> list["VerificationResult"]:
+    return [
+        VerificationResult(
+            claim=r.claim,
+            confidence=r.confidence,
+            score=r.score,
+            source_sentence=_clean_source_for_display(
+                r.source_sentence, r.chunk_type,
+            ),
+            paragraph_id=r.paragraph_id,
+            paper_id=r.paper_id,
+            sentence_key=r.sentence_key,
+            verification_method=r.verification_method,
+            chunk_type=r.chunk_type,
+            citation_ref=r.citation_ref,
+        )
+        for r in results
+    ]
+
+
 def _is_non_text_paragraph(paragraph_id: str | None) -> bool:
     if not paragraph_id:
         return False
@@ -113,17 +217,27 @@ def _chunk_type_from_paragraph_id(paragraph_id: str | None) -> str:
     suffix = paragraph_id.split("_")[-1]
     return _PARAGRAPH_TYPE_MAP.get(suffix[:1], "text")
 
+def _select_best_chunk_text(chunk) -> str:
+    full_text = getattr(chunk, "text", "") or ""
+    enriched_text = getattr(chunk, "enriched_text", "") or ""
+    if len(enriched_text) > len(full_text):
+        return enriched_text
+    return full_text
+
+
+def _should_add_source(cleaned: str, existing_texts: set[str]) -> bool:
+    return bool(cleaned and cleaned not in existing_texts and not is_noise_source(cleaned))
+
+
 def _add_non_text_source(sources: list[dict], chunk, para_id: str | None, paper_id: str | None) -> None:
     if not _is_non_text_paragraph(para_id):
         return
-    full_text = getattr(chunk, "text", "") or ""
-    enriched_text = getattr(chunk, "enriched_text", "") or ""
-    best_text = enriched_text if len(enriched_text) > len(full_text) else full_text
-    if not best_text or len(best_text) <= 50:
+    best_text = _select_best_chunk_text(chunk)
+    if len(best_text) <= 50:
         return
     cleaned = clean_source_text(best_text)
     existing_texts = {s["text"] for s in sources}
-    if cleaned and cleaned not in existing_texts and not is_noise_source(cleaned):
+    if _should_add_source(cleaned, existing_texts):
         sources.append({
             "text": cleaned,
             "paragraph_id": para_id,
@@ -203,6 +317,7 @@ async def verify_response(
         all_results = short_results + results
         para_index = _build_para_source_index(source_sentences)
         all_results = _apply_citation_correction(all_results, para_index)
+        all_results = _postprocess_display_sources(all_results)
         _log_verification_summary(all_results)
         return all_results
 

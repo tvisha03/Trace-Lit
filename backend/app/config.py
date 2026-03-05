@@ -43,7 +43,7 @@ class Settings(BaseSettings):
         return v.rstrip("/")
 
     LLM_TIMEOUT: int = 30
-    OLLAMA_TIMEOUT: int = 120
+    OLLAMA_TIMEOUT: int = 240
     OLLAMA_KEEP_ALIVE: str = "10m"
     OLLAMA_NUM_CTX: int = 4096
     OLLAMA_NUM_THREADS: int = 0
