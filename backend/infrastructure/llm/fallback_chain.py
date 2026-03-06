@@ -194,6 +194,26 @@ class FallbackChain:
         logger.error(f"All providers failed for streaming: {errors}")
         raise AllProvidersFailedError()
 
+    async def _should_retry_server_error(
+        self,
+        exc: Exception,
+        attempt: int,
+        max_retries: int,
+        base_backoff: int,
+        provider_name: str,
+    ) -> bool:
+        err_str = str(exc)
+        is_server_error = any(code in err_str for code in ("500", "502", "503", "504"))
+        if not is_server_error or attempt >= max_retries:
+            return False
+        wait = base_backoff * (2 ** attempt)
+        logger.warning(
+            f"{provider_name} server error (attempt {attempt + 1}) — retrying in {wait}s"
+        )
+        import asyncio
+        await asyncio.sleep(wait)
+        return True
+
     async def analyze_image(
         self,
         image_data: bytes,
@@ -204,25 +224,34 @@ class FallbackChain:
     ) -> tuple[str, LLMProvider]:
         errors: list[str] = []
 
+        _SERVER_RETRIES = 2
+        _SERVER_BACKOFF_BASE = 3
+
         for provider in self._providers:
-            try:
-                result = await provider.analyze_image(
-                    image_data, mime_type, prompt, temperature, max_tokens,
-                )
-                logger.info(f"Image analysis from {provider.provider.value}")
-                return result, provider.provider
+            for attempt in range(1 + _SERVER_RETRIES):
+                try:
+                    result = await provider.analyze_image(
+                        image_data, mime_type, prompt, temperature, max_tokens,
+                    )
+                    logger.info(f"Image analysis from {provider.provider.value}")
+                    return result, provider.provider
 
-            except NotImplementedError:
-                errors.append(f"{provider.provider.value}: no_vision_support")
-                continue
+                except NotImplementedError:
+                    errors.append(f"{provider.provider.value}: no_vision_support")
+                    break  # vision not supported — no point retrying this provider
 
-            except RateLimitError:
-                errors.append(f"{provider.provider.value}: rate_limited")
-                continue
+                except RateLimitError:
+                    errors.append(f"{provider.provider.value}: rate_limited")
+                    break  # rate-limited — no point retrying this provider
 
-            except Exception as exc:
-                errors.append(f"{provider.provider.value}: {exc}")
-                continue
+                except Exception as exc:
+                    if await self._should_retry_server_error(
+                        exc, attempt, _SERVER_RETRIES, _SERVER_BACKOFF_BASE,
+                        provider.provider.value,
+                    ):
+                        continue
+                    errors.append(f"{provider.provider.value}: {exc}")
+                    break
 
         logger.error(f"All providers failed for image analysis: {errors}")
         raise AllProvidersFailedError()

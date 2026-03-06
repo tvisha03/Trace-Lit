@@ -12,6 +12,16 @@ from domain.extraction.pdf_processor import ExtractedFigure
 from domain.generation.prompts import FIGURE_ANALYSIS_PROMPT
 
 logger = get_logger(__name__)
+_vision_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_vision_semaphore() -> asyncio.Semaphore:
+    """Return (or lazily create) the global vision concurrency semaphore."""
+    global _vision_semaphore
+    if _vision_semaphore is None:
+        _vision_semaphore = asyncio.Semaphore(FIGURE_MAX_CONCURRENT_ANALYSIS)
+    return _vision_semaphore
+
 
 @dataclass
 class AnalyzedFigure:
@@ -73,9 +83,8 @@ async def _call_vision(llm_chain, image_data: bytes, mime_type: str) -> tuple[st
 async def _analyze_single_figure(
     figure: ExtractedFigure,
     llm_chain,
-    semaphore: asyncio.Semaphore,
 ) -> AnalyzedFigure | None:
-    async with semaphore:
+    async with _get_vision_semaphore():
         img_path = Path(figure.image_path)
         payload = _read_image(img_path)
         if payload is None:
@@ -120,10 +129,8 @@ async def analyze_figures(
     if not figures:
         return []
 
-    semaphore = asyncio.Semaphore(FIGURE_MAX_CONCURRENT_ANALYSIS)
-
     tasks = [
-        _analyze_single_figure(fig, llm_chain, semaphore)
+        _analyze_single_figure(fig, llm_chain)
         for fig in figures
     ]
 

@@ -27,6 +27,7 @@ class OllamaProvider(BaseLLMProvider):
         settings = get_settings()
         self._base_url = settings.OLLAMA_BASE_URL
         self._model = settings.OLLAMA_MODEL
+        self._vision_model = settings.OLLAMA_VISION_MODEL
         self._keep_alive = settings.OLLAMA_KEEP_ALIVE
         self._num_ctx = settings.OLLAMA_NUM_CTX
         self._num_threads = settings.OLLAMA_NUM_THREADS
@@ -36,6 +37,9 @@ class OllamaProvider(BaseLLMProvider):
             read=float(settings.OLLAMA_TIMEOUT),
             write=10.0,
             pool=5.0,
+        )
+        logger.info(
+            f"Ollama models — text: {self._model}, vision: {self._vision_model}"
         )
 
     def _build_options(self, temperature: float, max_tokens: int) -> dict:
@@ -129,7 +133,7 @@ class OllamaProvider(BaseLLMProvider):
     ) -> str:
         b64_image = base64.b64encode(image_data).decode("utf-8")
         payload = {
-            "model": self._model,
+            "model": self._vision_model,
             "prompt": prompt,
             "images": [b64_image],
             "stream": False,
@@ -165,13 +169,19 @@ class OllamaProvider(BaseLLMProvider):
                 data = resp.json()
                 models = data.get("models", [])
                 model_names = [m.get("name", "") for m in models]
-                if any(self._model in name for name in model_names):
-                    return True
-                logger.warning(
-                    f"Ollama server is up but model '{self._model}' not found. "
-                    f"Available models: {model_names}"
-                )
-                return False
+                required = {self._model, self._vision_model}
+                found = {
+                    req for req in required
+                    if any(req in name for name in model_names)
+                }
+                missing = required - found
+                if missing:
+                    logger.warning(
+                        f"Ollama server is up but missing models: {missing}. "
+                        f"Available: {model_names}"
+                    )
+                    return False
+                return True
         except Exception:
             return False
 

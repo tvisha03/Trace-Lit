@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
     USE_LOCAL_LLM: bool = True
-    OLLAMA_MODEL: str = "qwen3.5"
+    OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_VISION_MODEL: str = "qwen2.5vl:3b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     @field_validator("OLLAMA_BASE_URL")
