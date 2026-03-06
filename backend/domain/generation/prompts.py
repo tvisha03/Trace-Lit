@@ -47,7 +47,17 @@ Compare ALL {paper_count} papers on the following dimensions:
 If the user question focuses on a specific aspect, prioritise that dimension.
 For every comparison point, cite ALL relevant papers using [P#].
 When discussing differences or similarities, explicitly name which papers agree or disagree.
-Format your response as a structured comparison covering every paper."""
+Return ONLY a markdown table with this exact header:
+| {table_header} |
+| {table_separator} |
+
+Rules for the table:
+- The rows must appear in exactly this order: Research problem and motivation, Methodology and approach, Key findings and results, Datasets used, Limitations acknowledged.
+- The first column must be the dimension name.
+- Each paper cell must contain 1-2 concise sentences and preserve citations such as [P#], [F#], [T#], or [E#].
+- The final synthesis column must summarize the cross-paper comparison for that row in 1 concise sentence with citations.
+- Use <br> inside a cell instead of adding extra newlines.
+- Do not add any prose before or after the table."""
 
 SUMMARY_PROMPT_TEMPLATE = """Context from the paper:
 {context}

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from shared.logger import get_logger
 from shared.errors import TraceLitError
-from shared.utils.export_text import strip_markdown, format_structured_text
+from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text
 
 logger = get_logger(__name__)
 
@@ -48,15 +48,7 @@ def _add_message_to_doc(doc, msg, Pt, RGBColor, WD_ALIGN_PARAGRAPH):
     if role == "ASSISTANT":
         role_run.font.color.rgb = RGBColor(0, 51, 153)
 
-    cleaned = strip_markdown(content)
-    for paragraph_text in cleaned.split("\n\n"):
-        paragraph_text = paragraph_text.strip()
-        if not paragraph_text:
-            continue
-        content_para = doc.add_paragraph(paragraph_text)
-        content_para.paragraph_format.space_after = Pt(4)
-        for run in content_para.runs:
-            run.font.size = Pt(10)
+    _render_blocks_to_doc(doc, build_export_blocks(content), Pt)
 
     if havf_results:
         _add_verification_section(doc, havf_results, Pt, RGBColor)
@@ -98,9 +90,89 @@ def _add_verification_section(doc, havf_results, Pt, RGBColor):
             type_run.font.size = Pt(8)
             type_run.font.color.rgb = RGBColor(100, 100, 100)
 
-        claim_run = r_para.add_run(f'  "{claim}"')
+        claim_run = r_para.add_run(f'  "{format_structured_text(claim)}"')
         claim_run.font.size = Pt(8)
         claim_run.font.color.rgb = RGBColor(80, 80, 80)
+
+
+def _set_paragraph_run_size(paragraph, size) -> None:
+    for run in paragraph.runs:
+        run.font.size = size
+
+
+def _render_table_to_doc(doc, headers, rows, Pt) -> None:
+    table = doc.add_table(rows=len(rows) + 1, cols=len(headers))
+    table.style = "Table Grid"
+
+    for col_idx, header in enumerate(headers):
+        cell = table.rows[0].cells[col_idx]
+        cell.text = header
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+                run.font.size = Pt(9)
+
+    for row_idx, row in enumerate(rows, start=1):
+        for col_idx, value in enumerate(row[:len(headers)]):
+            table.rows[row_idx].cells[col_idx].text = value
+            for paragraph in table.rows[row_idx].cells[col_idx].paragraphs:
+                _set_paragraph_run_size(paragraph, Pt(9))
+
+
+def _render_blocks_to_doc(doc, blocks, Pt) -> None:
+    for block in blocks:
+        if block.kind == "heading":
+            level = min(max(block.level, 1), 4)
+            heading = doc.add_heading(block.text, level=level)
+            heading.paragraph_format.space_after = Pt(4)
+            _set_paragraph_run_size(heading, Pt(max(10, 15 - level)))
+        elif block.kind == "bullet":
+            paragraph = doc.add_paragraph(style="List Bullet")
+            paragraph.add_run(block.text)
+            paragraph.paragraph_format.space_after = Pt(2)
+            _set_paragraph_run_size(paragraph, Pt(10))
+        elif block.kind == "table":
+            _render_table_to_doc(doc, block.headers, block.rows, Pt)
+            doc.add_paragraph()
+        else:
+            paragraph = doc.add_paragraph(inline_tokens_to_text(block.tokens))
+            paragraph.paragraph_format.space_after = Pt(4)
+            _set_paragraph_run_size(paragraph, Pt(10))
+
+
+def _add_cited_media_section(doc, cited_assets, Pt) -> None:
+    if not cited_assets:
+        return
+
+    try:
+        from docx.shared import Inches
+    except ImportError:
+        Inches = None
+
+    doc.add_heading("Cited Figures, Tables, and Formulas", level=2)
+    for asset in cited_assets:
+        label = f"[{asset.get('citation_id', '')}] {str(asset.get('chunk_type', '')).title()}"
+        meta = f"{asset.get('paper_title', '')}"
+        if asset.get("page_number"):
+            meta += f" | page {asset.get('page_number')}"
+        if asset.get("section_title"):
+            meta += f" | {asset.get('section_title')}"
+
+        heading = doc.add_paragraph()
+        heading.add_run(label).bold = True
+        if meta.strip():
+            heading.add_run(f"  {meta}")
+        _set_paragraph_run_size(heading, Pt(10))
+
+        _render_blocks_to_doc(doc, build_export_blocks(str(asset.get("content", ""))), Pt)
+
+        image_path = asset.get("image_path")
+        if Inches and image_path and Path(image_path).exists():
+            try:
+                doc.add_picture(str(image_path), width=Inches(5.8))
+            except Exception:
+                pass
+        doc.add_paragraph()
 
 def _setup_doc_with_heading_and_date(doc, title, Pt, RGBColor, WD_ALIGN_PARAGRAPH):
     heading = doc.add_heading(title, level=1)
@@ -115,6 +187,7 @@ def _setup_doc_with_heading_and_date(doc, title, Pt, RGBColor, WD_ALIGN_PARAGRAP
 def export_chat_to_docx(
     session_title: str,
     messages: list[dict],
+    cited_assets: list[dict] | None,
     output_path: str | Path,
 ) -> Path:
     try:
@@ -137,6 +210,8 @@ def export_chat_to_docx(
     for msg in messages:
         _add_message_to_doc(doc, msg, Pt, RGBColor, WD_ALIGN_PARAGRAPH)
 
+    _add_cited_media_section(doc, cited_assets or [], Pt)
+
     try:
         doc.save(str(output_path))
     except Exception as exc:
@@ -152,6 +227,8 @@ def export_comparison_to_docx(
     title: str,
     comparison_content: str,
     paper_titles: list[str],
+    comparison_table: list[dict] | None,
+    cited_assets: list[dict] | None,
     output_path: str | Path,
 ) -> Path:
     try:
@@ -178,15 +255,20 @@ def export_comparison_to_docx(
         run.font.size = Pt(10)
 
     doc.add_heading("Comparison Analysis", level=2)
-    cleaned = format_structured_text(comparison_content)
-    for paragraph_text in cleaned.split("\n\n"):
-        paragraph_text = paragraph_text.strip()
-        if not paragraph_text:
-            continue
-        p = doc.add_paragraph(paragraph_text)
-        p.paragraph_format.space_after = Pt(6)
-        for run in p.runs:
-            run.font.size = Pt(10)
+    if comparison_table:
+        headers = ["Dimension", *paper_titles, "Synthesis"]
+        rows = []
+        for row in comparison_table:
+            rows.append([
+                str(row.get("dimension", "")),
+                *[format_structured_text(str(cell.get("content", ""))) for cell in row.get("cells", [])],
+                format_structured_text(str(row.get("synthesis", ""))),
+            ])
+        _render_table_to_doc(doc, headers, rows, Pt)
+    else:
+        _render_blocks_to_doc(doc, build_export_blocks(comparison_content), Pt)
+
+    _add_cited_media_section(doc, cited_assets or [], Pt)
 
     try:
         doc.save(str(output_path))

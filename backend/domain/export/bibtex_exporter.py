@@ -84,7 +84,7 @@ def _format_entry(paper: dict, cite_key: str) -> str:
     _field("author", paper.get("authors"))
     _field("year", paper.get("year"))
     _field("abstract", paper.get("abstract"))
-    _field("note", paper.get("filename"))
+    _field("file", paper.get("filename"))
 
     lines.append("}")
     return "\n".join(lines)

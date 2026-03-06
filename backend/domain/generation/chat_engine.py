@@ -226,14 +226,15 @@ async def generate_comparison(
     paper_count = len(paper_ids)
 
     paper_listing_lines = []
-    header_cols = []
+    header_cols = ["Dimension"]
     for i, pid in enumerate(paper_ids, start=1):
         name = titles.get(pid, f"Paper {pid[:8]}")
         paper_listing_lines.append(f"  {i}. {name}")
         header_cols.append(f"Paper {i}: {name}")
+    header_cols.append("Synthesis")
     paper_listing = "\n".join(paper_listing_lines)
-    paper_listing_header = " | ".join(header_cols)
-    paper_header_sep = " | ".join(["---"] * len(header_cols))
+    table_header = " | ".join(header_cols)
+    table_separator = " | ".join(["---"] * len(header_cols))
 
     formatted_contexts = "\n\n---\n\n".join(
         f"Paper {i}: {titles.get(pid, pid[:8])}\n{ctx}"
@@ -243,8 +244,8 @@ async def generate_comparison(
     user_prompt = COMPARISON_PROMPT_TEMPLATE.format(
         paper_count=paper_count,
         paper_listing=paper_listing,
-        paper_listing_header=paper_listing_header,
-        paper_header_sep=paper_header_sep,
+        table_header=table_header,
+        table_separator=table_separator,
         paper_contexts=formatted_contexts,
         question=question,
     )

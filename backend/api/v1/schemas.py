@@ -140,8 +140,19 @@ class CompareRequest(BaseModel):
             raise ValueError("Duplicate paper_ids are not allowed")
         return v
 
+class ComparisonCell(BaseModel):
+    paper_id: str
+    paper_title: str
+    content: str
+
+class ComparisonRow(BaseModel):
+    dimension: str
+    cells: list[ComparisonCell]
+    synthesis: str = ""
+
 class ComparisonResponse(BaseModel):
     comparison: str
+    comparison_table: list[ComparisonRow] = Field(default_factory=list)
     paper_ids: list[str]
     paper_titles: list[str]
     provider: str

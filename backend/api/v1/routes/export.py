@@ -119,6 +119,7 @@ async def export_comparison_route(
         paper_ids=body.paper_ids,
         db=db,
         contributions=contributions,
+        comparison_table=comparison_result.get("comparison_table"),
     )
 
     return ExportResponse(

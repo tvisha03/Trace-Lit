@@ -9,6 +9,7 @@ from domain.export.excel_exporter import export_citations_to_excel, export_compa
 from domain.export.bibtex_exporter import export_papers_to_bibtex
 from domain.export.docx_exporter import export_chat_to_docx, export_comparison_to_docx
 from domain.export.latex_exporter import export_chat_to_latex, export_comparison_to_latex
+from infrastructure.db.crud.chunk_crud import get_chunks_by_papers
 from infrastructure.db.crud.message_crud import get_messages_by_session
 from infrastructure.db.crud.paper_crud import get_papers_by_session, get_paper
 from infrastructure.db.crud.session_crud import get_session
@@ -17,6 +18,7 @@ from app.config import get_settings
 from shared.enums import ExportFormat
 from shared.errors import NotFoundError, TraceLitError
 from shared.logger import get_logger
+from shared.utils.export_text import extract_citation_ids, format_structured_text
 from workers.export_worker import run_export_in_thread
 
 logger = get_logger(__name__)
@@ -43,12 +45,14 @@ async def _export_chat_as_pdf(
     messages: list[dict],
     filename: str,
     file_storage: FileStorage,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
     result = await run_export_in_thread(
         export_chat_to_pdf,
         session_title=session_title,
         messages=messages,
+        cited_assets=cited_assets or [],
         output_path=output_path,
     )
     _check_export_size(result)
@@ -60,6 +64,7 @@ async def _export_chat_as_excel(
     messages: list[dict],
     filename: str,
     file_storage: FileStorage,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
     result = await run_export_in_thread(
@@ -68,6 +73,7 @@ async def _export_chat_as_excel(
         output_path=output_path,
         session_title=session_title,
         messages=messages,
+        cited_assets=cited_assets or [],
     )
     _check_export_size(result)
     return result
@@ -105,12 +111,14 @@ async def _export_chat_as_docx(
     messages: list[dict],
     filename: str,
     file_storage: FileStorage,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.docx", session_id)
     result = await run_export_in_thread(
         export_chat_to_docx,
         session_title=session_title,
         messages=messages,
+        cited_assets=cited_assets or [],
         output_path=output_path,
     )
     _check_export_size(result)
@@ -122,12 +130,14 @@ async def _export_chat_as_latex(
     messages: list[dict],
     filename: str,
     file_storage: FileStorage,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.tex", session_id)
     result = await run_export_in_thread(
         export_chat_to_latex,
         session_title=session_title,
         messages=messages,
+        cited_assets=cited_assets or [],
         output_path=output_path,
     )
     _check_export_size(result)
@@ -152,6 +162,17 @@ async def export_chat(
         }
         for m in messages_db
     ]
+    papers_db = await get_papers_by_session(db, session_id)
+    paper_title_map = {
+        str(p.id): p.title or p.filename or f"Paper {str(p.id)[:8]}"
+        for p in papers_db
+    }
+    cited_assets = await _collect_chat_cited_assets(
+        messages=messages,
+        paper_ids=list(paper_title_map),
+        paper_title_map=paper_title_map,
+        db=db,
+    )
 
     filename = f"chat_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
     session_title = session.title or "Chat Export"
@@ -171,7 +192,14 @@ async def export_chat(
     if export_format == ExportFormat.BIBTEX:
         return await handler(session_id, filename, file_storage, db)
     else:
-        return await handler(session_id, session_title, messages, filename, file_storage)
+        return await handler(
+            session_id,
+            session_title,
+            messages,
+            filename,
+            file_storage,
+            cited_assets,
+        )
 
 async def _collect_paper_dicts(paper_ids: list[str], db: AsyncSession) -> list[dict]:
     paper_dicts = []
@@ -196,6 +224,8 @@ async def _export_comparison_as_pdf(
     paper_titles: list[str],
     filename: str,
     file_storage: FileStorage,
+    comparison_table: Optional[list[dict]] = None,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.pdf", session_id)
     result = await run_export_in_thread(
@@ -203,6 +233,8 @@ async def _export_comparison_as_pdf(
         title="Paper Comparison",
         comparison_content=comparison_content,
         paper_titles=paper_titles,
+        comparison_table=comparison_table or [],
+        cited_assets=cited_assets or [],
         output_path=output_path,
     )
     _check_export_size(result)
@@ -267,6 +299,8 @@ async def _export_comparison_as_excel(
     paper_ids: Optional[list[str]] = None,
     db: Optional[AsyncSession] = None,
     contributions: Optional[list[dict]] = None,
+    comparison_table: Optional[list[dict]] = None,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.xlsx", session_id)
     contrib_map = _build_contrib_map(contributions)
@@ -276,6 +310,8 @@ async def _export_comparison_as_excel(
         paper_data=paper_data,
         output_path=output_path,
         comparison_content=comparison_content,
+        comparison_table=comparison_table or [],
+        cited_assets=cited_assets or [],
     )
     _check_export_size(result)
     return result
@@ -303,6 +339,8 @@ async def _export_comparison_as_docx(
     paper_titles: list[str],
     filename: str,
     file_storage: FileStorage,
+    comparison_table: Optional[list[dict]] = None,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.docx", session_id)
     result = await run_export_in_thread(
@@ -310,6 +348,8 @@ async def _export_comparison_as_docx(
         title="Paper Comparison",
         comparison_content=comparison_content,
         paper_titles=paper_titles,
+        comparison_table=comparison_table or [],
+        cited_assets=cited_assets or [],
         output_path=output_path,
     )
     _check_export_size(result)
@@ -321,6 +361,8 @@ async def _export_comparison_as_latex(
     paper_titles: list[str],
     filename: str,
     file_storage: FileStorage,
+    comparison_table: Optional[list[dict]] = None,
+    cited_assets: Optional[list[dict]] = None,
 ) -> Path:
     output_path = file_storage.get_export_path(f"{filename}.tex", session_id)
     result = await run_export_in_thread(
@@ -328,6 +370,8 @@ async def _export_comparison_as_latex(
         title="Paper Comparison",
         comparison_content=comparison_content,
         paper_titles=paper_titles,
+        comparison_table=comparison_table or [],
+        cited_assets=cited_assets or [],
         output_path=output_path,
     )
     _check_export_size(result)
@@ -342,8 +386,18 @@ async def export_comparison(
     paper_ids: Optional[list[str]] = None,
     db: Optional[AsyncSession] = None,
     contributions: Optional[list[dict]] = None,
+    comparison_table: Optional[list[dict]] = None,
 ) -> Path:
     filename = f"comparison_{session_id[:8]}_{uuid.uuid4().hex[:6]}"
+    cited_assets: list[dict] = []
+    if paper_ids and db and comparison_table:
+        title_map = {paper_id: paper_titles[idx] for idx, paper_id in enumerate(paper_ids) if idx < len(paper_titles)}
+        cited_assets = await _collect_comparison_cited_assets(
+            comparison_table=comparison_table,
+            paper_ids=paper_ids,
+            paper_title_map=title_map,
+            db=db,
+        )
 
     if export_format == ExportFormat.BIBTEX:
         if not paper_ids or not db:
@@ -371,9 +425,115 @@ async def export_comparison(
             paper_ids=paper_ids,
             db=db,
             contributions=contributions,
+            comparison_table=comparison_table,
+            cited_assets=cited_assets,
         )
     else:
-        return await handler(session_id, comparison_content, paper_titles, filename, file_storage)
+        return await handler(
+            session_id,
+            comparison_content,
+            paper_titles,
+            filename,
+            file_storage,
+            comparison_table,
+            cited_assets,
+        )
+
+
+def _serialize_cited_asset(chunk, paper_title: str) -> dict:
+    chunk_type = getattr(chunk, "chunk_type", "text")
+    return {
+        "citation_id": str(getattr(chunk, "paragraph_id", "")),
+        "chunk_type": str(chunk_type),
+        "paper_title": paper_title,
+        "section_title": getattr(chunk, "section_title", None),
+        "page_number": getattr(chunk, "page_number", None),
+        "content": format_structured_text(getattr(chunk, "enriched_text", None) or getattr(chunk, "text", "")),
+        "image_path": getattr(chunk, "image_path", None),
+    }
+
+
+async def _build_chunk_lookup(
+    paper_ids: list[str],
+    paper_title_map: dict[str, str],
+    db: AsyncSession,
+) -> dict[tuple[str, str], dict]:
+    chunks_by_paper = await get_chunks_by_papers(db, paper_ids)
+    lookup: dict[tuple[str, str], dict] = {}
+    for paper_id, chunks in chunks_by_paper.items():
+        for chunk in chunks:
+            citation_id = str(getattr(chunk, "paragraph_id", ""))
+            if not citation_id:
+                continue
+            lookup[(paper_id, citation_id)] = _serialize_cited_asset(
+                chunk,
+                paper_title_map.get(paper_id, f"Paper {paper_id[:8]}"),
+            )
+    return lookup
+
+
+def _is_media_citation(citation_id: str) -> bool:
+    return citation_id.startswith(("F", "T", "E"))
+
+
+def _deduplicate_assets(assets: list[dict]) -> list[dict]:
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict] = []
+    for asset in assets:
+        key = (asset.get("paper_title", ""), asset.get("citation_id", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(asset)
+    return deduped
+
+
+async def _collect_chat_cited_assets(
+    messages: list[dict],
+    paper_ids: list[str],
+    paper_title_map: dict[str, str],
+    db: AsyncSession,
+) -> list[dict]:
+    if not paper_ids:
+        return []
+
+    lookup = await _build_chunk_lookup(paper_ids, paper_title_map, db)
+    assets: list[dict] = []
+    for msg in messages:
+        for result in msg.get("havf_results") or []:
+            paper_id = result.get("paper_id")
+            citation_id = result.get("paragraph_id")
+            if not paper_id or not citation_id or not _is_media_citation(str(citation_id)):
+                continue
+            asset = lookup.get((str(paper_id), str(citation_id)))
+            if asset:
+                assets.append(asset)
+    return _deduplicate_assets(assets)
+
+
+async def _collect_comparison_cited_assets(
+    comparison_table: list[dict],
+    paper_ids: list[str],
+    paper_title_map: dict[str, str],
+    db: AsyncSession,
+) -> list[dict]:
+    if not paper_ids or not comparison_table:
+        return []
+
+    lookup = await _build_chunk_lookup(paper_ids, paper_title_map, db)
+    assets: list[dict] = []
+    for row in comparison_table:
+        for cell in row.get("cells", []):
+            paper_id = cell.get("paper_id")
+            if not paper_id:
+                continue
+            for citation_id in extract_citation_ids(cell.get("content", "")):
+                if not _is_media_citation(citation_id):
+                    continue
+                asset = lookup.get((str(paper_id), citation_id))
+                if asset:
+                    assets.append(asset)
+    return _deduplicate_assets(assets)
 
 def _flatten_citations(messages: list[dict]) -> list[dict]:
     citations = []

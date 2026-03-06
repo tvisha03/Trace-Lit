@@ -107,10 +107,48 @@ def _populate_citation_rows(ws: Worksheet, citations: list[dict]) -> None:
         _set_cell(ws, row_idx, 4, strip_markdown(str(cit.get("source_sentence", ""))))
         _set_cell(ws, row_idx, 5, str(cit.get("paragraph_id", "")))
 
+
+def _populate_comparison_table_sheet(
+    ws: Worksheet,
+    comparison_table: list[dict],
+    paper_data: list[dict],
+) -> None:
+    paper_titles = [str(paper.get("title", "")) for paper in paper_data]
+    headers = ["Dimension", *paper_titles, "Synthesis"]
+    _set_header_row(ws, headers)
+
+    for row_idx, row in enumerate(comparison_table, start=2):
+        _set_cell(ws, row_idx, 1, str(row.get("dimension", "")))
+        for col_idx, cell in enumerate(row.get("cells", []), start=2):
+            _set_cell(ws, row_idx, col_idx, format_structured_text(str(cell.get("content", ""))))
+        _set_cell(ws, row_idx, len(headers), format_structured_text(str(row.get("synthesis", ""))))
+
+    _apply_alternating_rows(ws)
+    _auto_column_widths(ws, min_width=18, max_width=48)
+
+
+def _populate_cited_media_sheet(ws: Worksheet, cited_assets: list[dict]) -> None:
+    headers = ["Citation", "Type", "Paper", "Page", "Section", "Content", "Image Path"]
+    _set_header_row(ws, headers)
+
+    for row_idx, asset in enumerate(cited_assets, start=2):
+        _set_cell(ws, row_idx, 1, str(asset.get("citation_id", "")))
+        _set_cell(ws, row_idx, 2, str(asset.get("chunk_type", "")))
+        _set_cell(ws, row_idx, 3, str(asset.get("paper_title", "")))
+        _set_cell(ws, row_idx, 4, str(asset.get("page_number", "") or ""))
+        _set_cell(ws, row_idx, 5, str(asset.get("section_title", "") or ""))
+        _set_cell(ws, row_idx, 6, format_structured_text(str(asset.get("content", ""))))
+        _set_cell(ws, row_idx, 7, str(asset.get("image_path", "") or ""))
+
+    _apply_alternating_rows(ws)
+    _auto_column_widths(ws, min_width=14, max_width=42)
+
 def export_comparison_to_excel(
     paper_data: list[dict],
     output_path: str | Path,
     comparison_content: str = "",
+    comparison_table: list[dict] | None = None,
+    cited_assets: list[dict] | None = None,
 ) -> Path:
     output_path = Path(output_path)
     wb = Workbook()
@@ -120,26 +158,29 @@ def export_comparison_to_excel(
         raise ValueError("Failed to create worksheet")
     ws_comp.title = "Comparison"
 
-    title_cell = ws_comp.cell(row=1, column=1, value="Paper Comparison Analysis")
-    title_cell.font = Font(bold=True, size=14, color="2F4F6F")
-    ws_comp.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
+    if comparison_table:
+        _populate_comparison_table_sheet(ws_comp, comparison_table, paper_data)
+    else:
+        title_cell = ws_comp.cell(row=1, column=1, value="Paper Comparison Analysis")
+        title_cell.font = Font(bold=True, size=14, color="2F4F6F")
+        ws_comp.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
 
-    date_cell = ws_comp.cell(
-        row=2, column=1,
-        value=f"Exported on {datetime.now().strftime('%B %d, %Y')}",
-    )
-    date_cell.font = Font(italic=True, size=9, color="888888")
+        date_cell = ws_comp.cell(
+            row=2, column=1,
+            value=f"Exported on {datetime.now().strftime('%B %d, %Y')}",
+        )
+        date_cell.font = Font(italic=True, size=9, color="888888")
 
-    cleaned = format_structured_text(comparison_content) if comparison_content else ""
-    if cleaned:
-        row_idx = 4
-        for paragraph in cleaned.split("\n\n"):
-            paragraph = paragraph.strip()
-            if paragraph:
-                _set_cell(ws_comp, row_idx, 1, paragraph)
-                row_idx += 1
-    _auto_column_widths(ws_comp)
-    ws_comp.column_dimensions["A"].width = 110
+        cleaned = format_structured_text(comparison_content) if comparison_content else ""
+        if cleaned:
+            row_idx = 4
+            for paragraph in cleaned.split("\n\n"):
+                paragraph = paragraph.strip()
+                if paragraph:
+                    _set_cell(ws_comp, row_idx, 1, paragraph)
+                    row_idx += 1
+        _auto_column_widths(ws_comp)
+        ws_comp.column_dimensions["A"].width = 110
 
     ws_papers = wb.create_sheet(title="Paper Details")
     headers = ["Title", "Authors", "Year", "Abstract", "Problem", "Method", "Results", "Keywords"]
@@ -147,6 +188,10 @@ def export_comparison_to_excel(
     _populate_comparison_rows(ws_papers, paper_data)
     _apply_alternating_rows(ws_papers)
     _auto_column_widths(ws_papers)
+
+    if cited_assets:
+        ws_media = wb.create_sheet(title="Cited Media")
+        _populate_cited_media_sheet(ws_media, cited_assets)
 
     wb.save(str(output_path))
     logger.info(f"Exported comparison Excel to {output_path.name}")
@@ -157,6 +202,7 @@ def export_citations_to_excel(
     output_path: str | Path,
     session_title: str = "Chat Export",
     messages: list[dict] | None = None,
+    cited_assets: list[dict] | None = None,
 ) -> Path:
     output_path = Path(output_path)
     wb = Workbook()
@@ -184,6 +230,10 @@ def export_citations_to_excel(
     _populate_citation_rows(ws_cit, citations)
     _apply_alternating_rows(ws_cit)
     _auto_column_widths(ws_cit)
+
+    if cited_assets:
+        ws_media = wb.create_sheet(title="Cited Media")
+        _populate_cited_media_sheet(ws_media, cited_assets)
 
     wb.save(str(output_path))
     logger.info(f"Exported citations Excel to {output_path.name}")

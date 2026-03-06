@@ -12,6 +12,7 @@ from infrastructure.llm.fallback_chain import FallbackChain
 from shared.enums import LLMProvider
 from shared.errors import NotFoundError
 from shared.logger import get_logger
+from shared.utils.export_text import build_export_blocks
 from shared.utils.text_utils import estimate_tokens
 from shared.constants import COMPARISON_TOKEN_BUDGET_PER_PAPER
 
@@ -20,6 +21,7 @@ logger = get_logger(__name__)
 # Conservative budget to stay safely under Groq 12K TPM
 # Total prompt tokens for N papers ≈ N * per_paper_budget + ~1K system/template overhead
 _GROQ_SAFE_TOTAL_TOKENS = 8_000
+_FALLBACK_DIMENSION = "Comparison"
 
 
 def _adaptive_token_budget(paper_count: int) -> int:
@@ -93,6 +95,63 @@ async def _run_comparison(
     )
 
 
+def _normalize_cell_text(text: str) -> str:
+    return " ".join(part.strip() for part in (text or "").replace("<br>", "\n").splitlines() if part.strip())
+
+
+def _build_comparison_rows(
+    comparison_text: str,
+    paper_ids: list[str],
+    titles: list[str],
+) -> list[dict]:
+    for block in build_export_blocks(comparison_text):
+        if block.kind != "table" or not block.rows:
+            continue
+
+        rows: list[dict] = []
+        for row in block.rows:
+            if not row:
+                continue
+            dimension = _normalize_cell_text(row[0]) or _FALLBACK_DIMENSION
+            cells = []
+            for idx, paper_id in enumerate(paper_ids, start=1):
+                cell_text = _normalize_cell_text(row[idx] if idx < len(row) else "")
+                cells.append(
+                    {
+                        "paper_id": paper_id,
+                        "paper_title": titles[idx - 1],
+                        "content": cell_text,
+                    }
+                )
+
+            synthesis_index = len(paper_ids) + 1
+            synthesis = _normalize_cell_text(row[synthesis_index] if synthesis_index < len(row) else "")
+            rows.append(
+                {
+                    "dimension": dimension,
+                    "cells": cells,
+                    "synthesis": synthesis,
+                }
+            )
+        if rows:
+            return rows
+
+    return [
+        {
+            "dimension": _FALLBACK_DIMENSION,
+            "cells": [
+                {
+                    "paper_id": paper_id,
+                    "paper_title": titles[idx],
+                    "content": "",
+                }
+                for idx, paper_id in enumerate(paper_ids)
+            ],
+            "synthesis": comparison_text.strip(),
+        }
+    ]
+
+
 async def compare_papers(
     paper_ids: list[str],
     db: AsyncSession,
@@ -117,8 +176,10 @@ async def compare_papers(
         )
 
     logger.info(f"Compared {len(paper_ids)} papers using {provider.value}")
+    comparison_table = _build_comparison_rows(text, paper_ids, titles)
     return {
         "comparison": text,
+        "comparison_table": comparison_table,
         "paper_ids": paper_ids,
         "paper_titles": titles,
         "provider": provider.value,

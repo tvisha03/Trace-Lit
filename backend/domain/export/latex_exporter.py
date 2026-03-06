@@ -2,7 +2,7 @@
 from pathlib import Path
 from shared.logger import get_logger
 from shared.errors import TraceLitError
-from shared.utils.export_text import strip_markdown, format_structured_text
+from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text
 
 logger = get_logger(__name__)
 
@@ -22,6 +22,12 @@ def _escape_latex(text: str) -> str:
     for char, replacement in specials.items():
         text = text.replace(char, replacement)
     return text
+
+
+def _latexify_plain_text(text: str) -> str:
+    normalized = text.replace("⊗", r"$\otimes$")
+    normalized = normalized.replace("sigma", r"$\sigma$")
+    return _escape_latex(normalized).replace(r"\$\textbackslash{}otimes\$", r"$\otimes$").replace(r"\$\textbackslash{}sigma\$", r"$\sigma$")
 
 def _confidence_color(confidence: str) -> str:
     if confidence == "high":
@@ -43,7 +49,7 @@ def _add_verification_section_latex(lines: list[str], havf_results: list) -> Non
 
         badge = f"[{confidence.upper()}] ({score:.0%})"
         ref = f" [{_escape_latex(paragraph_id)}]" if paragraph_id else ""
-        claim_text = f'``{_escape_latex(claim)}\\textquotedblright'
+        claim_text = f'``{_latexify_plain_text(format_structured_text(claim))}\\textquotedblright'
 
         line = (
             r"  \item {\footnotesize "
@@ -57,13 +63,78 @@ def _add_verification_section_latex(lines: list[str], havf_results: list) -> Non
     lines.append("")
 
 def _render_paragraphs_latex(lines: list[str], text: str) -> None:
-    for para in text.split("\n\n"):
-        para = para.strip()
-        if not para:
-            continue
-        lines.append(r"\noindent " + _escape_latex(para))
-        lines.append(r"\medskip")
-        lines.append("")
+    for block in build_export_blocks(text):
+        if block.kind == "heading":
+            level = min(max(block.level, 1), 4)
+            section_map = {1: "section", 2: "subsection", 3: "subsubsection", 4: "paragraph"}
+            cmd = section_map[level]
+            lines.append(rf"\{cmd}*{{{_latexify_plain_text(block.text)}}}")
+            lines.append("")
+        elif block.kind == "bullet":
+            lines.append(r"\begin{itemize}[leftmargin=1.5em,itemsep=2pt,parsep=0pt]")
+            lines.append(r"  \item " + _latexify_plain_text(block.text))
+            lines.append(r"\end{itemize}")
+            lines.append("")
+        elif block.kind == "table":
+            _render_table_latex(lines, block.headers, block.rows)
+        else:
+            lines.append(r"\noindent " + _latexify_plain_text(inline_tokens_to_text(block.tokens)))
+            lines.append(r"\medskip")
+            lines.append("")
+
+
+def _render_table_latex(lines: list[str], headers: list[str], rows: list[list[str]]) -> None:
+    if not headers:
+        return
+    colspec = "|".join([r">{\raggedright\arraybackslash}p{0.16\linewidth}"] * len(headers))
+    lines.append(r"\begin{longtable}{|" + colspec + r"|}")
+    lines.append(r"\hline")
+    lines.append(" & ".join(_latexify_plain_text(header) for header in headers) + r" \\")
+    lines.append(r"\hline")
+    for row in rows:
+        padded = row + [""] * max(0, len(headers) - len(row))
+        lines.append(" & ".join(_latexify_plain_text(cell) for cell in padded[:len(headers)]) + r" \\")
+        lines.append(r"\hline")
+    lines.append(r"\end{longtable}")
+    lines.append("")
+
+
+def _asset_meta_line(asset: dict) -> str:
+    parts = [str(asset.get("paper_title", ""))]
+    if asset.get("page_number"):
+        parts.append(f"page {asset.get('page_number')}")
+    if asset.get("section_title"):
+        parts.append(str(asset.get("section_title")))
+    return " | ".join(part for part in parts if part)
+
+
+def _append_asset_image_latex(lines: list[str], image_path: str | None) -> None:
+    if not image_path or not Path(image_path).exists():
+        return
+
+    image_target = str(Path(image_path)).replace("\\", "/").replace("_", r"\_")
+    lines.append(r"\begin{center}")
+    lines.append(r"\includegraphics[width=0.9\linewidth]{" + image_target + "}")
+    lines.append(r"\end{center}")
+    lines.append("")
+
+
+def _render_cited_media_latex(lines: list[str], cited_assets: list[dict]) -> None:
+    if not cited_assets:
+        return
+
+    lines.append(r"\section*{Cited Figures, Tables, and Formulas}")
+    for asset in cited_assets:
+        heading = f"[{asset.get('citation_id', '')}] {str(asset.get('chunk_type', '')).title()}"
+        lines.append(r"\subsection*{" + _latexify_plain_text(heading) + "}")
+
+        meta_line = _asset_meta_line(asset)
+        if meta_line:
+            lines.append(r"\textit{" + _latexify_plain_text(meta_line) + "}")
+            lines.append(r"\medskip")
+
+        _render_paragraphs_latex(lines, str(asset.get("content", "")))
+        _append_asset_image_latex(lines, asset.get("image_path"))
 
 _LATEX_PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
@@ -73,8 +144,10 @@ _LATEX_PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 \usepackage[dvipsnames]{xcolor}
 \usepackage{hyperref}
 \usepackage{longtable}
+\usepackage{array}
 \usepackage{enumitem}
 \usepackage{booktabs}
+\usepackage{graphicx}
 \usepackage{parskip}
 \hypersetup{colorlinks=true,linkcolor=NavyBlue,urlcolor=NavyBlue}
 \setlength{\parindent}{0pt}
@@ -85,6 +158,7 @@ _LATEX_PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 def export_chat_to_latex(
     session_title: str,
     messages: list[dict],
+    cited_assets: list[dict] | None,
     output_path: str | Path,
 ) -> Path:
     output_path = Path(output_path)
@@ -112,7 +186,7 @@ def export_chat_to_latex(
             lines.append(r"\subsection*{[" + _escape_latex(role) + "]}")
         lines.append("")
 
-        _render_paragraphs_latex(lines, strip_markdown(content))
+        _render_paragraphs_latex(lines, content)
 
         if havf_results:
             _add_verification_section_latex(lines, havf_results)
@@ -122,6 +196,8 @@ def export_chat_to_latex(
             lines.append(r"\noindent\textcolor{gray!50}{\rule{\linewidth}{0.4pt}}")
             lines.append(r"\vspace{0.3em}")
             lines.append("")
+
+    _render_cited_media_latex(lines, cited_assets or [])
 
     lines.append(r"\end{document}")
     lines.append("")
@@ -141,6 +217,8 @@ def export_comparison_to_latex(
     title: str,
     comparison_content: str,
     paper_titles: list[str],
+    comparison_table: list[dict] | None,
+    cited_assets: list[dict] | None,
     output_path: str | Path,
 ) -> Path:
     output_path = Path(output_path)
@@ -161,8 +239,20 @@ def export_comparison_to_latex(
     lines.append("")
 
     lines.append(r"\section*{Comparison Analysis}")
-    cleaned = format_structured_text(comparison_content)
-    _render_paragraphs_latex(lines, cleaned)
+    if comparison_table:
+        headers = ["Dimension", *paper_titles, "Synthesis"]
+        rows = []
+        for row in comparison_table:
+            rows.append([
+                str(row.get("dimension", "")),
+                *[format_structured_text(str(cell.get("content", ""))) for cell in row.get("cells", [])],
+                format_structured_text(str(row.get("synthesis", ""))),
+            ])
+        _render_table_latex(lines, headers, rows)
+    else:
+        _render_paragraphs_latex(lines, comparison_content)
+
+    _render_cited_media_latex(lines, cited_assets or [])
 
     lines.append(r"\end{document}")
     lines.append("")
