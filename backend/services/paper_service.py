@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,7 +63,8 @@ async def _update_status_with_progress(
 
 async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
     with timer(f"Extract {paper.filename}"):
-        extracted = extract_pdf(paper.file_path)
+        # Run synchronous PDF extraction in a thread to avoid blocking the event loop
+        extracted = await asyncio.to_thread(extract_pdf, paper.file_path)
 
     sections = parse_sections(extracted.markdown_text, pages=extracted.pages)
     metadata = extract_metadata(
@@ -82,8 +84,23 @@ async def _analyze_paper_figures(extracted, llm_chain: FallbackChain | None):
     if not extracted.figures or llm_chain is None:
         return []
 
-    analyzed = await analyze_figures(extracted.figures, llm_chain)
-    return analyzed
+    try:
+        analyzed = await asyncio.wait_for(
+            analyze_figures(extracted.figures, llm_chain),
+            timeout=180.0,  # 3 min hard cap for all figures
+        )
+        return analyzed
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"Figure analysis phase timed out after 180s "
+            f"({len(extracted.figures)} figures) — continuing without figures"
+        )
+        return []
+    except Exception as exc:
+        logger.warning(
+            f"Figure analysis failed ({exc}) — continuing without figures"
+        )
+        return []
 
 async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
     chunk_records = [
@@ -116,7 +133,6 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
                 f"Chunk creation attempt {attempt}/{_MAX_RETRIES + 1} "
                 f"failed for {paper_id}: {exc} — retrying"
             )
-            import asyncio
             await asyncio.sleep(0.5 * attempt)
 
 async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
@@ -417,8 +433,6 @@ def _delete_paper_pdf(
     paper_id: str,
     pdf_path: "Path | None",
 ) -> None:
-    from pathlib import Path
-
     if not pdf_path:
         return
     try:

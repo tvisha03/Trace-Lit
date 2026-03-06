@@ -25,7 +25,7 @@ class SmartPaperQueue:
 
     def __init__(self):
         self._queue: asyncio.PriorityQueue[tuple[int, int, PaperJob]] = asyncio.PriorityQueue()
-        self._semaphore = asyncio.Semaphore(1)
+        self._semaphore = asyncio.Semaphore(get_settings().MAX_PARALLEL_PAPERS)
         self._active_jobs: set[str] = set()
         self._process_fn: Callable[[PaperJob], Awaitable[None]] | None = None
         self._running = False

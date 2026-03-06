@@ -4,10 +4,10 @@ from dataclasses import dataclass
 
 from shared.logger import get_logger
 from shared.constants import (
-    FIGURE_MAX_CONCURRENT_ANALYSIS,
     FIGURE_DESCRIPTION_MAX_TOKENS,
     FIGURE_ANALYSIS_TIMEOUT,
 )
+from app.config import get_settings
 from domain.extraction.pdf_processor import ExtractedFigure
 from domain.generation.prompts import FIGURE_ANALYSIS_PROMPT
 
@@ -19,7 +19,7 @@ def _get_vision_semaphore() -> asyncio.Semaphore:
     """Return (or lazily create) the global vision concurrency semaphore."""
     global _vision_semaphore
     if _vision_semaphore is None:
-        _vision_semaphore = asyncio.Semaphore(FIGURE_MAX_CONCURRENT_ANALYSIS)
+        _vision_semaphore = asyncio.Semaphore(get_settings().ADAPTIVE_FIGURE_CONCURRENCY)
     return _vision_semaphore
 
 
@@ -129,19 +129,25 @@ async def analyze_figures(
     if not figures:
         return []
 
-    tasks = [
-        _analyze_single_figure(fig, llm_chain)
-        for fig in figures
-    ]
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
+    # Process figures in batches to avoid exhausting rate limits
+    batch_size = get_settings().ADAPTIVE_FIGURE_CONCURRENCY
     analyzed: list[AnalyzedFigure] = []
-    for result in results:
-        if isinstance(result, AnalyzedFigure):
-            analyzed.append(result)
-        elif isinstance(result, Exception):
-            logger.error(f"Unexpected figure analysis error: {result}")
+
+    for batch_start in range(0, len(figures), batch_size):
+        batch = figures[batch_start:batch_start + batch_size]
+        tasks = [_analyze_single_figure(fig, llm_chain) for fig in batch]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, AnalyzedFigure):
+                analyzed.append(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Unexpected figure analysis error: {result}")
+
+        # Stagger batches to let rate-limit windows recover
+        remaining = len(figures) - (batch_start + len(batch))
+        if remaining > 0:
+            await asyncio.sleep(2.0)
 
     logger.info(f"Analyzed {len(analyzed)}/{len(figures)} figures successfully")
     return analyzed

@@ -14,6 +14,7 @@ class LLMProvider(str, Enum):
     GEMINI = "gemini"
     GROQ = "groq"
     OLLAMA = "ollama"
+    OLLAMA_CLOUD = "ollama_cloud"
 
 class ConfidenceLevel(str, Enum):
     HIGH = "high"

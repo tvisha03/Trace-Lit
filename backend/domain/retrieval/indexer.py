@@ -14,42 +14,55 @@ from shared.utils.time_utils import timer
 logger = get_logger(__name__)
 
 _encoder: SentenceTransformer | None = None
+_encoder_device: str = "cpu"
 
-def _mps_available() -> bool:
+def _detect_best_device() -> str:
+    """Detect the best available device: CUDA > MPS > CPU."""
     try:
         import torch
 
-        return torch.backends.mps.is_available()
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
     except ImportError:
-        return False
+        pass
+    return "cpu"
 
 def _get_encoder() -> SentenceTransformer:
-    global _encoder
+    global _encoder, _encoder_device
     if _encoder is None:
         with timer("Load embedding model"):
-            device = "cpu"
-            try:
-                if _mps_available():
-                    device = "mps"
-            except Exception as exc:
-                logger.warning(f"MPS availability check failed, falling back to CPU: {exc}")
-
+            device = _detect_best_device()
             _encoder = SentenceTransformer(EMBEDDING_MODEL_NAME)
 
-            if device == "mps":
+            if device != "cpu":
                 try:
                     import torch
-                    _encoder = _encoder.to(torch.device("mps"))
-                    logger.info("Using MPS (Apple Silicon GPU) for embeddings")
-                except Exception as mps_exc:
+                    _encoder = _encoder.to(torch.device(device))
+                    _encoder_device = device
+                    logger.info(f"Using {device.upper()} for embeddings")
+                except Exception as exc:
                     logger.warning(
-                        f"Failed to move model to MPS device, falling back to CPU: {mps_exc}"
+                        f"Failed to move model to {device}, falling back to CPU: {exc}"
                     )
+                    _encoder_device = "cpu"
             else:
+                _encoder_device = "cpu"
                 logger.info("Using CPU for embeddings")
     return _encoder
 
-def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
+def _optimal_batch_size() -> int:
+    """Pick batch size based on available device."""
+    if _encoder_device == "cuda":
+        return 128
+    if _encoder_device == "mps":
+        return 64
+    return 32
+
+def encode_texts(texts: list[str], batch_size: int | None = None) -> np.ndarray:
+    if batch_size is None:
+        batch_size = _optimal_batch_size()
     encoder = _get_encoder()
     with timer(f"Encode {len(texts)} texts"):
         embeddings: np.ndarray = encoder.encode(

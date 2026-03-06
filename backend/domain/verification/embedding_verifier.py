@@ -1,4 +1,6 @@
 
+import hashlib
+
 import numpy as np
 
 from domain.retrieval.indexer import encode_texts
@@ -7,6 +9,36 @@ from shared.enums import ConfidenceLevel
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
+
+# LRU cache for source embeddings keyed by a hash of the source texts
+_source_embedding_cache: dict[str, np.ndarray] = {}
+_MAX_CACHE_ENTRIES = 50
+
+
+def _source_cache_key(source_texts: list[str]) -> str:
+    """Create a stable cache key from source texts."""
+    content = "\n".join(source_texts)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _get_source_embeddings(source_texts: list[str]) -> np.ndarray:
+    """Return source embeddings, using cache if available."""
+    key = _source_cache_key(source_texts)
+    cached = _source_embedding_cache.get(key)
+    if cached is not None:
+        logger.debug(f"Source embedding cache HIT ({len(source_texts)} texts)")
+        return cached
+
+    vecs = encode_texts(source_texts)
+
+    # Evict oldest entries if cache is full
+    if len(_source_embedding_cache) >= _MAX_CACHE_ENTRIES:
+        oldest_key = next(iter(_source_embedding_cache))
+        del _source_embedding_cache[oldest_key]
+
+    _source_embedding_cache[key] = vecs
+    logger.debug(f"Source embedding cache MISS — encoded {len(source_texts)} texts")
+    return vecs
 
 def _determine_confidence(
     best_score: float,
@@ -88,7 +120,7 @@ def verify_claims_embedding(
 
     source_texts = [s["text"] for s in source_sentences]
     claim_vecs = encode_texts(claims)
-    source_vecs = encode_texts(source_texts)
+    source_vecs = _get_source_embeddings(source_texts)
     similarity_matrix = claim_vecs @ source_vecs.T
 
     results = _process_claims(

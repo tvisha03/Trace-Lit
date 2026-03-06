@@ -34,12 +34,43 @@ class FallbackChain:
         return self._rate_monitor
 
     def _build_chain(self, use_local_llm: bool | None = None) -> List[BaseLLMProvider]:
+        settings = get_settings()
         if use_local_llm is None:
-            use_local_llm = get_settings().USE_LOCAL_LLM
+            use_local_llm = settings.USE_LOCAL_LLM
+
+        has_cloud = bool(settings.OLLAMA_API_KEY)
+
         if use_local_llm:
-            order = [LLMProvider.OLLAMA, LLMProvider.GEMINI, LLMProvider.GROQ]
+            # Ollama Cloud → Gemini → Groq → Local Ollama
+            if has_cloud:
+                order = [
+                    LLMProvider.OLLAMA_CLOUD,
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                    LLMProvider.OLLAMA,
+                ]
+            else:
+                order = [
+                    LLMProvider.OLLAMA,
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                ]
         else:
-            order = [LLMProvider.GEMINI, LLMProvider.GROQ, LLMProvider.OLLAMA]
+            if has_cloud:
+                order = [
+                    LLMProvider.OLLAMA_CLOUD,
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                    LLMProvider.OLLAMA,
+                ]
+            else:
+                order = [
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                    LLMProvider.OLLAMA,
+                ]
+
+        logger.info(f"Fallback chain: {' → '.join(p.value for p in order)}")
         return [create_provider(p) for p in order]
 
     @property
@@ -92,7 +123,7 @@ class FallbackChain:
         user_prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 2048,
-        estimated_tokens: int = 8_500,
+        estimated_tokens: int = 4_000,
     ) -> Tuple[str, LLMProvider, dict]:
         errors: List[str] = []
         deadline = time.monotonic() + self._request_timeout * 0.85
@@ -103,9 +134,25 @@ class FallbackChain:
                 break
 
             if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
-                logger.info(f"Skipping {provider.provider.value} — over rate budget")
-                errors.append(f"{provider.provider.value}: rate_budget_exceeded")
-                continue
+                # Wait for rate limit to clear instead of immediately skipping
+                wait_secs = self._rate_monitor.seconds_until_available(
+                    provider.provider, estimated_tokens
+                )
+                if wait_secs > 0 and (time.monotonic() + wait_secs) < deadline:
+                    logger.info(
+                        f"Waiting {wait_secs:.1f}s for {provider.provider.value} rate limit"
+                    )
+                    import asyncio
+                    await asyncio.sleep(wait_secs)
+                    # Re-check after waiting
+                    if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                        logger.info(f"Skipping {provider.provider.value} — still over rate budget")
+                        errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                        continue
+                else:
+                    logger.info(f"Skipping {provider.provider.value} — over rate budget")
+                    errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                    continue
 
             result = await self._try_provider(
                 provider, system_prompt, user_prompt, temperature, max_tokens,
@@ -166,15 +213,30 @@ class FallbackChain:
         user_prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 2048,
-        estimated_tokens: int = 8_500,
+        estimated_tokens: int = 4_000,
     ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
         errors: list[str] = []
 
         for provider in self._providers:
             if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
-                logger.info(f"Skipping {provider.provider.value} stream — over rate budget")
-                errors.append(f"{provider.provider.value}: rate_budget_exceeded")
-                continue
+                # Wait for rate limit to clear instead of immediately skipping
+                wait_secs = self._rate_monitor.seconds_until_available(
+                    provider.provider, estimated_tokens
+                )
+                if wait_secs > 0:
+                    logger.info(
+                        f"Waiting {wait_secs:.1f}s for {provider.provider.value} stream rate limit"
+                    )
+                    import asyncio
+                    await asyncio.sleep(wait_secs)
+                    if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                        logger.info(f"Skipping {provider.provider.value} stream — still over rate budget")
+                        errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                        continue
+                else:
+                    logger.info(f"Skipping {provider.provider.value} stream — over rate budget")
+                    errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                    continue
 
             yielded_at_least_one = False
             async for item in self._stream_from_provider(

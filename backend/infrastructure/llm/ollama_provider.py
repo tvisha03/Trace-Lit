@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -14,6 +15,10 @@ from shared.logger import get_logger
 from app.config import get_settings
 
 logger = get_logger(__name__)
+
+# Connection retry settings for local Ollama resilience
+_CONNECT_RETRIES = 2
+_CONNECT_RETRY_DELAY = 3.0
 
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
@@ -75,6 +80,28 @@ class OllamaProvider(BaseLLMProvider):
             logger.info(f"Loading model: {target_model}")
         self._current_loaded_model = target_model
 
+    async def _with_connect_retry(self, url: str, payload: dict) -> dict:
+        """POST to Ollama with connection retries for local server resilience."""
+        for attempt in range(_CONNECT_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 429:
+                        raise RateLimitError("ollama")
+                    resp.raise_for_status()
+                    return resp.json()
+            except (httpx.TimeoutException, RateLimitError, EmptyResponseError):
+                raise
+            except httpx.ConnectError:
+                if attempt < _CONNECT_RETRIES:
+                    logger.warning(
+                        f"Ollama connection failed (attempt {attempt + 1}/{_CONNECT_RETRIES + 1}), "
+                        f"retrying in {_CONNECT_RETRY_DELAY}s"
+                    )
+                    await asyncio.sleep(_CONNECT_RETRY_DELAY)
+                    continue
+                raise
+
     async def generate(
         self,
         system_prompt: str,
@@ -93,23 +120,31 @@ class OllamaProvider(BaseLLMProvider):
             "options": self._build_options(temperature, max_tokens),
         }
         try:
-            async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:
-                resp = await client.post(f"{self._base_url}/api/generate", json=payload)
-                if resp.status_code == 429:
-                    raise RateLimitError("ollama")
-                resp.raise_for_status()
-                data = resp.json()
+            data = await self._with_connect_retry(
+                f"{self._base_url}/api/generate", payload
+            )
         except httpx.TimeoutException:
             raise ProviderTimeoutError("ollama", self._httpx_timeout.read)
-        except RateLimitError:
-            raise
-        except Exception:
-            raise
-
         text = _strip_think_blocks(data.get("response") or "")
         if not text:
             raise EmptyResponseError("ollama")
         return text
+
+    async def _stream_tokens(
+        self, url: str, payload: dict
+    ) -> AsyncGenerator[str, None]:
+        """Stream tokens from the given Ollama endpoint."""
+        async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:
+            async with client.stream("POST", url, json=payload) as resp:
+                if resp.status_code == 429:
+                    raise RateLimitError("ollama")
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line:
+                        chunk = json.loads(line)
+                        token = chunk.get("response", "")
+                        if token:
+                            yield token
 
     async def generate_streaming(
         self,
@@ -128,24 +163,24 @@ class OllamaProvider(BaseLLMProvider):
             "keep_alive": self._keep_alive,
             "options": self._build_options(temperature, max_tokens),
         }
-        try:
-            async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:
-                async with client.stream(
-                    "POST", f"{self._base_url}/api/generate", json=payload
-                ) as resp:
-                    if resp.status_code == 429:
-                        raise RateLimitError("ollama")
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if line:
-                            chunk = json.loads(line)
-                            token = chunk.get("response", "")
-                            if token:
-                                yield token
-        except httpx.TimeoutException:
-            raise ProviderTimeoutError("ollama", self._httpx_timeout.read)
-        except RateLimitError:
-            raise
+        url = f"{self._base_url}/api/generate"
+        for attempt in range(_CONNECT_RETRIES + 1):
+            try:
+                async for token in self._stream_tokens(url, payload):
+                    yield token
+                return
+            except httpx.TimeoutException:
+                raise ProviderTimeoutError("ollama", self._httpx_timeout.read)
+            except RateLimitError:
+                raise
+            except httpx.ConnectError:
+                if attempt < _CONNECT_RETRIES:
+                    logger.warning(
+                        f"Ollama stream connection retry {attempt + 1}/{_CONNECT_RETRIES + 1}"
+                    )
+                    await asyncio.sleep(_CONNECT_RETRY_DELAY)
+                    continue
+                raise
 
     async def analyze_image(
         self,
@@ -167,19 +202,11 @@ class OllamaProvider(BaseLLMProvider):
             "options": self._build_options(temperature, max_tokens),
         }
         try:
-            async with httpx.AsyncClient(timeout=self._httpx_timeout) as client:
-                resp = await client.post(f"{self._base_url}/api/generate", json=payload)
-                if resp.status_code == 429:
-                    raise RateLimitError("ollama")
-                resp.raise_for_status()
-                data = resp.json()
+            data = await self._with_connect_retry(
+                f"{self._base_url}/api/generate", payload
+            )
         except httpx.TimeoutException:
             raise ProviderTimeoutError("ollama", self._httpx_timeout.read)
-        except RateLimitError:
-            raise
-        except Exception:
-            raise
-
         text = _strip_think_blocks(data.get("response") or "")
         if not text:
             raise EmptyResponseError("ollama")
@@ -187,7 +214,7 @@ class OllamaProvider(BaseLLMProvider):
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
+            async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(f"{self._base_url}/api/tags")
                 if resp.status_code != 200:
                     return False

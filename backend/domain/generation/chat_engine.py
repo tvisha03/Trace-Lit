@@ -143,10 +143,13 @@ async def generate_response(
 
     with timer("LLM generation"):
         settings = get_settings()
+        prompt_tokens = estimate_tokens(SYSTEM_PROMPT + user_prompt)
+        estimated_total = prompt_tokens + settings.OLLAMA_MAX_TOKENS
         response_text, provider, _ = await llm.generate(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
             max_tokens=settings.OLLAMA_MAX_TOKENS,
+            estimated_tokens=estimated_total,
         )
 
     if not response_text or not response_text.strip():
@@ -246,10 +249,14 @@ async def generate_comparison(
         question=question,
     )
 
+    settings = get_settings()
+    prompt_tokens = estimate_tokens(SYSTEM_PROMPT + user_prompt)
+    estimated_total = prompt_tokens + settings.COMPARISON_MAX_TOKENS
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
-        max_tokens=4096,
+        max_tokens=settings.COMPARISON_MAX_TOKENS,
+        estimated_tokens=estimated_total,
     )
     return response_text, provider
 
@@ -263,10 +270,11 @@ async def generate_summary(
         question=question,
     )
 
+    settings = get_settings()
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
-        max_tokens=4096,
+        max_tokens=settings.OLLAMA_MAX_TOKENS,
     )
     return response_text, provider
 

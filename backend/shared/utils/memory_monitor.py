@@ -14,15 +14,18 @@ except ImportError:
         "Install with: pip install psutil"
     )
 
-_LOW_RAM_CEILING_GB = 8
-_LOW_RAM_MIN_THRESHOLD = 0.90
+_LOW_RAM_CEILING_GB = 10
+_LOW_RAM_MIN_THRESHOLD = 0.88
 
 def _effective_threshold(configured: float) -> float:
     if not _PSUTIL_AVAILABLE:
         return configured
     total_gb = psutil.virtual_memory().total / (1024 ** 3)
+    # Tiered thresholds: stricter on low-RAM machines
+    if total_gb <= 8:
+        return max(configured, 0.88)
     if total_gb <= _LOW_RAM_CEILING_GB:
-        return max(configured, _LOW_RAM_MIN_THRESHOLD)
+        return max(configured, 0.85)
     return configured
 
 def is_memory_pressure_high(threshold: float | None = None) -> bool:
