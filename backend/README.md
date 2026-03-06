@@ -147,7 +147,7 @@ Optimised for **8 GB unified memory** (M-series Mac / equivalent):
 
 | Component | Memory |
 |---|---|
-| Embedding model (all-MiniLM-L6-v2) | ~200 MB |
+| Embedding model (mixedbread-ai/mxbai-embed-large-v1) | ~200 MB |
 | Cross-encoder (lazy-loaded) | ~80 MB |
 | FAISS index (7 papers) | ~5 MB |
 | SQLite + app overhead | ~100 MB |

@@ -7,10 +7,6 @@ from shared.utils.memory_monitor import is_memory_pressure_high
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
-
-_MEMORY_BACKOFF_SECONDS: float = 2.0
-_MAX_MEMORY_WAITS: int = 10
-
 @dataclass(order=False)
 class PaperJob:
     paper_id: str
@@ -29,7 +25,7 @@ class SmartPaperQueue:
 
     def __init__(self):
         self._queue: asyncio.PriorityQueue[tuple[int, int, PaperJob]] = asyncio.PriorityQueue()
-        self._semaphore = asyncio.Semaphore(get_settings().MAX_PARALLEL_PAPERS)
+        self._semaphore = asyncio.Semaphore(1)
         self._active_jobs: set[str] = set()
         self._process_fn: Callable[[PaperJob], Awaitable[None]] | None = None
         self._running = False
@@ -96,20 +92,19 @@ class SmartPaperQueue:
                 continue
             except Exception:
                 continue
-            asyncio.create_task(self._process_with_semaphore(job))
 
-    async def _wait_for_memory(self) -> None:
-        for attempt in range(1, _MAX_MEMORY_WAITS + 1):
-            if not is_memory_pressure_high():
-                return
+            await self._process_with_semaphore(job)
+            self._queue.task_done()
+
+    async def _wait_for_memory_infinite(self) -> None:
+        attempt = 1
+        while is_memory_pressure_high():
             logger.warning(
-                f"Memory pressure high — delaying paper job "
-                f"(attempt {attempt}/{_MAX_MEMORY_WAITS}, "
-                f"retrying in {_MEMORY_BACKOFF_SECONDS}s)"
+                f"Memory pressure high (>{get_settings().MEMORY_PRESSURE_THRESHOLD}%) — "
+                f"Pausing queue to prevent crash (wait #{attempt}, retrying in 5s)..."
             )
-            await asyncio.sleep(_MEMORY_BACKOFF_SECONDS)
-
-        logger.warning("Max memory-pressure waits exceeded — proceeding anyway")
+            await asyncio.sleep(5.0)
+            attempt += 1
 
     async def _process_with_semaphore(self, job: PaperJob):
         if not self._process_fn:
@@ -122,9 +117,8 @@ class SmartPaperQueue:
             )
             return
 
-        await self._wait_for_memory()
-
         async with self._semaphore:
+            await self._wait_for_memory_infinite()
 
             self._active_jobs.add(job.paper_id)
             try:

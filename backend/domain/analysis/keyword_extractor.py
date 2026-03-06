@@ -34,7 +34,7 @@ class KeywordModelFactory:
         if self._model is None:
             with timer("Load KeyBERT model"):
                 from keybert import KeyBERT
-                self._model = KeyBERT(model="all-MiniLM-L6-v2")
+                self._model = KeyBERT(model="all-mpnet-base-v2")
                 logger.info("KeyBERT model loaded into memory")
         return self._model
 

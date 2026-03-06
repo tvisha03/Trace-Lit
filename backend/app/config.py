@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     LLM_TIMEOUT: int = 30
     OLLAMA_TIMEOUT: int = 240
-    OLLAMA_KEEP_ALIVE: str = "10m"
+    OLLAMA_KEEP_ALIVE: str = "0s"
     OLLAMA_NUM_CTX: int = 4096
     OLLAMA_NUM_THREADS: int = 0
     OLLAMA_MAX_TOKENS: int = 1536
@@ -65,14 +65,14 @@ class Settings(BaseSettings):
     MAX_PARALLEL_PAPERS: int = 2
     MAX_EXPORT_FILE_SIZE_MB: int = 100
     MIN_DISK_SPACE_MB: int = 500
-    MEMORY_PRESSURE_THRESHOLD: float = 0.70
+    MEMORY_PRESSURE_THRESHOLD: float = 0.85
     PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600
 
     HAVF_HIGH_THRESHOLD: float = 0.85
     HAVF_MEDIUM_THRESHOLD: float = 0.65
     HAVF_CROSS_ENCODER_THRESHOLD: float = 0.75
     HAVF_SHORT_SENTENCE_WORDS: int = 5
-    CROSS_ENCODER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    CROSS_ENCODER_MODEL: str = "BAAI/bge-reranker-base"
 
     model_config = {
         "env_file": ".env",

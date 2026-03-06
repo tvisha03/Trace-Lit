@@ -30,7 +30,7 @@ def benchmark_cross_encoder():
     print("=" * 60)
 
     from sentence_transformers import CrossEncoder
-    ce = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    ce = CrossEncoder("BAAI/bge-reranker-base")
 
     pairs = [
         ("Transformer models use self-attention.", "Self-attention is a key component of transformers.")

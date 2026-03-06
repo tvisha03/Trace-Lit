@@ -38,6 +38,7 @@ class OllamaProvider(BaseLLMProvider):
             write=10.0,
             pool=5.0,
         )
+        self._current_loaded_model: str | None = None
         logger.info(
             f"Ollama models — text: {self._model}, vision: {self._vision_model}"
         )
@@ -53,6 +54,27 @@ class OllamaProvider(BaseLLMProvider):
             opts["num_thread"] = self._num_threads
         return opts
 
+    async def _unload_model(self, model_name: str) -> None:
+        """Unload a model from VRAM by setting keep_alive to 0s."""
+        payload = {"model": model_name, "keep_alive": "0s"}
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{self._base_url}/api/generate", json=payload)
+                logger.debug(f"Unloaded model: {model_name}")
+        except Exception as exc:
+            logger.debug(f"Unload request failed for {model_name}: {exc}")
+
+    async def _ensure_model_loaded(self, target_model: str) -> None:
+        """Unload the other model if loaded, ensuring only target_model is in VRAM."""
+        if self._current_loaded_model == target_model:
+            return  # Already loaded — no-op
+        if self._current_loaded_model and self._current_loaded_model != target_model:
+            logger.info(f"Swapping models: {self._current_loaded_model} → {target_model}")
+            await self._unload_model(self._current_loaded_model)
+        else:
+            logger.info(f"Loading model: {target_model}")
+        self._current_loaded_model = target_model
+
     async def generate(
         self,
         system_prompt: str,
@@ -60,6 +82,7 @@ class OllamaProvider(BaseLLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> str:
+        await self._ensure_model_loaded(self._model)
         payload = {
             "model": self._model,
             "system": system_prompt,
@@ -95,6 +118,7 @@ class OllamaProvider(BaseLLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> AsyncGenerator[str, None]:
+        await self._ensure_model_loaded(self._model)
         payload = {
             "model": self._model,
             "system": system_prompt,
@@ -131,6 +155,7 @@ class OllamaProvider(BaseLLMProvider):
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> str:
+        await self._ensure_model_loaded(self._vision_model)
         b64_image = base64.b64encode(image_data).decode("utf-8")
         payload = {
             "model": self._vision_model,
