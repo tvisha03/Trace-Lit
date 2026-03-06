@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from typing import AsyncGenerator
@@ -21,6 +22,12 @@ _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
 def _strip_think_blocks(text: str) -> str:
     return _THINK_BLOCK_RE.sub("", text).strip()
+
+
+def _extract_chat_text(data: dict) -> str:
+    message = data.get("message") or {}
+    content = message.get("content") or data.get("response") or ""
+    return _strip_think_blocks(content)
 
 
 class OllamaCloudProvider(BaseLLMProvider):
@@ -56,6 +63,118 @@ class OllamaCloudProvider(BaseLLMProvider):
             "num_ctx": self._num_ctx,
         }
 
+    def _candidate_models(self, model: str) -> list[str]:
+        if model.endswith(":cloud"):
+            return [model, model.removesuffix(":cloud")]
+        return [model]
+
+    def _build_text_messages(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> list[dict[str, object]]:
+        messages: list[dict[str, object]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+        return messages
+
+    def _log_missing_model(self, model: str, *, vision: bool = False) -> None:
+        kind = "vision model" if vision else "model"
+        logger.warning(
+            "Ollama Cloud %s '%s' returned 404 on /api/chat; trying next alias",
+            kind,
+            model,
+        )
+
+    def _build_chat_payload(
+        self,
+        model: str,
+        messages: list[dict[str, object]],
+        temperature: float,
+        max_tokens: int,
+        stream: bool,
+    ) -> dict[str, object]:
+        return {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+            "think": False,
+            "options": self._build_options(temperature, max_tokens),
+        }
+
+    def _check_chat_response_status(self, resp: httpx.Response) -> None:
+        if resp.status_code == 429:
+            raise RateLimitError("ollama_cloud")
+        if resp.status_code == 401:
+            logger.error("Ollama Cloud auth failed — check OLLAMA_API_KEY")
+            raise EmptyResponseError("ollama_cloud")
+        resp.raise_for_status()
+
+    def _extract_stream_token(self, line: str) -> str:
+        if not line:
+            return ""
+        chunk = json.loads(line)
+        return (chunk.get("message") or {}).get("content", "")
+
+    async def _post_chat(self, payload: dict[str, object]) -> dict:
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._httpx_timeout,
+                headers=self._auth_headers(),
+            ) as client:
+                resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+                self._check_chat_response_status(resp)
+                return resp.json()
+        except httpx.TimeoutException:
+            raise ProviderTimeoutError("ollama_cloud", self._httpx_timeout.read)
+        except (RateLimitError, EmptyResponseError):
+            raise
+
+    async def _generate_via_chat(
+        self,
+        model: str,
+        messages: list[dict[str, object]],
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        payload = self._build_chat_payload(
+            model, messages, temperature, max_tokens, stream=False
+        )
+        data = await self._post_chat(payload)
+        text = _extract_chat_text(data)
+        if not text:
+            raise EmptyResponseError("ollama_cloud")
+        return text
+
+    async def _stream_via_chat(
+        self,
+        model: str,
+        messages: list[dict[str, object]],
+        temperature: float,
+        max_tokens: int,
+    ) -> AsyncGenerator[str, None]:
+        payload = self._build_chat_payload(
+            model, messages, temperature, max_tokens, stream=True
+        )
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._httpx_timeout,
+                headers=self._auth_headers(),
+            ) as client:
+                async with client.stream(
+                    "POST", f"{self._base_url}/api/chat", json=payload
+                ) as resp:
+                    self._check_chat_response_status(resp)
+                    async for line in resp.aiter_lines():
+                        token = self._extract_stream_token(line)
+                        if token:
+                            yield token
+        except httpx.TimeoutException:
+            raise ProviderTimeoutError("ollama_cloud", self._httpx_timeout.read)
+        except (RateLimitError, EmptyResponseError):
+            raise
+
     async def generate(
         self,
         system_prompt: str,
@@ -63,40 +182,23 @@ class OllamaCloudProvider(BaseLLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> str:
-        payload = {
-            "model": self._model,
-            "system": system_prompt,
-            "prompt": user_prompt,
-            "stream": False,
-            "think": False,
-            "options": self._build_options(temperature, max_tokens),
-        }
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._httpx_timeout,
-                headers=self._auth_headers(),
-            ) as client:
-                resp = await client.post(
-                    f"{self._base_url}/api/generate", json=payload
-                )
-                if resp.status_code == 429:
-                    raise RateLimitError("ollama_cloud")
-                if resp.status_code == 401:
-                    logger.error("Ollama Cloud auth failed — check OLLAMA_API_KEY")
-                    raise EmptyResponseError("ollama_cloud")
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.TimeoutException:
-            raise ProviderTimeoutError("ollama_cloud", self._httpx_timeout.read)
-        except (RateLimitError, EmptyResponseError):
-            raise
-        except Exception:
-            raise
+        messages = self._build_text_messages(system_prompt, user_prompt)
 
-        text = _strip_think_blocks(data.get("response") or "")
-        if not text:
+        last_404: httpx.HTTPStatusError | None = None
+        for model in self._candidate_models(self._model):
+            try:
+                return await self._generate_via_chat(
+                    model, messages, temperature, max_tokens
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+                last_404 = exc
+                self._log_missing_model(model)
+
+        if last_404 is not None:
             raise EmptyResponseError("ollama_cloud")
-        return text
+        raise EmptyResponseError("ollama_cloud")
 
     async def generate_streaming(
         self,
@@ -105,38 +207,24 @@ class OllamaCloudProvider(BaseLLMProvider):
         temperature: float = 0.3,
         max_tokens: int = 2048,
     ) -> AsyncGenerator[str, None]:
-        payload = {
-            "model": self._model,
-            "system": system_prompt,
-            "prompt": user_prompt,
-            "stream": True,
-            "think": False,
-            "options": self._build_options(temperature, max_tokens),
-        }
-        try:
-            async with httpx.AsyncClient(
-                timeout=self._httpx_timeout,
-                headers=self._auth_headers(),
-            ) as client:
-                async with client.stream(
-                    "POST", f"{self._base_url}/api/generate", json=payload
-                ) as resp:
-                    if resp.status_code == 429:
-                        raise RateLimitError("ollama_cloud")
-                    if resp.status_code == 401:
-                        logger.error("Ollama Cloud auth failed — check OLLAMA_API_KEY")
-                        return
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if line:
-                            chunk = json.loads(line)
-                            token = chunk.get("response", "")
-                            if token:
-                                yield token
-        except httpx.TimeoutException:
-            raise ProviderTimeoutError("ollama_cloud", self._httpx_timeout.read)
-        except RateLimitError:
-            raise
+        messages = self._build_text_messages(system_prompt, user_prompt)
+
+        last_404: httpx.HTTPStatusError | None = None
+        for model in self._candidate_models(self._model):
+            try:
+                async for token in self._stream_via_chat(
+                    model, messages, temperature, max_tokens
+                ):
+                    yield token
+                return
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+                last_404 = exc
+                self._log_missing_model(model)
+
+        if last_404 is not None:
+            raise EmptyResponseError("ollama_cloud")
 
     async def health_check(self) -> bool:
         if not self._api_key:
@@ -151,3 +239,38 @@ class OllamaCloudProvider(BaseLLMProvider):
                 return resp.status_code == 200
         except Exception:
             return False
+
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ) -> str:
+        """Analyze an image using Ollama Cloud with a vision-capable model."""
+        vision_model = get_settings().OLLAMA_CLOUD_VISION_MODEL
+        b64_image = base64.b64encode(image_data).decode("utf-8")
+        messages = [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [b64_image],
+            }
+        ]
+
+        last_404: httpx.HTTPStatusError | None = None
+        for model in self._candidate_models(vision_model):
+            try:
+                return await self._generate_via_chat(
+                    model, messages, temperature, max_tokens
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+                last_404 = exc
+                self._log_missing_model(model, vision=True)
+
+        if last_404 is not None:
+            raise EmptyResponseError("ollama_cloud")
+        raise EmptyResponseError("ollama_cloud")

@@ -1,14 +1,14 @@
 
-from sqlalchemy import select, delete as sa_delete
+from sqlalchemy import insert, select, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.chunk import Chunk
 
-async def create_chunks_bulk(db: AsyncSession, chunks: list[dict]) -> list[Chunk]:
-    objects = [Chunk(**c) for c in chunks]
-    db.add_all(objects)
-    await db.flush()
-    return objects
+async def create_chunks_bulk(db: AsyncSession, chunks: list[dict]) -> int:
+    if not chunks:
+        return 0
+    await db.execute(insert(Chunk), chunks)
+    return len(chunks)
 
 async def get_chunks_by_paper(db: AsyncSession, paper_id: str) -> list[Chunk]:
     result = await db.execute(

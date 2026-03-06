@@ -33,6 +33,16 @@ class FallbackChain:
     def rate_monitor(self) -> RateLimitMonitor:
         return self._rate_monitor
 
+    def _is_temporarily_unavailable(
+        self,
+        provider: BaseLLMProvider,
+    ) -> tuple[bool, float]:
+        cooldown_seconds = self._rate_monitor.cooldown_remaining(provider.provider)
+        return cooldown_seconds > 0.0, cooldown_seconds
+
+    def _mark_provider_rate_limited(self, provider: BaseLLMProvider) -> float:
+        return self._rate_monitor.mark_rate_limited(provider.provider)
+
     def _build_chain(self, use_local_llm: bool | None = None) -> List[BaseLLMProvider]:
         settings = get_settings()
         if use_local_llm is None:
@@ -101,7 +111,11 @@ class FallbackChain:
                 return text, retries
 
             except RateLimitError:
-                logger.warning(f"Rate limit on {provider.provider.value} — switching")
+                cooldown_seconds = self._mark_provider_rate_limited(provider)
+                logger.warning(
+                    f"Rate limit on {provider.provider.value} — cooling down for "
+                    f"{cooldown_seconds:.1f}s and switching"
+                )
                 return None
 
             except (ProviderTimeoutError, EmptyResponseError) as exc:
@@ -132,6 +146,15 @@ class FallbackChain:
             if time.monotonic() >= deadline:
                 logger.warning("Aborting fallback chain: approaching request deadline")
                 break
+
+            is_cooling_down, cooldown_seconds = self._is_temporarily_unavailable(provider)
+            if is_cooling_down:
+                logger.info(
+                    f"Skipping {provider.provider.value} — recent rate limit cooldown "
+                    f"({cooldown_seconds:.1f}s remaining)"
+                )
+                errors.append(f"{provider.provider.value}: cooling_down")
+                continue
 
             if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
                 # Wait for rate limit to clear instead of immediately skipping
@@ -182,16 +205,22 @@ class FallbackChain:
         max_tokens: int,
     ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
         full_text = ""
+        streamed_any = False
         try:
             stream = provider.generate_streaming(
                 system_prompt, user_prompt, temperature, max_tokens
             )
             async for token in stream:
+                streamed_any = True
                 full_text += token
                 yield (token, provider.provider)
 
         except RateLimitError:
-            logger.warning(f"Rate limit on {provider.provider.value} during stream — switching")
+            cooldown_seconds = self._mark_provider_rate_limited(provider)
+            logger.warning(
+                f"Rate limit on {provider.provider.value} during stream — cooling down for "
+                f"{cooldown_seconds:.1f}s and switching"
+            )
 
         except (ProviderTimeoutError, EmptyResponseError) as exc:
             logger.warning(f"Stream error on {provider.provider.value}: {exc.message} — switching")
@@ -200,12 +229,13 @@ class FallbackChain:
             logger.error(f"Stream unexpected on {provider.provider.value}: {exc}")
 
         finally:
-            from shared.utils.text_utils import estimate_tokens as _est
-            input_tokens = _est(system_prompt + user_prompt)
-            output_tokens = _est(full_text) if full_text else 0
-            self._rate_monitor.track_usage(
-                provider.provider, input_tokens + output_tokens,
-            )
+            if streamed_any:
+                from shared.utils.text_utils import estimate_tokens as _est
+                input_tokens = _est(system_prompt + user_prompt)
+                output_tokens = _est(full_text) if full_text else 0
+                self._rate_monitor.track_usage(
+                    provider.provider, input_tokens + output_tokens,
+                )
 
     async def generate_streaming(
         self,
@@ -218,6 +248,15 @@ class FallbackChain:
         errors: list[str] = []
 
         for provider in self._providers:
+            is_cooling_down, cooldown_seconds = self._is_temporarily_unavailable(provider)
+            if is_cooling_down:
+                logger.info(
+                    f"Skipping {provider.provider.value} stream — recent rate limit cooldown "
+                    f"({cooldown_seconds:.1f}s remaining)"
+                )
+                errors.append(f"{provider.provider.value}: cooling_down")
+                continue
+
             if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
                 # Wait for rate limit to clear instead of immediately skipping
                 wait_secs = self._rate_monitor.seconds_until_available(
@@ -276,6 +315,55 @@ class FallbackChain:
         await asyncio.sleep(wait)
         return True
 
+    async def _try_vision_provider(
+        self,
+        provider: BaseLLMProvider,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float,
+        max_tokens: int,
+        errors: list[str],
+    ) -> str | None:
+        """Attempt image analysis on one provider with server-error retries.
+
+        Returns the raw text on success, or None if the provider must be skipped.
+        Appends a reason string to *errors* on every failure.
+        """
+        _SERVER_RETRIES = 2
+        _SERVER_BACKOFF_BASE = 3
+
+        for attempt in range(1 + _SERVER_RETRIES):
+            try:
+                result = await provider.analyze_image(
+                    image_data, mime_type, prompt, temperature, max_tokens,
+                )
+                return result
+
+            except NotImplementedError:
+                errors.append(f"{provider.provider.value}: no_vision_support")
+                return None  # vision not supported — skip this provider
+
+            except RateLimitError:
+                cooldown_seconds = self._mark_provider_rate_limited(provider)
+                logger.warning(
+                    f"Rate limit on {provider.provider.value} vision — cooling down for "
+                    f"{cooldown_seconds:.1f}s and switching"
+                )
+                errors.append(f"{provider.provider.value}: rate_limited")
+                return None  # rate-limited — skip this provider
+
+            except Exception as exc:
+                if await self._should_retry_server_error(
+                    exc, attempt, _SERVER_RETRIES, _SERVER_BACKOFF_BASE,
+                    provider.provider.value,
+                ):
+                    continue
+                errors.append(f"{provider.provider.value}: {exc}")
+                return None
+
+        return None  # exhausted retries
+
     async def analyze_image(
         self,
         image_data: bytes,
@@ -284,36 +372,29 @@ class FallbackChain:
         temperature: float = 0.2,
         max_tokens: int = 512,
     ) -> tuple[str, LLMProvider]:
+        """Analyze an image with the first vision-capable provider.
+
+        Vision pipeline: Ollama Cloud → Gemini → Local Ollama.
+        Groq is skipped automatically (raises NotImplementedError).
+        """
         errors: list[str] = []
 
-        _SERVER_RETRIES = 2
-        _SERVER_BACKOFF_BASE = 3
-
         for provider in self._providers:
-            for attempt in range(1 + _SERVER_RETRIES):
-                try:
-                    result = await provider.analyze_image(
-                        image_data, mime_type, prompt, temperature, max_tokens,
-                    )
-                    logger.info(f"Image analysis from {provider.provider.value}")
-                    return result, provider.provider
+            is_cooling_down, cooldown_seconds = self._is_temporarily_unavailable(provider)
+            if is_cooling_down:
+                errors.append(f"{provider.provider.value}: cooling_down")
+                logger.info(
+                    f"Skipping {provider.provider.value} vision — recent rate limit cooldown "
+                    f"({cooldown_seconds:.1f}s remaining)"
+                )
+                continue
 
-                except NotImplementedError:
-                    errors.append(f"{provider.provider.value}: no_vision_support")
-                    break  # vision not supported — no point retrying this provider
-
-                except RateLimitError:
-                    errors.append(f"{provider.provider.value}: rate_limited")
-                    break  # rate-limited — no point retrying this provider
-
-                except Exception as exc:
-                    if await self._should_retry_server_error(
-                        exc, attempt, _SERVER_RETRIES, _SERVER_BACKOFF_BASE,
-                        provider.provider.value,
-                    ):
-                        continue
-                    errors.append(f"{provider.provider.value}: {exc}")
-                    break
+            result = await self._try_vision_provider(
+                provider, image_data, mime_type, prompt, temperature, max_tokens, errors,
+            )
+            if result is not None:
+                logger.info(f"Image analysis from {provider.provider.value}")
+                return result, provider.provider
 
         logger.error(f"All providers failed for image analysis: {errors}")
         raise AllProvidersFailedError()

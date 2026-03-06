@@ -6,6 +6,7 @@ from collections import deque
 from pathlib import Path
 from threading import Lock
 
+from app.config import get_settings
 from shared.enums import LLMProvider
 from shared.logger import get_logger
 
@@ -128,10 +129,20 @@ class RateLimitMonitor:
     _SAVE_EVERY_N_CALLS: int = 10
 
     def __init__(self) -> None:
+        settings = get_settings()
         self._usage: dict[str, _ProviderUsage] = {
             provider: _ProviderUsage()
             for provider in _PROVIDER_LIMITS
         }
+        self._cooldowns: dict[str, float] = {
+            provider: 0.0
+            for provider in _PROVIDER_LIMITS
+        }
+        self._cooldown_lock = Lock()
+        self._rate_limit_cooldown_seconds = max(
+            1.0,
+            float(settings.LLM_RATE_LIMIT_COOLDOWN_SECONDS),
+        )
         self._calls_since_save: int = 0
         self._last_save_time: float = time.time()
         self._load_state()
@@ -139,7 +150,12 @@ class RateLimitMonitor:
     def _save_state(self) -> None:
         try:
             _PERSISTENCE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            snapshot = {name: usage.to_dict() for name, usage in self._usage.items()}
+            snapshot = {
+                "usage": {
+                    name: usage.to_dict() for name, usage in self._usage.items()
+                },
+                "cooldowns": self._snapshot_cooldowns(),
+            }
             _PERSISTENCE_PATH.write_text(json.dumps(snapshot), encoding="utf-8")
         except Exception as exc:
             logger.debug(f"Rate-monitor state save failed (non-fatal): {exc}")
@@ -149,19 +165,78 @@ class RateLimitMonitor:
             return
         try:
             snapshot: dict = json.loads(_PERSISTENCE_PATH.read_text(encoding="utf-8"))
-            for provider_name, entries in snapshot.items():
+            usage_snapshot = snapshot.get("usage", snapshot)
+            for provider_name, entries in usage_snapshot.items():
                 usage = self._usage.get(provider_name)
                 if usage and isinstance(entries, (list, dict)):
                     usage.load_dict(entries)
+            self._restore_cooldowns(snapshot.get("cooldowns", {}))
             logger.info("Rate-monitor usage state restored from previous run")
         except Exception as exc:
             logger.warning(f"Could not restore rate-monitor state (will start fresh): {exc}")
+
+    def _snapshot_cooldowns(self) -> dict[str, float]:
+        now = time.time()
+        with self._cooldown_lock:
+            return {
+                provider_name: cooldown_until
+                for provider_name, cooldown_until in self._cooldowns.items()
+                if cooldown_until > now
+            }
+
+    def _restore_cooldowns(self, cooldowns: dict[str, float]) -> None:
+        now = time.time()
+        with self._cooldown_lock:
+            for provider_name in self._cooldowns:
+                cooldown_until = float(cooldowns.get(provider_name, 0.0))
+                self._cooldowns[provider_name] = cooldown_until if cooldown_until > now else 0.0
+
+    def cooldown_remaining(self, provider: LLMProvider) -> float:
+        now = time.time()
+        with self._cooldown_lock:
+            cooldown_until = self._cooldowns.get(provider.value, 0.0)
+            remaining = cooldown_until - now
+            if remaining <= 0:
+                self._cooldowns[provider.value] = 0.0
+                return 0.0
+            return remaining
+
+    def is_cooling_down(self, provider: LLMProvider) -> bool:
+        return self.cooldown_remaining(provider) > 0.0
+
+    def mark_rate_limited(
+        self,
+        provider: LLMProvider,
+        retry_after_seconds: float | None = None,
+    ) -> float:
+        cooldown_seconds = max(
+            1.0,
+            retry_after_seconds or self._rate_limit_cooldown_seconds,
+        )
+        cooldown_until = time.time() + cooldown_seconds
+        with self._cooldown_lock:
+            self._cooldowns[provider.value] = max(
+                self._cooldowns.get(provider.value, 0.0),
+                cooldown_until,
+            )
+        self._save_state()
+        logger.warning(
+            f"Cooling down {provider.value} for {cooldown_seconds:.1f}s after rate limit"
+        )
+        return cooldown_seconds
 
     def can_make_request(
         self,
         provider: LLMProvider,
         estimated_tokens: int = 8_500,
     ) -> bool:
+        cooldown_remaining = self.cooldown_remaining(provider)
+        if cooldown_remaining > 0:
+            logger.info(
+                f"Rate limit cooldown active for {provider.value}: {cooldown_remaining:.1f}s remaining"
+            )
+            return False
+
         limits = _PROVIDER_LIMITS.get(provider.value)
         if not limits:
             return True
@@ -227,7 +302,7 @@ class RateLimitMonitor:
 
         usage = self._usage.get(provider.value)
         if not usage:
-            return 0.0
+            return self.cooldown_remaining(provider)
 
         max_tpm = int(limits["tpm"] * _SAFETY_MARGIN)
         max_rpm = int(limits["rpm"] * _SAFETY_MARGIN)
@@ -241,8 +316,9 @@ class RateLimitMonitor:
         tpm_wait = self._minute_wait(usage, current_tokens + estimated_tokens, max_tpm, now)
         rpm_wait = self._minute_wait(usage, current_requests + 1, max_rpm, now)
         rpd_wait = self._daily_wait(usage, limits.get("rpd"), now)
+        cooldown_wait = self.cooldown_remaining(provider)
 
-        wait = max(tpm_wait, rpm_wait, rpd_wait)
+        wait = max(tpm_wait, rpm_wait, rpd_wait, cooldown_wait)
 
         return min(wait, 60.0) if wait <= 60.0 else wait
 
@@ -288,6 +364,7 @@ class RateLimitMonitor:
             if rpd_limit:
                 info["current_rpd"] = usage.current_rpd()
                 info["max_rpd"] = rpd_limit
+            info["cooldown_seconds"] = int(self.cooldown_remaining(LLMProvider(provider_name)))
             summary[provider_name] = info
         return summary
 

@@ -124,9 +124,10 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
     for attempt in range(1, _MAX_RETRIES + 2):
         try:
             await create_chunks_bulk(db, chunk_records)
-            await db.flush()
+            await db.commit()
             return
         except Exception as exc:
+            await db.rollback()
             if attempt > _MAX_RETRIES:
                 raise
             logger.warning(
@@ -139,8 +140,10 @@ async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     try:
         await delete_chunks_by_paper(db, paper_id)
+        await db.commit()
         logger.info(f"Cleaned up partial chunks for failed paper {paper_id}")
     except Exception as exc:
+        await db.rollback()
         logger.warning(f"Could not clean up chunks for {paper_id}: {exc}")
 
     try:
@@ -266,7 +269,6 @@ async def _chunk_and_index_paper(
     with timer(f"Index {paper.filename}"):
         await index_chunks(chunks, paper_id, faiss_store)
 
-    await db.commit()
     return len(chunks)
 
 async def _run_extraction_phase(
@@ -392,11 +394,6 @@ async def process_paper(
             progress_callback=progress_callback,
             error_message=str(exc)[:500],
         )
-
-        try:
-            await db.commit()
-        except Exception as commit_exc:
-            logger.warning(f"Could not persist FAILED status for {paper_id}: {commit_exc}")
 
         await _cleanup_after_failure(paper_id, db)
         raise

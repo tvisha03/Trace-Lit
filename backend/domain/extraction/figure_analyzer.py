@@ -1,6 +1,9 @@
 import asyncio
+import gc
 from pathlib import Path
 from dataclasses import dataclass
+
+import psutil
 
 from shared.logger import get_logger
 from shared.constants import (
@@ -13,6 +16,10 @@ from domain.generation.prompts import FIGURE_ANALYSIS_PROMPT
 
 logger = get_logger(__name__)
 _vision_semaphore: asyncio.Semaphore | None = None
+
+# Abort the whole batch run after this many figures fail in a row.
+# Protects against wasting time when every cloud provider is rate-limited.
+_MAX_CONSECUTIVE_FAILURES = 3
 
 
 def _get_vision_semaphore() -> asyncio.Semaphore:
@@ -122,6 +129,48 @@ async def _analyze_single_figure(
             logger.error(f"Figure analysis failed for {img_path}: {exc}")
             return None
 
+
+def _is_ram_under_pressure() -> bool:
+    """Return True when system RAM usage exceeds the configured threshold."""
+    try:
+        used_pct = psutil.virtual_memory().percent / 100.0
+        return used_pct >= get_settings().MEMORY_PRESSURE_THRESHOLD
+    except Exception:
+        return False
+
+
+def _check_early_abort(consecutive_failures: int) -> str | None:
+    """Return an abort reason if figure analysis should stop, or None to continue."""
+    if _is_ram_under_pressure():
+        return (
+            f"RAM pressure above threshold "
+            f"({psutil.virtual_memory().percent:.0f}% used)"
+        )
+    if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+        return (
+            f"{consecutive_failures} consecutive failures — "
+            "cloud providers appear rate-limited"
+        )
+    return None
+
+
+def _process_batch_results(
+    results: list,
+) -> tuple[list[AnalyzedFigure], int]:
+    """Split gather results into successes and a failure count."""
+    successes: list[AnalyzedFigure] = []
+    failures = 0
+    for result in results:
+        if isinstance(result, AnalyzedFigure):
+            successes.append(result)
+        elif isinstance(result, Exception):
+            logger.error(f"Unexpected figure analysis error: {result}")
+            failures += 1
+        else:
+            failures += 1
+    return successes, failures
+
+
 async def analyze_figures(
     figures: list[ExtractedFigure],
     llm_chain,
@@ -129,25 +178,35 @@ async def analyze_figures(
     if not figures:
         return []
 
-    # Process figures in batches to avoid exhausting rate limits
-    batch_size = get_settings().ADAPTIVE_FIGURE_CONCURRENCY
+    settings = get_settings()
+    batch_size = settings.ADAPTIVE_FIGURE_CONCURRENCY
     analyzed: list[AnalyzedFigure] = []
+    consecutive_failures = 0
 
     for batch_start in range(0, len(figures), batch_size):
+        abort_reason = _check_early_abort(consecutive_failures)
+        if abort_reason:
+            logger.warning(f"Figure analysis stopped: {abort_reason}")
+            break
+
         batch = figures[batch_start:batch_start + batch_size]
         tasks = [_analyze_single_figure(fig, llm_chain) for fig in batch]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for result in results:
-            if isinstance(result, AnalyzedFigure):
-                analyzed.append(result)
-            elif isinstance(result, Exception):
-                logger.error(f"Unexpected figure analysis error: {result}")
+        batch_analyzed, batch_failed = _process_batch_results(results)
+        analyzed.extend(batch_analyzed)
+        # Reset failure streak on any success; accumulate only on full-batch failures.
+        consecutive_failures = 0 if batch_analyzed else (consecutive_failures + batch_failed)
 
-        # Stagger batches to let rate-limit windows recover
+        # Release image byte buffers before loading the next batch.
+        del tasks, results
+        gc.collect()
+
+        # Sleep long enough for the Gemini 20-RPM window to recover.
+        # 3.5 s > the 3 s minimum between requests at 20 RPM.
         remaining = len(figures) - (batch_start + len(batch))
         if remaining > 0:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(3.5)
 
     logger.info(f"Analyzed {len(analyzed)}/{len(figures)} figures successfully")
     return analyzed

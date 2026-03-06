@@ -47,7 +47,8 @@ class Settings(BaseSettings):
     OLLAMA_VISION_MODEL: str = "qwen2.5vl:3b"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_API_KEY: str = ""
-    OLLAMA_CLOUD_MODEL: str = "qwen3.5"
+    OLLAMA_CLOUD_MODEL: str = "qwen3.5:397b"
+    OLLAMA_CLOUD_VISION_MODEL: str = "qwen3-vl:235b"
     OLLAMA_CLOUD_TIMEOUT: int = 120
     OLLAMA_CLOUD_MAX_TOKENS: int = 4096
     OLLAMA_CLOUD_NUM_CTX: int = 8192
@@ -81,6 +82,7 @@ class Settings(BaseSettings):
     COMPARISON_MAX_TOKENS: int = 4096
     LLM_MAX_RETRIES: int = 1
     LLM_RETRY_DELAY_BASE: float = 1.0
+    LLM_RATE_LIMIT_COOLDOWN_SECONDS: int = 60
     LLM_TEMPERATURE: float = 0.3
     REQUEST_TIMEOUT: float = 300.0
 
