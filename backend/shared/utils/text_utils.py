@@ -66,17 +66,23 @@ def extract_paragraph_ids(text: str) -> list[str]:
 def normalize_paragraph_ids(
     cited_ids: set[str], valid_ids: set[str]
 ) -> tuple[set[str], dict[str, str]]:
+    """Resolve short citation IDs (e.g. P22) to full IDs (e.g. f01ab9f4_P22).
+
+    When a short ID matches multiple full IDs (ambiguous across papers),
+    pick the first alphabetical match rather than discarding the citation.
+    """
     resolved: set[str] = set()
     replacements: dict[str, str] = {}
     for cid in cited_ids:
         if cid in valid_ids:
             resolved.add(cid)
         elif "_" not in cid:
-            matches = [vid for vid in valid_ids if vid.endswith(f"_{cid}")]
-            if len(matches) == 1:
+            matches = sorted(vid for vid in valid_ids if vid.endswith(f"_{cid}"))
+            if matches:
                 resolved.add(matches[0])
                 replacements[cid] = matches[0]
             else:
+                # No match at all — keep original so it gets stripped later
                 resolved.add(cid)
         else:
             resolved.add(cid)

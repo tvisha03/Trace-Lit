@@ -211,3 +211,39 @@ class FallbackChain:
         logger.error(f"All providers failed for image analysis: {errors}")
         raise AllProvidersFailedError()
 
+    async def analyze_images_batch(
+        self,
+        images: list[tuple[bytes, str]],
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 1024,
+    ) -> tuple[str, LLMProvider]:
+        """Batch image analysis with provider fallback."""
+        errors: list[str] = []
+
+        for provider in self._providers:
+            try:
+                result = await provider.analyze_images_batch(
+                    images, prompt, temperature, max_tokens,
+                )
+                logger.info(
+                    f"Batch image analysis ({len(images)} images) "
+                    f"from {provider.provider.value}"
+                )
+                return result, provider.provider
+
+            except NotImplementedError:
+                errors.append(f"{provider.provider.value}: no_batch_vision_support")
+                continue
+
+            except RateLimitError:
+                errors.append(f"{provider.provider.value}: rate_limited")
+                continue
+
+            except Exception as exc:
+                errors.append(f"{provider.provider.value}: {exc}")
+                continue
+
+        logger.error(f"All providers failed for batch image analysis: {errors}")
+        raise AllProvidersFailedError()
+

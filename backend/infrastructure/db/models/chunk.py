@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Integer, DateTime, Text, JSON, ForeignKey, Index
+from sqlalchemy import String, Integer, DateTime, Text, JSON, ForeignKey, Index, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.database import Base
@@ -30,6 +30,9 @@ class Chunk(Base):
     token_count: Mapped[int] = mapped_column(Integer, default=0)
     chunk_type: Mapped[str] = mapped_column(String(16), default="text", index=True)
     image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Pre-computed sentence embeddings (numpy float32 bytes) — used by HAVF verifier
+    # to avoid re-encoding source sentences on every query (~10-20x latency reduction)
+    sentence_embeddings: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (

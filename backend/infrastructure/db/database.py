@@ -54,4 +54,22 @@ class Base(DeclarativeBase):
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Auto-migrate: add sentence_embeddings column if missing (LAT-1 optimisation)
+        await conn.run_sync(_migrate_sentence_embeddings_column)
+
+
+def _migrate_sentence_embeddings_column(connection) -> None:
+    """Add sentence_embeddings column to chunks table if it doesn't exist.
+
+    Handles existing databases that were created before the LAT-1
+    embedding cache optimisation was introduced.
+    """
+    from sqlalchemy import text, inspect
+
+    inspector = inspect(connection)
+    columns = [col["name"] for col in inspector.get_columns("chunks")]
+    if "sentence_embeddings" not in columns:
+        connection.execute(
+            text("ALTER TABLE chunks ADD COLUMN sentence_embeddings BLOB")
+        )
 

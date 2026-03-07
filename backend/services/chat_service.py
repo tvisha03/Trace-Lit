@@ -44,7 +44,14 @@ async def validate_response_has_citations(
         raw_cited = set(extract_paragraph_ids(response))
         valid_ids = set(retrieved_paragraph_ids)
 
+        logger.debug(
+            f"Citation validation: raw_cited={raw_cited}, valid_ids={valid_ids}"
+        )
+
         cited_ids, short_to_long = normalize_paragraph_ids(raw_cited, valid_ids)
+        logger.debug(
+            f"After normalization: cited_ids={cited_ids}, replacements={short_to_long}"
+        )
         for short_id, long_id in short_to_long.items():
             response = response.replace(f"[{short_id}]", f"[{long_id}]")
 

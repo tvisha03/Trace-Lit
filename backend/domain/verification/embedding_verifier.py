@@ -82,9 +82,10 @@ def verify_claims_embedding(
             for c in claims
         ]
 
-    source_texts = [s["text"] for s in source_sentences]
+    # Use cached embeddings when available (LAT-1: ~10-20x faster)
+    source_vecs = _get_source_vectors(source_sentences)
+
     claim_vecs = encode_texts(claims)
-    source_vecs = encode_texts(source_texts)
     similarity_matrix = claim_vecs @ source_vecs.T
 
     results = _process_claims(
@@ -93,9 +94,53 @@ def verify_claims_embedding(
     )
 
     high_count = sum(1 for r in results if r["confidence"] == ConfidenceLevel.HIGH)
+    cached_count = sum(1 for s in source_sentences if "embedding" in s)
+    cache_status = f"cached={cached_count}/{len(source_sentences)}"
     logger.info(
         f"Level 1 verification: {high_count}/{len(results)} HIGH, "
-        f"{sum(1 for r in results if r['needs_reranking'])} need reranking"
+        f"{sum(1 for r in results if r['needs_reranking'])} need reranking "
+        f"({cache_status})"
     )
     return results
+
+
+def _get_source_vectors(source_sentences: list[dict]) -> np.ndarray:
+    """Build source embedding matrix, using cached vectors when available.
+
+    Falls back to re-encoding for sentences without cached embeddings
+    (e.g., non-text sources or chunks from before LAT-1 migration).
+    """
+    cached_indices: list[int] = []
+    uncached_indices: list[int] = []
+
+    for i, s in enumerate(source_sentences):
+        if "embedding" in s:
+            cached_indices.append(i)
+        else:
+            uncached_indices.append(i)
+
+    n = len(source_sentences)
+
+    # Fast path: all embeddings are cached
+    if not uncached_indices:
+        return np.array([s["embedding"] for s in source_sentences], dtype=np.float32)
+
+    # Fast path: no cached embeddings, re-encode everything
+    if not cached_indices:
+        source_texts = [s["text"] for s in source_sentences]
+        return encode_texts(source_texts)
+
+    # Mixed: combine cached and freshly encoded
+    from shared.constants import EMBEDDING_DIMENSIONS
+    result = np.empty((n, EMBEDDING_DIMENSIONS), dtype=np.float32)
+
+    for i in cached_indices:
+        result[i] = source_sentences[i]["embedding"]
+
+    uncached_texts = [source_sentences[i]["text"] for i in uncached_indices]
+    uncached_vecs = encode_texts(uncached_texts)
+    for j, i in enumerate(uncached_indices):
+        result[i] = uncached_vecs[j]
+
+    return result
 

@@ -62,6 +62,29 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # --- Swagger UI file-upload fix ---
+    # FastAPI 0.100+ emits OpenAPI 3.1 which uses
+    # `contentMediaType: "application/octet-stream"` for UploadFile fields.
+    # Swagger UI does not understand that and renders a text box instead of
+    # a file picker.  This hook walks the schema once and adds the
+    # `format: "binary"` property that Swagger UI needs.
+    _original_openapi = app.openapi
+
+    def _patched_openapi():                              # noqa: ANN202
+        schema = _original_openapi()
+        for _name, component in schema.get("components", {}).get("schemas", {}).items():
+            for _field, prop in component.get("properties", {}).items():
+                # Direct UploadFile field
+                if prop.get("contentMediaType") == "application/octet-stream":
+                    prop["format"] = "binary"
+                # list[UploadFile] — the binary marker is on the items
+                items = prop.get("items", {})
+                if items.get("contentMediaType") == "application/octet-stream":
+                    items["format"] = "binary"
+        return schema
+
+    app.openapi = _patched_openapi
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,

@@ -1,11 +1,8 @@
 from pathlib import Path
 import logging
+import os
 import re
-import tempfile
-import zlib
 from dataclasses import dataclass, field
-
-import pymupdf
 
 try:
     import pymupdf.layout  # noqa: F401  # pylint: disable=unused-import
@@ -13,12 +10,10 @@ try:
 except ImportError:
     _LAYOUT_MODE = False
 
-# Suppress MuPDF C-library stderr noise (zlib / image-stream decode errors).
-# These errors are expected for PDFs with damaged image streams and are
-# handled by the fallback extraction pipeline.  The native flag must be
-# set *before* any document is opened — unlike Python-level stderr
-# redirection (os.dup2), this actually prevents the MuPDF engine from
-# aborting text extraction when it encounters stream errors.
+import pymupdf
+
+# Suppress MuPDF C-library stderr noise (e.g. zlib warnings on corrupt
+# compressed streams) that can flood logs during PDF processing.
 pymupdf.TOOLS.mupdf_display_errors(False)
 pymupdf.TOOLS.mupdf_display_warnings(False)
 
@@ -40,7 +35,6 @@ from domain.extraction.formula_extractor import (
 )
 
 logger = get_logger(__name__)
-
 
 @dataclass
 class ExtractedFigure:
@@ -71,12 +65,10 @@ class ExtractedDocument:
     pdf_metadata: dict | None = None
     layout_mode: bool = False
 
-
 def _ensure_figure_dir(file_path: Path) -> Path:
     figure_dir = file_path.parent / "figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
     return figure_dir
-
 
 def _resolve_image_path(img_info, figure_dir: Path) -> Path | None:
     img_path = img_info if isinstance(img_info, str) else img_info.get("path", "")
@@ -88,14 +80,12 @@ def _resolve_image_path(img_info, figure_dir: Path) -> Path | None:
     alt = figure_dir / Path(img_path).name
     return alt if alt.exists() else None
 
-
 _MD_IMAGE_RE = re.compile(r"!\[.*?\]\((.+?)\)")
 
 _FIGURE_CAPTION_RE = re.compile(
     r"(?:Fig(?:ure|\.)?|FIGURE)\s+(\d+)[.:]?\s*(.*)",
     re.IGNORECASE,
 )
-
 
 def _find_figure_caption(page_text: str, image_pos: int) -> str:
     search_after = page_text[image_pos:image_pos + 400]
@@ -111,7 +101,6 @@ def _find_figure_caption(page_text: str, image_pos: int) -> str:
                 desc = match.group(2).strip().rstrip(".")
                 return f"Figure {num}: {desc}" if desc else f"Figure {num}"
     return ""
-
 
 def _add_figure_if_new(
     img_info, figure_dir: Path, seen: set[str], page_num: int,
@@ -130,7 +119,6 @@ def _add_figure_if_new(
         bbox=tuple(bbox) if bbox else None,
         caption=caption,
     ))
-
 
 def _extract_figures_from_pages(
     page_chunks: list[dict],
@@ -152,14 +140,12 @@ def _extract_figures_from_pages(
             )
     return figures
 
-
 def _get_picture_boxes(page_data: dict) -> list[dict]:
     page_boxes = page_data.get("page_boxes", [])
     return [
         b for b in page_boxes
         if isinstance(b, dict) and b.get("class") == "picture"
     ]
-
 
 def _is_nearby_caption_box(box: dict, pic_top: float, pic_bottom: float) -> bool:
     if not isinstance(box, dict) or box.get("class") != "caption":
@@ -170,7 +156,6 @@ def _is_nearby_caption_box(box: dict, pic_top: float, pic_bottom: float) -> bool
     cap_top = cap_bbox[1]
     return abs(cap_top - pic_bottom) < 40 or abs(cap_top - pic_top) < 40
 
-
 def _parse_caption_text(raw: str) -> str:
     match = _FIGURE_CAPTION_RE.search(raw)
     if match:
@@ -179,13 +164,11 @@ def _parse_caption_text(raw: str) -> str:
         return f"Figure {num}: {desc}" if desc else f"Figure {num}"
     return raw[:200] if raw else ""
 
-
 def _extract_box_text(box: dict, page_text: str) -> str:
     pos = box.get("pos")
     if not pos or len(pos) < 2:
         return ""
     return page_text[pos[0]:pos[1]].strip()
-
 
 def _find_caption_for_box(page_boxes: list[dict], picture_bbox: list, page_text: str) -> str:
     if not picture_bbox or len(picture_bbox) < 4:
@@ -200,7 +183,6 @@ def _find_caption_for_box(page_boxes: list[dict], picture_bbox: list, page_text:
         if raw:
             return _parse_caption_text(raw)
     return ""
-
 
 def _render_box(
     page, rect, page_num: int, idx: int, figure_dir: Path, caption: str = ""
@@ -220,10 +202,11 @@ def _render_box(
         caption=caption,
     )
 
-
 def _render_page_figures(
     doc, page_data: dict, figure_dir: Path
 ) -> list[ExtractedFigure]:
+    import pymupdf
+
     page_num = page_data.get("metadata", {}).get("page", 0)
     picture_boxes = _get_picture_boxes(page_data)
 
@@ -253,12 +236,13 @@ def _render_page_figures(
 
     return rendered
 
-
 def _render_missing_figures(
     file_path: Path,
     page_chunks: list[dict],
     figure_dir: Path,
 ) -> list[ExtractedFigure]:
+    import pymupdf
+
     rendered: list[ExtractedFigure] = []
     doc = pymupdf.open(str(file_path))
     try:
@@ -268,7 +252,6 @@ def _render_missing_figures(
         doc.close()
 
     return rendered
-
 
 def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
     pages: list[ExtractedPage] = []
@@ -284,48 +267,62 @@ def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
         ))
     return pages
 
-
 def _validate_pdf(file_path: Path) -> tuple[int, dict]:
+    """Open and validate a PDF, returning page count and metadata.
+
+    Calls ``doc.authenticate("")`` to unlock owner-password-restricted
+    PDFs that don't require a user password but block text extraction
+    via permission flags.
+    """
+    import pymupdf
+
+    file_size = file_path.stat().st_size
     doc = pymupdf.open(str(file_path))
+
+    # Unlock owner-password restrictions (no-op on unrestricted PDFs)
+    if doc.is_encrypted:
+        auth_result = doc.authenticate("")
+        logger.info(
+            f"PDF encrypted — authenticate('') returned {auth_result} "
+            f"for {file_path.name}"
+        )
+
     if doc.needs_pass:
         doc.close()
         raise PDFExtractionError(
             file_path.name,
             "PDF is password-protected. Please provide an unlocked version of the file.",
         )
+
     page_count = len(doc)
-
-    # Some valid PDFs have a damaged cross-reference table that causes
-    # pymupdf to report 0 pages on initial open.  A repair pass rebuilds
-    # the page tree and usually recovers the pages.
-    if page_count == 0:
-        logger.warning(
-            f"{file_path.name}: pymupdf reported 0 pages — attempting repair"
-        )
-        doc.repair()
-        page_count = len(doc)
-        if page_count > 0:
-            logger.info(
-                f"{file_path.name}: repair recovered {page_count} pages"
-            )
-
     pdf_metadata = dict(doc.metadata) if doc.metadata else {}
+    permissions = doc.permissions
+
+    # Quick first-page text probe for early diagnostics
+    first_page_chars = 0
+    if page_count > 0:
+        first_page_chars = len(doc[0].get_text("text") or "")
+
     doc.close()
+
     logger.info(
         f"PDF validated: {file_path.name}, {page_count} pages, "
+        f"size={file_size:,} bytes, permissions={permissions}, "
+        f"first_page_chars={first_page_chars}, "
+        f"resolved={file_path.resolve()}, "
         f"meta keys={list(pdf_metadata.keys())}"
     )
-
     if page_count == 0:
-        raise PDFExtractionError(
-            file_path.name,
-            "PDF contains 0 pages after repair — the file may be corrupted "
-            "or in an unsupported format. Try re-exporting the PDF from its "
-            "original source.",
-        )
-
+        try:
+            raw = file_path.read_bytes()
+            logger.error(
+                f"ZERO-PAGE PDF: {file_path.name}, "
+                f"disk_size={file_size:,}, content_size={len(raw):,}, "
+                f"header={raw[:40]!r}, tail={raw[-40:]!r}"
+            )
+        except Exception:
+            pass
     return page_count, pdf_metadata
-
 
 def _get_ocr_function():
     try:
@@ -344,9 +341,17 @@ def _get_ocr_function():
         logger.info("RapidOCR not available — OCR disabled for scanned pages")
         return None
 
-
 def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
+    """Best-quality extraction via pymupdf4llm with layout analysis.
+
+    Passes a pre-authenticated Document so that owner-password-
+    restricted PDFs are unlocked before layout processing begins.
+    """
     import pymupdf4llm
+
+    # Open and authenticate before pymupdf4llm gets the document,
+    # otherwise it calls pymupdf.open() without authentication.
+    doc = _open_and_auth(file_path)
 
     kwargs = {
         "page_chunks": True,
@@ -362,134 +367,262 @@ def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
     else:
         kwargs["image_size_limit"] = FIGURE_MIN_SIZE_RATIO
 
-    # NOTE: pymupdf4llm 0.3.x ignores custom OCR callables passed via
-    # kwargs.  Scanned-page OCR is handled in _raw_text_extraction instead.
-    _get_ocr_function()  # log availability for diagnostics
+    ocr_fn = _get_ocr_function()
+    if ocr_fn:
+        kwargs["ocr"] = ocr_fn
 
     logger.info(
         f"Running {'layout' if _LAYOUT_MODE else 'legacy'} extraction on {file_path.name}"
     )
 
-    page_chunks = pymupdf4llm.to_markdown(str(file_path), **kwargs)
-
-    # Check whether the primary extraction produced usable text.
-    # pymupdf4llm can return near-empty pages when embedded image streams
-    # are corrupted (zlib errors) because the layout engine chokes on them.
-    total_text = sum(len(p.get("text", "")) for p in page_chunks)
-    if total_text >= 100:
-        return page_chunks
-
-    # Fallback 1: retry without image extraction — avoids zlib decode failures
-    logger.warning(
-        f"{file_path.name}: primary extraction produced only {total_text} chars "
-        "— retrying without image extraction"
-    )
-    fallback_kwargs = {
-        "page_chunks": True,
-        "write_images": False,
-        "force_text": True,
-    }
-    if _LAYOUT_MODE:
-        fallback_kwargs["table_strategy"] = ""
-
-    page_chunks = pymupdf4llm.to_markdown(str(file_path), **fallback_kwargs)
-    total_text = sum(len(p.get("text", "")) for p in page_chunks)
-    if total_text >= 100:
-        logger.info(
-            f"{file_path.name}: fallback (no images) recovered {total_text} chars"
-        )
-        return page_chunks
-
-    # Fallback 2: raw pymupdf page-by-page text extraction as last resort
-    logger.warning(
-        f"{file_path.name}: pymupdf4llm fallback also too short ({total_text} chars) "
-        "— falling back to raw pymupdf text extraction"
-    )
-    return _raw_text_extraction(file_path)
+    return pymupdf4llm.to_markdown(doc, **kwargs)
 
 
-def _raw_text_extraction(file_path: Path) -> list[dict]:
-    """Last-resort extraction using pymupdf's basic text layer.
+def _open_and_auth(file_path: Path):
+    """Open a PDF and authenticate with an empty owner password.
 
-    Bypasses pymupdf4llm entirely and returns a minimal page_chunks structure
-    compatible with the rest of the pipeline.  When the text layer is empty
-    (scanned/image-only PDFs), pages are rendered to images and processed
-    with RapidOCR so the pipeline can still produce usable output.
+    Some publisher PDFs set owner restrictions that block text
+    extraction.  Calling ``authenticate("")`` unlocks them when no
+    user password is required.
     """
+    import pymupdf
+
     doc = pymupdf.open(str(file_path))
+    if doc.is_encrypted:
+        doc.authenticate("")
+    return doc
+
+
+def _run_plain_text_extraction(file_path: Path) -> list[dict]:
+    """Fallback: extract text page-by-page with pymupdf when layout mode fails.
+
+    Some PDFs have corrupt compressed streams that break pymupdf4llm's
+    layout analysis but still yield text via the simpler get_text() path.
+    Also handles PDFs with null-character text (broken ToUnicode CMaps)
+    by stripping non-printable characters.
+    """
+    doc = _open_and_auth(file_path)
     page_chunks: list[dict] = []
-    for page_num, page in enumerate(doc):
-        text = page.get_text("text")
-        page_chunks.append({
-            "metadata": {"page": page_num},
-            "text": text,
-            "tables": [],
-            "images": [],
-            "toc_items": [],
-            "page_boxes": [],
-        })
-    total = sum(len(p["text"]) for p in page_chunks)
-    doc.close()
-    logger.info(
-        f"{file_path.name}: raw extraction produced {total} chars "
-        f"across {len(page_chunks)} pages"
-    )
-
-    # If raw text extraction also failed, try OCR on rendered page images.
-    if total < 100:
-        page_chunks = _ocr_page_images(file_path, page_chunks)
-
-    return page_chunks
-
-
-def _ocr_single_page(ocr_engine, page) -> str:
-    """Render one PDF page to an image and return OCR'd text."""
-    pix = page.get_pixmap(dpi=300)
-    img_bytes = pix.tobytes("png")
-    result, _ = ocr_engine(img_bytes)
-    if not result:
-        return ""
-    lines = [line[1] for line in result if line and len(line) > 1]
-    return "\n".join(lines)
-
-
-def _ocr_page_images(
-    file_path: Path, page_chunks: list[dict]
-) -> list[dict]:
-    """Render each page to an image and run RapidOCR to extract text.
-
-    This is the final fallback for scanned or image-only PDFs where
-    pymupdf's text layer is empty.  RapidOCR uses ONNX Runtime and
-    does not require Tesseract.
-    """
+    raw_total = 0
     try:
-        from rapidocr_onnxruntime import RapidOCR
-    except ImportError:
-        logger.warning(
-            f"{file_path.name}: RapidOCR not installed — cannot OCR scanned pages"
-        )
-        return page_chunks
-
-    ocr_engine = RapidOCR()
-    doc = pymupdf.open(str(file_path))
-    ocr_total = 0
-
-    try:
-        for idx, page_data in enumerate(page_chunks):
-            if idx >= len(doc):
-                break
-            text = _ocr_single_page(ocr_engine, doc[idx])
-            page_data["text"] = text
-            ocr_total += len(text)
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text = page.get_text("text") or ""
+            raw_total += len(text)
+            # Strip null and non-printable control characters that broken
+            # ToUnicode CMaps produce — they look like 0-length after strip()
+            cleaned = text.translate(_CTRL_CHAR_TABLE).strip()
+            page_chunks.append({
+                "metadata": {"page": page_num},
+                "text": cleaned,
+                "images": [],
+                "tables": [],
+                "toc_items": [],
+                "page_boxes": [],
+            })
     finally:
         doc.close()
 
+    total_chars = sum(len(p["text"]) for p in page_chunks)
     logger.info(
-        f"{file_path.name}: OCR fallback produced {ocr_total} chars "
-        f"across {len(page_chunks)} pages"
+        f"Plain-text fallback extracted {total_chars} chars "
+        f"(raw={raw_total}) from {len(page_chunks)} pages of {file_path.name}"
     )
     return page_chunks
 
+
+def _run_ocr_extraction(file_path: Path) -> list[dict]:
+    """Last-resort fallback: render pages as images and OCR them.
+
+    Used when both pymupdf4llm and plain get_text() fail — typically
+    for scanned or image-only PDFs without an embedded text layer.
+    """
+    import tempfile
+
+    ocr_fn = _get_ocr_function()
+    if not ocr_fn:
+        logger.warning("OCR not available — cannot extract text from image-only PDF")
+        return []
+
+    doc = _open_and_auth(file_path)
+    page_chunks: list[dict] = []
+    try:
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            # Render page to image at moderate DPI for OCR accuracy vs speed
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+
+            # Write temp image for OCR engine
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp.write(img_bytes)
+                tmp_path = tmp.name
+
+            try:
+                text = ocr_fn(tmp_path) or ""
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+
+            page_chunks.append({
+                "metadata": {"page": page_num},
+                "text": text.strip(),
+                "images": [],
+                "tables": [],
+                "toc_items": [],
+                "page_boxes": [],
+            })
+    finally:
+        doc.close()
+
+    total_chars = sum(len(p["text"]) for p in page_chunks)
+    logger.info(
+        f"OCR fallback extracted {total_chars} chars "
+        f"from {len(page_chunks)} pages of {file_path.name}"
+    )
+    return page_chunks
+
+
+_MIN_EXTRACTED_CHARS = 100
+
+# Translation table that maps C0/C1 control characters (except common
+# whitespace \t, \n, \r) to None — removes null bytes, BOM noise, and
+# other invisible chars that broken ToUnicode CMaps produce.
+_CTRL_CHAR_TABLE = str.maketrans(
+    "",
+    "",
+    "".join(
+        chr(c)
+        for c in range(0, 32)
+        if c not in (9, 10, 13)  # keep TAB, LF, CR
+    )
+    + "\x7f"  # DEL
+    + "".join(chr(c) for c in range(0x80, 0xA0)),  # C1 controls
+)
+
+
+def _diagnose_empty_extraction(file_path: Path) -> None:
+    """Log detailed per-page diagnostics when all extraction tiers fail.
+
+    Re-opens the PDF with error display enabled so C-level messages are
+    captured, then inspects fonts, images, raw text objects, and renders
+    the first page for visual inspection.
+    """
+    import pymupdf
+
+    # Temporarily re-enable C-library errors for diagnostic output
+    pymupdf.TOOLS.mupdf_display_errors(True)
+    try:
+        doc = pymupdf.open(str(file_path))
+        if doc.is_encrypted:
+            doc.authenticate("")
+
+        logger.error(
+            f"ZERO-EXTRACTION DIAGNOSTIC for {file_path.name}: "
+            f"pages={len(doc)}, encrypted={doc.is_encrypted}, "
+            f"permissions={doc.permissions}"
+        )
+
+        for page_num in range(min(3, len(doc))):
+            page = doc[page_num]
+            raw_text = page.get_text("text") or ""
+            words = page.get_text("words") or []
+            fonts = page.get_fonts()
+            images = page.get_images()
+            raw_dict = page.get_text("rawdict") or {}
+            blocks = raw_dict.get("blocks", [])
+            text_blocks = [b for b in blocks if b.get("type") == 0]
+            img_blocks = [b for b in blocks if b.get("type") == 1]
+
+            # Check for null-heavy text
+            null_count = raw_text.count("\x00")
+            printable = sum(1 for c in raw_text if c.isprintable() or c in "\n\t\r")
+
+            logger.error(
+                f"  Page {page_num}: raw_len={len(raw_text)}, "
+                f"null_chars={null_count}, printable={printable}, "
+                f"words={len(words)}, fonts={len(fonts)}, "
+                f"images={len(images)}, text_blocks={len(text_blocks)}, "
+                f"img_blocks={len(img_blocks)}"
+            )
+
+            # Log first font names for encoding diagnosis
+            if fonts:
+                font_names = [f[3] for f in fonts[:5]]
+                logger.error(f"    Fonts: {font_names}")
+
+            # Show raw text sample (including non-printable chars)
+            if raw_text:
+                logger.error(f"    Raw text sample: {raw_text[:200]!r}")
+
+        # Render first page and save diagnostic image
+        if len(doc) > 0:
+            pix = doc[0].get_pixmap(dpi=72)
+            diag_dir = file_path.parent
+            diag_path = diag_dir / f"_diag_{file_path.stem}_p0.png"
+            pix.save(str(diag_path))
+            logger.error(
+                f"  Diagnostic render saved: {diag_path} "
+                f"({pix.width}x{pix.height}, alpha={pix.alpha})"
+            )
+
+        doc.close()
+    except Exception as exc:
+        logger.error(f"Diagnostic inspection failed: {exc}")
+    finally:
+        pymupdf.TOOLS.mupdf_display_errors(False)
+
+
+def _extract_with_fallback(file_path: Path, figure_dir: Path) -> list[dict]:
+    """Three-tier extraction: layout → plain text → OCR.
+
+    Each tier is tried only when the previous yields fewer than
+    _MIN_EXTRACTED_CHARS characters of combined text.
+    """
+    # Tier 1: pymupdf4llm layout extraction (best quality)
+    try:
+        page_chunks = _run_layout_extraction(file_path, figure_dir)
+        total = sum(len(p.get("text", "")) for p in page_chunks)
+        if total >= _MIN_EXTRACTED_CHARS:
+            return page_chunks
+        logger.warning(
+            f"Layout extraction yielded only {total} chars for "
+            f"{file_path.name} — trying plain-text fallback"
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Layout extraction failed for {file_path.name}: {exc} "
+            f"— trying plain-text fallback"
+        )
+
+    # Tier 2: plain pymupdf get_text() (handles some corrupt-stream PDFs)
+    try:
+        page_chunks = _run_plain_text_extraction(file_path)
+        total = sum(len(p.get("text", "")) for p in page_chunks)
+        if total >= _MIN_EXTRACTED_CHARS:
+            return page_chunks
+        logger.warning(
+            f"Plain-text extraction yielded only {total} chars for "
+            f"{file_path.name} — trying OCR fallback"
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Plain-text extraction failed for {file_path.name}: {exc} "
+            f"— trying OCR fallback"
+        )
+
+    # Tier 3: render-to-image + OCR (handles scanned/image-only PDFs)
+    try:
+        page_chunks = _run_ocr_extraction(file_path)
+        total = sum(len(p.get("text", "")) for p in page_chunks)
+        if total >= _MIN_EXTRACTED_CHARS:
+            logger.info(f"OCR fallback succeeded for {file_path.name}")
+            return page_chunks
+    except Exception as exc:
+        logger.error(f"OCR extraction also failed for {file_path.name}: {exc}")
+
+    # All tiers failed — run detailed diagnostics for debugging
+    _diagnose_empty_extraction(file_path)
+    return []
 
 def _assemble_document(
     file_path: Path,
@@ -503,7 +636,9 @@ def _assemble_document(
     if not md_text or len(md_text.strip()) < 100:
         raise PDFExtractionError(
             file_path.name,
-            "extracted text is too short — the PDF may be scanned or image-only",
+            "extracted text is too short — the PDF may be corrupted, "
+            "scanned, or image-only.  Try re-downloading the paper from "
+            "the publisher and uploading the fresh copy.",
         )
 
     figures = _extract_figures_from_pages(page_chunks, figure_dir)
@@ -540,16 +675,20 @@ def _assemble_document(
         layout_mode=_LAYOUT_MODE,
     )
 
-
 def extract_pdf(file_path: str | Path) -> ExtractedDocument:
     file_path = Path(file_path)
     if not file_path.exists():
+        import os
+        logger.error(
+            f"PDF not found: {file_path} (cwd={os.getcwd()}, "
+            f"resolved={file_path.resolve()})"
+        )
         raise PDFExtractionError(file_path.name, "file not found")
 
     try:
         page_count, pdf_metadata = _validate_pdf(file_path)
         figure_dir = _ensure_figure_dir(file_path)
-        page_chunks = _run_layout_extraction(file_path, figure_dir)
+        page_chunks = _extract_with_fallback(file_path, figure_dir)
         return _assemble_document(file_path, page_chunks, page_count, figure_dir, pdf_metadata)
 
     except PDFExtractionError:

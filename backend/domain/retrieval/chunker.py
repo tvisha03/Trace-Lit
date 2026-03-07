@@ -142,11 +142,17 @@ def _split_large_paragraph(
     start_idx: int,
     paper_id: str | None = None,
 ) -> list[Chunk]:
+    """Split oversized paragraphs into target-sized chunks with 2-sentence overlap.
+
+    Overlap ensures boundary sentences appear in adjacent chunks, improving
+    HAVF confidence scores for sentences near chunk edges.
+    """
     sentences = split_into_sentences(text)
     chunks: list[Chunk] = []
     current_sentences: list[str] = []
     current_tokens = 0
     idx_offset = 0
+    overlap_sentences: list[str] = []
 
     for sentence in sentences:
         s_tokens = estimate_tokens(sentence)
@@ -156,8 +162,10 @@ def _split_large_paragraph(
             chunk = _build_chunk(combined, section_title, paper_title, start_idx + idx_offset, paper_id)
             chunks.append(chunk)
             idx_offset += 1
-            current_sentences = []
-            current_tokens = 0
+            # Carry last 2 sentences into the next chunk for overlap
+            overlap_sentences = current_sentences[-2:]
+            current_sentences = list(overlap_sentences)
+            current_tokens = sum(estimate_tokens(s) for s in current_sentences)
 
         current_sentences.append(sentence)
         current_tokens += s_tokens

@@ -36,18 +36,45 @@ def _filter_chunks_by_keywords(
     chunks: list[RetrievedChunk],
     keywords: list[str] | None,
 ) -> list[RetrievedChunk]:
+    """Filter retrieved chunks by keyword relevance.
+
+    Graceful fallback: if keyword filtering eliminates ALL chunks, return
+    the original unfiltered set so the LLM still has context to work with.
+    """
     if not keywords or not chunks:
         return chunks
-    lower_kw = [kw.lower() for kw in keywords]
-    return [c for c in chunks if any(kw in c.text.lower() for kw in lower_kw)]
+
+    # Strip whitespace and ignore empty / obviously-placeholder tokens
+    cleaned = [kw.strip().lower() for kw in keywords if kw.strip()]
+    if not cleaned:
+        return chunks
+
+    filtered = [c for c in chunks if any(kw in c.text.lower() for kw in cleaned)]
+
+    if not filtered:
+        logger.warning(
+            f"Keyword filter removed all {len(chunks)} chunks "
+            f"(keywords={keywords!r}) — falling back to unfiltered context"
+        )
+        return chunks
+
+    return filtered
 
 def _build_user_prompt(
     query_type: QueryType,
     query: str,
     chunks: list[RetrievedChunk],
     history: list,
+    metadata_prefix: str = "",
 ) -> str:
     context_block = build_context_block(chunks)
+    if metadata_prefix:
+        context_block = (
+            "=== Paper Overviews ===\n"
+            + metadata_prefix
+            + "\n\n=== Detailed Source Paragraphs ===\n"
+            + context_block
+        )
     history_block = build_history_block(history)
 
     if query_type == QueryType.COMPARISON:
@@ -136,8 +163,16 @@ async def generate_response(
         query, paper_ids, faiss_store, db_session, classification, keywords,
     )
 
+    # For comparison/summary queries, prepend paper metadata (abstracts,
+    # titles) so the LLM has overview context even when FAISS retrieves
+    # only narrow technical paragraphs.
+    metadata_prefix = ""
+    if classification.query_type in (QueryType.COMPARISON, QueryType.SUMMARY):
+        metadata_prefix = await _gather_paper_metadata(paper_ids, db_session)
+
     user_prompt = _build_user_prompt(
         classification.query_type, query, chunks, history,
+        metadata_prefix=metadata_prefix,
     )
 
     with timer("LLM generation"):
@@ -149,6 +184,8 @@ async def generate_response(
     if not response_text or not response_text.strip():
         from shared.errors import EmptyResponseError
         raise EmptyResponseError(provider.value)
+
+    logger.debug(f"Raw LLM response (first 500 chars): {response_text[:500]!r}")
 
     havf_results = await _verify_response_with_settings(response_text, chunks)
     latency_ms = (time.perf_counter() - start) * 1000

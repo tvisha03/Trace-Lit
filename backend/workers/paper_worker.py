@@ -5,6 +5,7 @@ from infrastructure.vector_store.faiss_store import FAISSStore
 from infrastructure.llm.fallback_chain import FallbackChain
 from shared.logger import get_logger
 
+import gc
 import time
 
 logger = get_logger(__name__)
@@ -86,6 +87,9 @@ async def paper_job_processor(job: PaperJob):
         except Exception:
             await db.rollback()
             raise
+        finally:
+            # Explicitly reclaim memory after heavy paper processing (~50-200 MB)
+            gc.collect()
 
 def create_paper_queue() -> SmartPaperQueue:
     queue = SmartPaperQueue()

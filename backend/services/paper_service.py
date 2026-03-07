@@ -13,7 +13,7 @@ from domain.retrieval.chunker import (
     create_table_chunks,
     create_formula_chunks,
 )
-from domain.retrieval.indexer import index_chunks
+from domain.retrieval.indexer import index_chunks, compute_sentence_embeddings
 from infrastructure.db.crud.paper_crud import (
     create_paper,
     update_paper_status,
@@ -27,9 +27,9 @@ from shared.enums import PaperStatus, ChunkType
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
 from shared.constants import VISION_TABLE_KEYWORDS, VISION_FORMULA_KEYWORDS
+from app.config import get_settings
 
 logger = get_logger(__name__)
-
 
 async def register_paper(
     db: AsyncSession,
@@ -49,7 +49,6 @@ async def register_paper(
     )
     return str(paper.id)
 
-
 async def _update_status_with_progress(
     db: AsyncSession,
     paper_id: str,
@@ -61,7 +60,6 @@ async def _update_status_with_progress(
     await update_paper_status(db, paper_id, status, progress=progress, **kwargs)
     if progress_callback:
         await progress_callback(progress)
-
 
 async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
     with timer(f"Extract {paper.filename}"):
@@ -81,7 +79,6 @@ async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
 
     return extracted, sections, metadata
 
-
 async def _analyze_paper_figures(extracted, llm_chain: FallbackChain | None):
     if not extracted.figures or llm_chain is None:
         return []
@@ -89,8 +86,12 @@ async def _analyze_paper_figures(extracted, llm_chain: FallbackChain | None):
     analyzed = await analyze_figures(extracted.figures, llm_chain)
     return analyzed
 
-
-async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
+async def _persist_chunks_with_retry(
+    db: AsyncSession,
+    chunks,
+    paper_id: str,
+    sentence_embeddings_map: dict[str, bytes] | None = None,
+):
     chunk_records = [
         {
             "id": str(uuid.uuid4()),
@@ -104,6 +105,11 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
             "token_count": c.token_count,
             "chunk_type": c.chunk_type.value if hasattr(c.chunk_type, "value") else str(c.chunk_type),
             "image_path": getattr(c, "image_path", None),
+            "sentence_embeddings": (
+                sentence_embeddings_map.get(c.paragraph_id)
+                if sentence_embeddings_map
+                else None
+            ),
         }
         for c in chunks
     ]
@@ -124,14 +130,24 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
             import asyncio
             await asyncio.sleep(0.5 * attempt)
 
+def _is_safe_to_delete(file_path: "Path") -> bool:
+    """Only allow deletion of files inside the configured uploads directory.
+
+    Prevents accidental deletion of user files outside the project
+    (e.g. when Postman stores the full filesystem path as the filename
+    and that raw path ends up in the database).
+    """
+    from pathlib import Path
+
+    uploads_dir = Path(get_settings().UPLOADS_DIR).resolve()
+    try:
+        resolved = file_path.resolve()
+        return resolved.is_relative_to(uploads_dir)
+    except (OSError, ValueError):
+        return False
+
 
 async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
-    """Clean up all resources after processing failure.
-
-    MED-004: This ensures transaction-like cleanup when chunking fails partway through.
-    Removes both the uploaded file AND any partial chunks that may have been created.
-    """
-    # Clean up any partial chunks that may have been created before failure
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     try:
         await delete_chunks_by_paper(db, paper_id)
@@ -139,19 +155,22 @@ async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
     except Exception as exc:
         logger.warning(f"Could not clean up chunks for {paper_id}: {exc}")
 
-    # Clean up the uploaded file
     try:
         paper = await get_paper(db, paper_id)
         if paper and paper.file_path:
             from pathlib import Path
 
             file_path = Path(paper.file_path)
+            if not _is_safe_to_delete(file_path):
+                logger.warning(
+                    f"Refusing to delete file outside uploads directory: {file_path}"
+                )
+                return
             if file_path.exists():
                 file_path.unlink()
                 logger.info(f"Cleaned up orphaned upload after failure: {file_path}")
     except Exception as exc:
         logger.warning(f"Could not clean up upload for {paper_id}: {exc}")
-
 
 def _classify_figure(fig) -> ChunkType:
     fig_type = (getattr(fig, "figure_type", "") or "").lower()
@@ -160,7 +179,6 @@ def _classify_figure(fig) -> ChunkType:
     if any(kw in fig_type for kw in VISION_FORMULA_KEYWORDS):
         return ChunkType.FORMULA
     return ChunkType.FIGURE
-
 
 def _partition_analyzed_figures(analyzed_figures: list) -> tuple[list, list, list]:
     figures = []
@@ -176,7 +194,6 @@ def _partition_analyzed_figures(analyzed_figures: list) -> tuple[list, list, lis
             figures.append(fig)
     return figures, table_figs, formula_figs
 
-
 def _vision_figs_to_tables(table_figs: list) -> list:
     if not table_figs:
         return []
@@ -190,7 +207,6 @@ def _vision_figs_to_tables(table_figs: list) -> list:
         for fig in table_figs
     ]
 
-
 def _vision_figs_to_formulas(formula_figs: list) -> list:
     if not formula_figs:
         return []
@@ -203,7 +219,6 @@ def _vision_figs_to_formulas(formula_figs: list) -> list:
         )
         for fig in formula_figs
     ]
-
 
 def _assemble_typed_chunks(
     chunks: list,
@@ -239,7 +254,6 @@ def _assemble_typed_chunks(
 
     return chunks
 
-
 async def _chunk_and_index_paper(
     db: AsyncSession,
     faiss_store: FAISSStore,
@@ -264,14 +278,17 @@ async def _chunk_and_index_paper(
         paper_id=paper_id,
     )
 
-    await _persist_chunks_with_retry(db, chunks, paper_id)
+    # Pre-compute per-sentence embeddings for HAVF cache (LAT-1 optimisation)
+    with timer(f"Compute sentence embeddings for {paper.filename}"):
+        sentence_embeddings_map = compute_sentence_embeddings(chunks)
+
+    await _persist_chunks_with_retry(db, chunks, paper_id, sentence_embeddings_map)
 
     with timer(f"Index {paper.filename}"):
         await index_chunks(chunks, paper_id, faiss_store)
 
     await db.commit()
     return len(chunks)
-
 
 async def _run_extraction_phase(
     paper_id: str,
@@ -304,7 +321,6 @@ async def _run_extraction_phase(
     analyzed_figures = await _analyze_paper_figures(extracted, llm_chain)
     return sections, metadata, analyzed_figures, extracted.tables, extracted.formulas
 
-
 async def _run_chunking_phase(
     paper_id: str,
     db: AsyncSession,
@@ -332,7 +348,6 @@ async def _run_chunking_phase(
     )
 
     return chunk_count
-
 
 async def _execute_paper_processing(
     paper_id: str,
@@ -371,7 +386,6 @@ async def _execute_paper_processing(
         f"({fig_count} figures, {tbl_count} tables, {eq_count} formulas)"
     )
 
-
 async def process_paper(
     paper_id: str,
     db: AsyncSession,
@@ -408,25 +422,68 @@ async def process_paper(
         await _cleanup_after_failure(paper_id, db)
         raise
 
-
 async def get_session_papers(
     db: AsyncSession, session_id: str, status: PaperStatus | None = None
 ):
     return await get_papers_by_session(db, session_id, status=status)
-
 
 async def mark_paper_failed(db: AsyncSession, paper_id: str, reason: str) -> None:
     await update_paper_status(
         db, paper_id, PaperStatus.FAILED, error_message=reason[:500]
     )
 
-
 async def _collect_paper_image_paths(paper_id: str, db: AsyncSession) -> list[str]:
-    """Return all on-disk image paths recorded for a paper's chunks."""
     from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
     chunks = await get_chunks_by_paper(db, paper_id)
     return [c.image_path for c in chunks if c.image_path]
 
+def _remove_paper_from_faiss(
+    paper_id: str,
+    faiss_store: FAISSStore,
+) -> None:
+    try:
+        faiss_store.remove_paper(paper_id)
+        faiss_store.save()
+    except Exception as exc:
+        logger.warning(
+            f"FAISS removal for paper {paper_id} failed after DB delete — "
+            f"index will be reconciled on restart: {exc}"
+        )
+
+def _delete_paper_pdf(
+    paper_id: str,
+    pdf_path: "Path | None",
+) -> None:
+    from pathlib import Path
+
+    if not pdf_path:
+        return
+    if not _is_safe_to_delete(pdf_path):
+        logger.warning(
+            f"Refusing to delete file outside uploads directory: {pdf_path}"
+        )
+        return
+    try:
+        pdf_path.unlink(missing_ok=True)
+        logger.info(f"Deleted uploaded PDF for paper {paper_id}: {pdf_path}")
+    except Exception as exc:
+        logger.warning(f"Could not delete PDF for paper {paper_id}: {exc}")
+
+def _delete_paper_images(
+    paper_id: str,
+    image_paths: list[str],
+) -> None:
+    from pathlib import Path
+
+    deleted_images = 0
+    for img_str in image_paths:
+        try:
+            Path(img_str).unlink(missing_ok=True)
+            deleted_images += 1
+        except Exception as exc:
+            logger.warning(f"Could not delete image {img_str}: {exc}")
+    if deleted_images:
+        logger.info(f"Deleted {deleted_images} figure image(s) for paper {paper_id}")
 
 async def delete_paper(
     paper_id: str,
@@ -437,7 +494,6 @@ async def delete_paper(
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     from infrastructure.db.crud.paper_crud import delete_paper as db_delete_paper
 
-    # Gather on-disk paths before removing DB rows so we know what to clean up.
     paper = await get_paper(db, paper_id)
     if not paper:
         return False
@@ -447,34 +503,9 @@ async def delete_paper(
     await delete_chunks_by_paper(db, paper_id)
     await db_delete_paper(db, paper_id)
 
-    # Remove FAISS vectors — log but don't raise; index reconciles on restart.
-    try:
-        faiss_store.remove_paper(paper_id)
-        faiss_store.save()
-    except Exception as exc:
-        logger.warning(
-            f"FAISS removal for paper {paper_id} failed after DB delete — "
-            f"index will be reconciled on restart: {exc}"
-        )
-
-    # Delete uploaded PDF file.
-    if pdf_path:
-        try:
-            pdf_path.unlink(missing_ok=True)
-            logger.info(f"Deleted uploaded PDF for paper {paper_id}: {pdf_path}")
-        except Exception as exc:
-            logger.warning(f"Could not delete PDF for paper {paper_id}: {exc}")
-
-    # Delete figure/chart images extracted from this paper.
-    deleted_images = 0
-    for img_str in image_paths:
-        try:
-            Path(img_str).unlink(missing_ok=True)
-            deleted_images += 1
-        except Exception as exc:
-            logger.warning(f"Could not delete image {img_str}: {exc}")
-    if deleted_images:
-        logger.info(f"Deleted {deleted_images} figure image(s) for paper {paper_id}")
+    _remove_paper_from_faiss(paper_id, faiss_store)
+    _delete_paper_pdf(paper_id, pdf_path)
+    _delete_paper_images(paper_id, image_paths)
 
     return True
 

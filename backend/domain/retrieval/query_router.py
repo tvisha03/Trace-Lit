@@ -140,7 +140,7 @@ def classify_query(
     return classification
 
 _ROUTING_HINTS: dict[QueryType, tuple[int, bool]] = {
-    QueryType.COMPARISON: (3, True),
+    QueryType.COMPARISON: (10, True),
     QueryType.SUMMARY: (15, False),
     QueryType.MULTI_HOP: (6, False),
     QueryType.METADATA: (0, False),

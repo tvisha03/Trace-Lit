@@ -107,7 +107,13 @@ class FAISSStore:
             logger.warning("search called with empty paper_ids list - returning empty results")
             return []
 
-        total_k = min(self._index.ntotal, top_k_per_paper * len(paper_ids) * 2)
+        # Use a generous total_k to ensure target papers appear even when the
+        # index contains many vectors from other sessions.  A 2x multiplier is
+        # too small when target papers are a small fraction of the index.
+        total_k = min(
+            self._index.ntotal,
+            max(top_k_per_paper * len(paper_ids) * 10, 200),
+        )
         query = query_vector.reshape(1, -1).astype(np.float32)
 
         with self._lock:

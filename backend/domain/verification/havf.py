@@ -1,16 +1,10 @@
-
 import asyncio
 import re
 from dataclasses import dataclass
-
 from domain.verification.embedding_verifier import verify_claims_embedding
+from domain.verification.noise_filter import clean_source_text, is_noise_source
 from domain.verification.reranker import rerank_claims
-from shared.constants import (
-    HAVF_HIGH_THRESHOLD,
-    HAVF_MEDIUM_THRESHOLD,
-    HAVF_CROSS_ENCODER_THRESHOLD,
-    HAVF_SHORT_SENTENCE_WORDS as _DEFAULT_SHORT_WORDS,  # Default fallback
-)
+from app.config import get_settings
 from shared.enums import ConfidenceLevel, VerificationMethod
 from shared.utils.text_utils import split_into_sentences
 from shared.logger import get_logger
@@ -18,36 +12,149 @@ from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
 
-# Minimum word count for a source sentence to be used in verification.
-# Sentences shorter than this are typically bibliography fragments, date stamps,
-# or other noise (e.g. "B.", "- [400] S.", "Accessed: 2025-05-15.")
-_MIN_SOURCE_SENTENCE_WORDS: int = 5
-
-# Inline image markdown pattern: ![alt](url) — from formula/figure extraction.
-_IMG_MD_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
-
-# Pattern for paragraph-id citation tags emitted by the LLM.
-# Format: [<8-hex-chars>_<type><digits>] where type ∈ {P, T, F, E}.
-# Example: [e35139f3_T100], [1d91788c_P354], [fa79fa43_E917]
 _CITATION_ID_RE = re.compile(r"\[([a-f0-9]{8}_[PTFE]\d+)\]")
+_MD_BOLD_RE = re.compile(r"\*{1,3}(.+?)\*{1,3}")
+_MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_MD_LIST_RE = re.compile(r"^[\s]*[-*+]\s+", re.MULTILINE)
+_MD_NUM_LIST_RE = re.compile(r"^[\s]*\d+\.\s+", re.MULTILINE)
+_NON_TEXT_PREFIXES = frozenset({"F", "T", "E"})
+
+_BRACKET_METADATA_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")
+_CAPTION_EXTRACT_RE = re.compile(r"\[Caption:\s*(.+?)\]")
+_TABLE_DESC_LINE_RE = re.compile(
+    r"This (?:table|figure) is from the paper\s*'.+?'\.\s*"
+    r"(?:It presents:.*?\.)?\s*"
+    r"(?:The table contains.*?columns\.)?\s*",
+    re.IGNORECASE,
+)
+_TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
+_MAX_DISPLAY_CHARS = 300
+
+def _clean_table_source(stripped: str, caption: str | None) -> str:
+    stripped = _TABLE_DESC_LINE_RE.sub("", stripped).strip()
+    if caption:
+        header_row = _find_first_table_header(stripped)
+        return f"{caption}\n{header_row}" if header_row else caption
+    lines = stripped.split("\n")
+    return lines[0].strip() if lines else stripped
+
+
+def _clean_figure_source(stripped: str, caption: str | None) -> str:
+    if caption:
+        return _MD_BOLD_RE.sub(r"\1", caption)
+    lines = stripped.split("\n")
+    return lines[0].strip() if lines else stripped
+
+
+def _clean_formula_source(stripped: str) -> str:
+    lines = stripped.split("\n")
+    meaningful = [
+        ln.strip() for ln in lines
+        if ln.strip() and not ln.strip().startswith("##")
+    ]
+    return " ".join(meaningful[:2])
+
+
+_CHUNK_SOURCE_CLEANERS = {
+    "table": _clean_table_source,
+    "figure": _clean_figure_source,
+}
+
+
+def _clean_source_for_display(
+    source_text: str | None,
+    chunk_type: str | None,
+) -> str | None:
+    if not source_text or chunk_type == "text" or chunk_type is None:
+        return source_text
+
+    caption_match = _CAPTION_EXTRACT_RE.search(source_text)
+    caption = caption_match.group(1).strip() if caption_match else None
+    stripped = _BRACKET_METADATA_RE.sub("", source_text).strip()
+
+    cleaner = _CHUNK_SOURCE_CLEANERS.get(chunk_type)
+    if cleaner:
+        result = cleaner(stripped, caption)
+    elif chunk_type == "formula":
+        result = _clean_formula_source(stripped)
+    else:
+        result = stripped
+
+    return _truncate_display(result, source_text)
+
+
+def _truncate_display(result: str, fallback: str) -> str:
+    if not result:
+        return fallback
+    if len(result) > _MAX_DISPLAY_CHARS:
+        return result[:_MAX_DISPLAY_CHARS].rstrip() + "..."
+    return result
+
+
+def _find_first_table_header(text: str) -> str | None:
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("|") and not _TABLE_SEPARATOR_RE.match(line):
+            return line
+    return None
+
+
+def _postprocess_display_sources(
+    results: list["VerificationResult"],
+) -> list["VerificationResult"]:
+    return [
+        VerificationResult(
+            claim=r.claim,
+            confidence=r.confidence,
+            score=r.score,
+            source_sentence=_clean_source_for_display(
+                r.source_sentence, r.chunk_type,
+            ),
+            paragraph_id=r.paragraph_id,
+            paper_id=r.paper_id,
+            sentence_key=r.sentence_key,
+            verification_method=r.verification_method,
+            chunk_type=r.chunk_type,
+            citation_ref=r.citation_ref,
+        )
+        for r in results
+    ]
+
+
+def _is_non_text_paragraph(paragraph_id: str | None) -> bool:
+    if not paragraph_id:
+        return False
+    suffix = paragraph_id.split("_")[-1]
+    return suffix[:1] in _NON_TEXT_PREFIXES
+
+def _strip_markdown_for_claims(text: str) -> str:
+    text = _MD_BOLD_RE.sub(r"\1", text)
+    text = _MD_HEADING_RE.sub("", text)
+    text = _MD_LIST_RE.sub("", text)
+    text = _MD_NUM_LIST_RE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+def _split_into_verifiable_claims(text: str) -> list[str]:
+    cleaned = _strip_markdown_for_claims(text)
+    paragraphs = re.split(r"\n\s*\n", cleaned)
+    claims: list[str] = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        sentences = split_into_sentences(para)
+        claims.extend(sentences)
+    return [c for c in claims if c.strip()]
 
 
 def _extract_cited_para_id(claim: str) -> str | None:
-    """Return the first paragraph_id cited in *claim*, or None.
-
-    The LLM appends citations as ``[paper_prefix_TypeIdx]``; the first match
-    is the primary source the model claims to draw from.
-    """
     match = _CITATION_ID_RE.search(claim)
     return match.group(1) if match else None
 
-
 def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
-    """Map paragraph_id → first available source dict for citation lookup.
-
-    For tables/figures/formulas there is typically only one sentence (caption
-    or clean description), so the first entry found is the right one.
-    """
     index: dict[str, dict] = {}
     for src in source_sentences:
         pid = src.get("paragraph_id")
@@ -55,77 +162,39 @@ def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
             index[pid] = src
     return index
 
-
 def _apply_citation_correction(
     results: list["VerificationResult"],
     para_source_index: dict[str, dict],
 ) -> list["VerificationResult"]:
-    """Override source attribution when a claim cites a specific paragraph.
-
-    The global embedding verifier finds the *best-matching* sentence across all
-    sources, which can attribute a table-citing claim to a random text paragraph.
-    This pass corrects the record: if the claim has a ``[T#]``, ``[F#]``, or
-    ``[E#]`` tag *and* that chunk is present in the retrieved sources, we swap
-    the source attribution to the actual cited chunk while keeping the original
-    confidence score.
-    """
     corrected = []
     for result in results:
         cited_pid = _extract_cited_para_id(result.claim)
         if cited_pid and cited_pid in para_source_index:
             src = para_source_index[cited_pid]
             new_pid = src["paragraph_id"]
+            chunk_type = _chunk_type_from_paragraph_id(new_pid)
+
+            confidence = result.confidence
+            score = result.score
+            if chunk_type != "text" and _is_non_text_paragraph(new_pid):
+                if confidence == ConfidenceLevel.LOW:
+                    confidence = ConfidenceLevel.MEDIUM
+                score = max(score, 0.70)
+
             result = VerificationResult(
                 claim=result.claim,
-                confidence=result.confidence,
-                score=result.score,
+                confidence=confidence,
+                score=score,
                 source_sentence=src["text"],
                 paragraph_id=new_pid,
                 paper_id=src["paper_id"],
                 sentence_key=src["sentence_key"],
                 verification_method=result.verification_method,
-                chunk_type=_chunk_type_from_paragraph_id(new_pid),
+                chunk_type=chunk_type,
                 citation_ref=new_pid.split("_")[-1] if new_pid else None,
             )
         corrected.append(result)
     return corrected
-
-
-def _is_noise_source(text: str) -> bool:
-    """Return True for sentences that should not be used as verification sources.
-
-    Filters out:
-    - Very short entries (< _MIN_SOURCE_SENTENCE_WORDS words)
-    - Bibliography list markers that start with "- [" (e.g. "- [43] Art of Problem …")
-    - Markdown table rows starting with "|…" (inline tables extracted from PDF text)
-    - Entries whose only real content is inline image markdown ``![alt](url)``
-      (these come from formula/figure chunks that embed file-system paths)
-    """
-    stripped = text.strip()
-    if len(stripped.split()) < _MIN_SOURCE_SENTENCE_WORDS:
-        return True
-    # Reference-list entries produced by markdown rendering of bibliography sections
-    if stripped.startswith("- ["):
-        return True
-    # Markdown table rows embedded in text chunks (e.g. "|**Model**|**Chat**|...")
-    # These are structural, not human-readable sentences.
-    if stripped.startswith("|"):
-        return True
-    # Strip inline image markdown and check if anything meaningful remains.
-    # A sentence like "![](data/uploads/…)" has no verifiable text content.
-    without_images = _IMG_MD_RE.sub("", stripped).strip()
-    if len(without_images.split()) < _MIN_SOURCE_SENTENCE_WORDS:
-        return True
-    return False
-
-
-def _get_short_sentence_threshold() -> int:
-    """Get the short sentence threshold from config, fallback to constants."""
-    try:
-        from app.config import get_settings
-        return get_settings().HAVF_SHORT_SENTENCE_WORDS
-    except Exception:
-        return _DEFAULT_SHORT_WORDS
 
 @dataclass
 class VerificationResult:
@@ -137,54 +206,96 @@ class VerificationResult:
     paper_id: str | None
     sentence_key: str | None
     verification_method: "VerificationMethod | None" = None
-    # Explicit content type derived from paragraph_id ("text", "figure", "table", "formula")
     chunk_type: str | None = None
-    # Human-readable citation reference matching the paragraph_id suffix (e.g. "F3", "T1", "E2", "P5")
     citation_ref: str | None = None
 
-
-# Maps the leading character of a paragraph_id suffix to its content-type string.
-# Keeps _chunk_type_from_paragraph_id branch-free for Codacy compliance.
 _PARAGRAPH_TYPE_MAP: dict[str, str] = {"F": "figure", "T": "table", "E": "formula"}
 
-
 def _chunk_type_from_paragraph_id(paragraph_id: str | None) -> str:
-    """Derive content type string from a paragraph_id.
-
-    paragraph_id format: ``{paper_id[:8]}_{TYPE}{idx}`` or bare ``{TYPE}{idx}``.
-    TYPE is one of P (text), F (figure), T (table), E (formula/equation).
-    Uses a dict lookup instead of chained if-checks to stay branch-free.
-    """
     if not paragraph_id:
         return "text"
-    # Take the last underscore-delimited segment; handles both prefixed and bare IDs.
     suffix = paragraph_id.split("_")[-1]
     return _PARAGRAPH_TYPE_MAP.get(suffix[:1], "text")
 
-def _extract_chunk_sources(chunk) -> list[dict]:
-    """Extract filtered source sentences from a single retrieved chunk.
+def _select_best_chunk_text(chunk) -> str:
+    full_text = getattr(chunk, "text", "") or ""
+    enriched_text = getattr(chunk, "enriched_text", "") or ""
+    if len(enriched_text) > len(full_text):
+        return enriched_text
+    return full_text
 
-    Uses getattr with defaults instead of ternary hasattr expressions to
-    avoid unnecessary complexity branches that confuse static analysis.
+
+def _should_add_source(cleaned: str, existing_texts: set[str]) -> bool:
+    return bool(cleaned and cleaned not in existing_texts and not is_noise_source(cleaned))
+
+
+def _add_non_text_source(sources: list[dict], chunk, para_id: str | None, paper_id: str | None) -> None:
+    if not _is_non_text_paragraph(para_id):
+        return
+    best_text = _select_best_chunk_text(chunk)
+    if len(best_text) <= 50:
+        return
+    cleaned = clean_source_text(best_text)
+    existing_texts = {s["text"] for s in sources}
+    if _should_add_source(cleaned, existing_texts):
+        sources.append({
+            "text": cleaned,
+            "paragraph_id": para_id,
+            "paper_id": paper_id,
+            "sentence_key": f"{para_id}_FULL" if para_id else None,
+        })
+
+def _extract_chunk_sources(chunk) -> list[dict]:
+    """Extract verifiable source sentences from a chunk.
+
+    When pre-computed sentence embeddings are available (LAT-1),
+    each source dict includes an 'embedding' key with the cached vector.
     """
     s_map = getattr(chunk, "sentence_map", {})
     if not isinstance(s_map, dict):
-        return []
+        s_map = {}
     raw_paper_id = getattr(chunk, "paper_id", None)
     paper_id = str(raw_paper_id) if raw_paper_id is not None else None
     para_id = getattr(chunk, "paragraph_id", None)
+
+    # Deserialise cached sentence embeddings if available
+    cached_vecs = _load_cached_embeddings(chunk, len(s_map))
+
     sources = []
-    for s_key, info in s_map.items():
-        text = info["text"]
-        if not _is_noise_source(text):
-            sources.append({
+    for idx, (s_key, info) in enumerate(s_map.items()):
+        text = clean_source_text(info["text"])
+        if not is_noise_source(text):
+            source = {
                 "text": text,
                 "paragraph_id": para_id,
                 "paper_id": paper_id,
                 "sentence_key": s_key,
-            })
+            }
+            if cached_vecs is not None and idx < len(cached_vecs):
+                source["embedding"] = cached_vecs[idx]
+            sources.append(source)
+    _add_non_text_source(sources, chunk, para_id, paper_id)
     return sources
 
+
+def _load_cached_embeddings(chunk, expected_count: int):
+    """Deserialise pre-computed sentence embeddings from a chunk BLOB.
+
+    Returns a numpy array of shape (n_sentences, 384) or None if unavailable.
+    """
+    import numpy as np
+    from shared.constants import EMBEDDING_DIMENSIONS
+
+    raw = getattr(chunk, "sentence_embeddings", None)
+    if raw is None:
+        return None
+    try:
+        vecs = np.frombuffer(raw, dtype=np.float32).reshape(-1, EMBEDDING_DIMENSIONS)
+        if len(vecs) >= expected_count:
+            return vecs
+        return None
+    except Exception:
+        return None
 
 def build_source_sentences(chunks: list) -> list[dict]:
     sources = []
@@ -192,70 +303,70 @@ def build_source_sentences(chunks: list) -> list[dict]:
         sources.extend(_extract_chunk_sources(chunk))
     return sources
 
+def _initialize_havf_thresholds(
+    high_threshold: float | None,
+    medium_threshold: float | None,
+    cross_encoder_threshold: float | None,
+    short_sentence_words: int | None,
+) -> tuple[float, float, float, int]:
+    settings = get_settings()
+    return (
+        high_threshold or settings.HAVF_HIGH_THRESHOLD,
+        medium_threshold or settings.HAVF_MEDIUM_THRESHOLD,
+        cross_encoder_threshold or settings.HAVF_CROSS_ENCODER_THRESHOLD,
+        short_sentence_words or settings.HAVF_SHORT_SENTENCE_WORDS,
+    )
+
 async def verify_response(
     generated_text: str,
     retrieved_chunks: list,
     *,
-    high_threshold: float = HAVF_HIGH_THRESHOLD,
-    medium_threshold: float = HAVF_MEDIUM_THRESHOLD,
-    cross_encoder_threshold: float = HAVF_CROSS_ENCODER_THRESHOLD,
-    short_sentence_words: int | None = None,  # MED-002: Allow override
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
+    cross_encoder_threshold: float | None = None,
+    short_sentence_words: int | None = None,
 ) -> list[VerificationResult]:
-    # MED-002: Use configurable threshold, default from settings
-    if short_sentence_words is None:
-        short_sentence_words = _get_short_sentence_threshold()
-
     with timer("HAVF verification"):
-        claims = split_into_sentences(generated_text)
+        h_thresh, m_thresh, ce_thresh, short_words = _initialize_havf_thresholds(
+            high_threshold, medium_threshold, cross_encoder_threshold, short_sentence_words
+        )
+        claims = _split_into_verifiable_claims(generated_text)
         source_sentences = build_source_sentences(retrieved_chunks)
-
+        logger.debug(
+            f"HAVF input: {len(retrieved_chunks)} chunks, "
+            f"{len(claims)} claims, {len(source_sentences)} source_sentences"
+        )
+        if not source_sentences and retrieved_chunks:
+            for i, chunk in enumerate(retrieved_chunks[:5]):
+                s_map = getattr(chunk, "sentence_map", "MISSING")
+                logger.debug(
+                    f"  Chunk {i}: para={getattr(chunk, 'paragraph_id', '?')}, "
+                    f"sentence_map type={type(s_map).__name__}, "
+                    f"len={len(s_map) if isinstance(s_map, dict) else 'N/A'}, "
+                    f"chunk_type={getattr(chunk, 'chunk_type', '?')}"
+                )
         if not claims or not source_sentences:
             return _handle_missing_sources(claims)
-
-
-        # FIXED MED-003: Filter out short sentences that shouldn't be verified
-        # Short sentences (< 5 words) are often transitional phrases like "In contrast,"
-        # or "Furthermore," which don't need verification
-        short_claims, valid_claims = _filter_short_claims(claims, short_sentence_words)
-
-        # Handle short claims by marking them as SKIPPED with LOW confidence
+        short_claims, valid_claims = _filter_short_claims(claims, short_words)
         short_results = _create_skipped_results(short_claims)
-
-        # Only verify claims that have sufficient length
         if not valid_claims:
-            # All claims were too short - return skipped results
             return short_results
-
         level1_results = await asyncio.to_thread(
             verify_claims_embedding, valid_claims, source_sentences,
-            high_threshold=high_threshold,
-            medium_threshold=medium_threshold,
+            high_threshold=h_thresh,
+            medium_threshold=m_thresh,
         )
-
         results = await _process_verification_results(
-            level1_results, valid_claims, source_sentences, cross_encoder_threshold
+            level1_results, valid_claims, source_sentences, ce_thresh
         )
-
-        # Combine skipped results with verified results
         all_results = short_results + results
-
-        # Citation-aware correction: for claims that explicitly cite a paragraph
-        # (e.g. [1d91788c_T100]), override the embedding-matched source with the
-        # actual cited source so tables, figures, and formulas are always credited
-        # to their own chunk rather than the nearest text paragraph.
-        if source_sentences:
-            para_index = _build_para_source_index(source_sentences)
-            all_results = _apply_citation_correction(all_results, para_index)
-
+        para_index = _build_para_source_index(source_sentences)
+        all_results = _apply_citation_correction(all_results, para_index)
+        all_results = _postprocess_display_sources(all_results)
         _log_verification_summary(all_results)
         return all_results
 
-
 def _filter_short_claims(claims: list[str], short_sentence_threshold: int) -> tuple[list[str], list[str]]:
-    """Filter claims into short (< short_sentence_threshold) and valid claims.
-
-    Returns tuple of (short_claims, valid_claims).
-    """
     short_claims = []
     valid_claims = []
 
@@ -274,9 +385,7 @@ def _filter_short_claims(claims: list[str], short_sentence_threshold: int) -> tu
 
     return short_claims, valid_claims
 
-
 def _create_skipped_results(claims: list[str]) -> list[VerificationResult]:
-    """Create verification results for skipped (too short) claims."""
     return [
         VerificationResult(
             claim=c,
@@ -291,13 +400,7 @@ def _create_skipped_results(claims: list[str]) -> list[VerificationResult]:
         for c in claims
     ]
 
-
 def _handle_missing_sources(claims: list[str]) -> list[VerificationResult]:
-    """Return LOW confidence results when sources are unavailable or sentences are too short.
-
-    FIXED MED-003: Now handles both missing sources AND skipped short sentences.
-    Short sentences (< HAVF_SHORT_SENTENCE_WORDS words) are marked as SKIPPED with LOW confidence.
-    """
     if not claims:
         return []
 
@@ -320,14 +423,12 @@ def _handle_missing_sources(claims: list[str]) -> list[VerificationResult]:
         for c in claims
     ]
 
-
 async def _process_verification_results(
     level1_results: list,
     claims: list[str],
     source_sentences: list[dict],
     cross_encoder_threshold: float
 ) -> list[VerificationResult]:
-    """Execute Level 2 reranking for uncertain claims and build final results."""
     uncertain = [r for r in level1_results if r.get("needs_reranking")]
     resolved = [r for r in level1_results if not r.get("needs_reranking")]
 
@@ -341,13 +442,11 @@ async def _process_verification_results(
 
     return _build_final_results(claims, resolved, uncertain)
 
-
 def _build_final_results(
     claims: list[str],
     resolved: list,
     uncertain: list
 ) -> list[VerificationResult]:
-    """Assemble VerificationResult objects with appropriate confidence and method."""
     result_map = {r["claim"]: r for r in resolved}
     uncertain_claims = {r["claim"] for r in uncertain}
 
@@ -366,18 +465,15 @@ def _build_final_results(
             sentence_key=r.get("sentence_key"),
             verification_method=method,
             chunk_type=_chunk_type_from_paragraph_id(p_id),
-            # citation_ref is the type+index suffix, e.g. "F3", "T1", "E2", "P5"
             citation_ref=p_id.split("_")[-1] if p_id else None,
         ))
     return final
-
 
 def _determine_verification_method(
     claim: str,
     result: dict,
     uncertain_claims: set
 ) -> VerificationMethod:
-    """Determine which verification method produced the result."""
     if claim in uncertain_claims:
         return VerificationMethod.CROSS_ENCODER_RERANK
     elif result:
@@ -385,9 +481,7 @@ def _determine_verification_method(
     else:
         return VerificationMethod.SKIPPED
 
-
 def _log_verification_summary(results: list[VerificationResult]) -> None:
-    """Log aggregate verification statistics."""
     counts = {level: 0 for level in ConfidenceLevel}
     for v in results:
         counts[v.confidence] += 1

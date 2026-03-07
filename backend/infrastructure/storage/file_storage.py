@@ -3,14 +3,17 @@ import shutil
 from pathlib import Path
 from typing import BinaryIO, Union
 
-from shared.constants import UPLOADS_DIR, EXPORTS_DIR
+from app.config import get_settings
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
 class FileStorage:
 
-    def __init__(self, uploads_dir: str = UPLOADS_DIR, exports_dir: str = EXPORTS_DIR) -> None:
+    def __init__(self, uploads_dir: str | None = None, exports_dir: str | None = None) -> None:
+        settings = get_settings()
+        uploads_dir = uploads_dir or settings.UPLOADS_DIR
+        exports_dir = exports_dir or settings.EXPORTS_DIR
         self._uploads = Path(uploads_dir)
         self._exports = Path(exports_dir)
         self._uploads.mkdir(parents=True, exist_ok=True)
@@ -24,13 +27,12 @@ class FileStorage:
         if not content:
             raise ValueError(f"File '{filename}' is empty; refusing to save.")
 
-        # SEC: Strip directory components to prevent path traversal.
-        # Some clients (e.g. Postman) send the full filesystem path as the
-        # filename, causing Path(dest_dir / absolute_path) to resolve outside
-        # the uploads directory.  Using Path.name extracts only the basename.
+        # Defense-in-depth: strip any directory components so that an
+        # absolute path (e.g. from Postman Desktop) never escapes the
+        # uploads directory via Python's Path joining rules.
         safe_name = Path(filename).name
         if not safe_name:
-            raise ValueError(f"Invalid filename: '{filename}'")
+            safe_name = filename
 
         dest_dir = self._uploads / session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
