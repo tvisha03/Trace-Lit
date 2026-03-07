@@ -3,7 +3,6 @@ from pathlib import Path
 import re
 from shared.logger import get_logger
 from shared.errors import TraceLitError
-from shared.utils.export_media import prepare_cited_assets
 from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text
 
 logger = get_logger(__name__)
@@ -61,20 +60,37 @@ def _add_verification_section_latex(lines: list[str], havf_results: list) -> Non
     lines.append("")
 
 def _render_paragraphs_latex(lines: list[str], text: str) -> None:
+    bullet_open = False
     for block in build_export_blocks(text):
         if block.kind == "heading":
+            if bullet_open:
+                lines.append(r"\end{itemize}")
+                lines.append("")
+                bullet_open = False
             level = min(max(block.level, 1), 4)
             section_map = {1: "section", 2: "subsection", 3: "subsubsection", 4: "paragraph"}
             cmd = section_map[level]
             _append_paragraph(lines, rf"\{cmd}*{{{_latexify_plain_text(block.text)}}}")
         elif block.kind == "bullet":
-            lines.append(r"\begin{itemize}[leftmargin=1.5em,itemsep=2pt,parsep=0pt]")
+            if not bullet_open:
+                lines.append(r"\begin{itemize}[leftmargin=1.5em,itemsep=2pt,parsep=0pt]")
+                bullet_open = True
             lines.append(r"  \item " + _latexify_plain_text(block.text))
-            _append_paragraph(lines, r"\end{itemize}")
         elif block.kind == "table":
+            if bullet_open:
+                lines.append(r"\end{itemize}")
+                lines.append("")
+                bullet_open = False
             _render_table_latex(lines, block.headers, block.rows)
         else:
+            if bullet_open:
+                lines.append(r"\end{itemize}")
+                lines.append("")
+                bullet_open = False
             _append_paragraph(lines, r"\noindent " + _latexify_plain_text(inline_tokens_to_text(block.tokens)))
+    if bullet_open:
+        lines.append(r"\end{itemize}")
+        lines.append("")
 
 
 def _render_table_latex(lines: list[str], headers: list[str], rows: list[list[str]]) -> None:
@@ -103,10 +119,14 @@ def _asset_meta_line(asset: dict) -> str:
 
 
 def _append_asset_image_latex(lines: list[str], image_path: str | None) -> None:
-    if not image_path or not Path(image_path).exists():
+    if not image_path:
         return
 
-    image_target = str(Path(image_path)).replace("\\", "/").replace("_", r"\_")
+    if Path(image_path).exists():
+        image_target = str(Path(image_path)).replace("\\", "/")
+    else:
+        image_target = image_path.replace("\\", "/")
+    image_target = image_target.replace("_", r"\_")
     lines.append(r"\begin{center}")
     lines.append(r"\includegraphics[width=0.9\linewidth]{" + image_target + "}")
     lines.append(r"\end{center}")
@@ -122,9 +142,25 @@ def _extract_formula_body(text: str) -> str:
 
 def _render_asset_content_latex(lines: list[str], asset: dict) -> None:
     chunk_type = str(asset.get("chunk_type", "")).lower()
+    description = str(asset.get("description") or "").strip()
+    if description:
+        _render_paragraphs_latex(lines, description)
+        if chunk_type not in {"table", "formula"}:
+            return
+
     source = str(asset.get("raw_content") or asset.get("content", ""))
+    if chunk_type == "table" and asset.get("table_headers"):
+        _render_table_latex(
+            lines,
+            list(asset.get("table_headers") or []),
+            [list(row) for row in asset.get("table_rows") or []],
+        )
+        return
     if chunk_type == "formula":
-        formula_body = _extract_formula_body(source)
+        formula_source = str(asset.get("formula_text") or "").strip()
+        formula_body = _extract_formula_body(formula_source)
+        if not formula_body and formula_source:
+            formula_body = formula_source.strip().strip("$")
         if formula_body:
             lines.append(r"\[")
             lines.append(formula_body)
@@ -148,7 +184,8 @@ def _render_cited_media_latex(lines: list[str], cited_assets: list[dict]) -> Non
             _append_paragraph(lines, r"\textit{" + _latexify_plain_text(meta_line) + "}")
 
         _render_asset_content_latex(lines, asset)
-        _append_asset_image_latex(lines, asset.get("image_path"))
+        if str(asset.get("chunk_type", "")).lower() != "table":
+            _append_asset_image_latex(lines, asset.get("image_rel_path") or asset.get("image_path"))
 
 _LATEX_PREAMBLE = r"""\documentclass[11pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
@@ -177,7 +214,6 @@ def export_chat_to_latex(
 ) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     lines: list[str] = [_LATEX_PREAMBLE]
     lines.append(r"\title{" + _escape_latex(session_title) + "}")
@@ -206,8 +242,6 @@ def export_chat_to_latex(
         if havf_results:
             _add_verification_section_latex(lines, havf_results)
 
-    _render_cited_media_latex(lines, cited_assets)
-
     lines.append(r"\end{document}")
     lines.append("")
 
@@ -232,7 +266,6 @@ def export_comparison_to_latex(
 ) -> Path:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     lines: list[str] = [_LATEX_PREAMBLE]
     lines.append(r"\title{" + _escape_latex(title) + "}")
@@ -261,8 +294,6 @@ def export_comparison_to_latex(
         _render_table_latex(lines, headers, rows)
     else:
         _render_paragraphs_latex(lines, comparison_content)
-
-    _render_cited_media_latex(lines, cited_assets)
 
     lines.append(r"\end{document}")
     lines.append("")

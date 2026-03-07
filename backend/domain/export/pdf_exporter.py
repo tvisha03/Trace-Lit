@@ -14,6 +14,10 @@ logger = get_logger(__name__)
 
 _MAX_TEXT_CHARS = 50_000
 _DATE_FMT = "%B %d, %Y"
+_ACCENT_RGB = (47, 79, 111)
+_ACCENT_LIGHT_RGB = (232, 238, 244)
+_USER_RGB = (95, 95, 95)
+_ASSISTANT_RGB = (32, 76, 165)
 _PDF_FONT_CANDIDATES = [
     ("TraceLitUnicode", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
     ("TraceLitUnicode", "C:/Windows/Fonts/calibri.ttf", "C:/Windows/Fonts/calibrib.ttf"),
@@ -108,12 +112,12 @@ def _add_page_header(pdf, title: str) -> None:
     pdf.set_text_color(0, 0, 0)
 
 def _render_message_role(pdf, role: str) -> None:
-    _set_font(pdf, "B", 10)
-    if role == "ASSISTANT":
-        pdf.set_text_color(0, 51, 153)
-    else:
-        pdf.set_text_color(80, 80, 80)
-    pdf.cell(w=0, h=6, text=f"[{role}]", ln=True)
+    role_color = _ASSISTANT_RGB if role == "ASSISTANT" else _USER_RGB
+    _set_font(pdf, "B", 9)
+    pdf.set_fill_color(*role_color)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(w=28, h=6, text=f" {role} ", ln=True, fill=True)
+    pdf.ln(1)
     pdf.set_text_color(0, 0, 0)
 
 def _render_havf_results(pdf, havf_results: list[dict]) -> None:
@@ -151,27 +155,22 @@ def _render_havf_results(pdf, havf_results: list[dict]) -> None:
     pdf.set_text_color(0, 0, 0)
 
 def _render_message_separator(pdf) -> None:
-    pdf.set_draw_color(220, 220, 220)
+    pdf.set_draw_color(210, 217, 224)
     y = pdf.get_y()
-    pdf.line(20, y, 190, y)
-    pdf.ln(3)
+    pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+    pdf.ln(4)
 
 def _setup_pdf_title_and_date(pdf, title: str) -> None:
+    pdf.set_fill_color(*_ACCENT_RGB)
+    pdf.set_text_color(255, 255, 255)
     _set_font(pdf, "B", 16)
-    pdf.cell(
-        w=0, h=10,
-        text=sanitize_for_pdf(_truncate_text(title, 200)),
-        ln=True, align="C",
-    )
+    pdf.cell(w=0, h=11, text=sanitize_for_pdf(_truncate_text(title, 200)), ln=True, align="C", fill=True)
+    pdf.set_fill_color(*_ACCENT_LIGHT_RGB)
     _set_font(pdf, "", 9)
-    pdf.set_text_color(120, 120, 120)
-    pdf.cell(
-        w=0, h=5,
-        text=f"Exported on {datetime.now().strftime(_DATE_FMT)}",
-        ln=True, align="C",
-    )
+    pdf.set_text_color(70, 70, 70)
+    pdf.cell(w=0, h=7, text=f"Exported on {datetime.now().strftime(_DATE_FMT)}", ln=True, align="C", fill=True)
     pdf.set_text_color(0, 0, 0)
-    pdf.ln(4)
+    pdf.ln(5)
 
 def _add_papers_compared_section(pdf, paper_titles: list[str]) -> None:
     _set_font(pdf, "B", 12)
@@ -212,6 +211,37 @@ def _render_table_as_sections(pdf, headers: list[str], rows: list[list[str]]) ->
         pdf.ln(1)
 
 
+def _render_table_grid(pdf, headers: list[str], rows: list[list[str]]) -> None:
+    if not headers:
+        return
+
+    normalized_rows = []
+    for row in rows:
+        padded = row + [""] * max(0, len(headers) - len(row))
+        normalized_rows.append([sanitize_for_pdf(format_structured_text(cell)) for cell in padded[:len(headers)]])
+
+    available_width = pdf.w - pdf.l_margin - pdf.r_margin
+    col_width = available_width / max(len(headers), 1)
+    _set_font(pdf, "", 8)
+    try:
+        with pdf.table(
+            col_widths=[col_width] * len(headers),
+            line_height=4.2,
+            text_align="LEFT",
+            borders_layout="ALL",
+            width=available_width,
+        ) as table:
+            header_row = table.row()
+            for header in headers:
+                header_row.cell(sanitize_for_pdf(header))
+            for row in normalized_rows:
+                body_row = table.row()
+                for cell in row:
+                    body_row.cell(cell)
+    except Exception:
+        _render_table_as_sections(pdf, headers, rows)
+
+
 def _render_landscape_table(pdf, headers: list[str], rows: list[list[str]]) -> None:
     normalized_rows = []
     for row in rows:
@@ -250,7 +280,7 @@ def _render_blocks_pdf(pdf, blocks: list) -> None:
             _write_flowing_text(pdf, f"- {bullet_text}", 4.5)
             pdf.ln(4.5)
         elif block.kind == "table":
-            _render_table_as_sections(pdf, block.headers, block.rows)
+            _render_table_grid(pdf, block.headers, block.rows)
         else:
             _set_font(pdf, "", 9)
             paragraph = sanitize_for_pdf(_break_long_words(inline_tokens_to_text(block.tokens), max_word=42))
@@ -264,8 +294,9 @@ def _render_cited_assets_pdf(pdf, cited_assets: list[dict]) -> None:
 
     if pdf.page_no() > 0:
         pdf.add_page()
+    pdf.set_fill_color(*_ACCENT_LIGHT_RGB)
     _set_font(pdf, "B", 12)
-    pdf.cell(w=0, h=7, text="Cited Figures, Tables, and Formulas", ln=True)
+    pdf.cell(w=0, h=8, text="Cited Figures, Tables, and Formulas", ln=True, fill=True)
     pdf.ln(2)
 
     for asset in cited_assets:
@@ -282,15 +313,31 @@ def _render_cited_assets_pdf(pdf, cited_assets: list[dict]) -> None:
             _set_font(pdf, "I", 8)
             _safe_multi_cell(pdf, sanitize_for_pdf(" | ".join(part for part in meta_parts if part)), 4)
 
-        _render_blocks_pdf(pdf, build_export_blocks(str(asset.get("raw_content") or asset.get("content", ""))))
+        chunk_type = str(asset.get("chunk_type", "")).lower()
+        if chunk_type == "table" and asset.get("table_headers"):
+            description = str(asset.get("description") or "").strip()
+            if description:
+                _render_blocks_pdf(pdf, build_export_blocks(description))
+            _render_table_grid(
+                pdf,
+                list(asset.get("table_headers") or []),
+                [list(row) for row in asset.get("table_rows") or []],
+            )
+        else:
+            description = str(asset.get("description") or asset.get("raw_content") or asset.get("content", "")).strip()
+            if description:
+                _render_blocks_pdf(pdf, build_export_blocks(description))
 
-        image_path = asset.get("image_path")
-        if image_path and Path(image_path).exists():
-            try:
-                pdf.image(str(image_path), w=160)
-                pdf.ln(2)
-            except Exception:
-                pass
+            image_path = asset.get("image_path")
+            if image_path and Path(image_path).exists():
+                try:
+                    pdf.image(str(image_path), w=160)
+                    pdf.ln(2)
+                except Exception:
+                    pass
+            elif chunk_type == "formula" and asset.get("formula_text"):
+                _set_font(pdf, "", 9)
+                _safe_multi_cell(pdf, sanitize_for_pdf(str(asset.get("formula_text"))), 4.5)
 
         _render_message_separator(pdf)
 

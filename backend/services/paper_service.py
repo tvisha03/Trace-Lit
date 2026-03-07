@@ -214,27 +214,21 @@ def _assemble_typed_chunks(
     paper_title: str | None,
     paper_id: str,
 ) -> list:
-    pure_figures, table_figs, formula_figs = _partition_analyzed_figures(
-        analyzed_figures or []
-    )
-
-    if pure_figures:
+    if analyzed_figures:
         chunks.extend(create_figure_chunks(
-            pure_figures, paper_title=paper_title,
+            analyzed_figures, paper_title=paper_title,
             paper_id=paper_id, start_idx=len(chunks),
         ))
 
-    all_tables = (tables or []) + _vision_figs_to_tables(table_figs)
-    if all_tables:
+    if tables:
         chunks.extend(create_table_chunks(
-            all_tables, paper_title=paper_title,
+            tables, paper_title=paper_title,
             paper_id=paper_id, start_idx=len(chunks),
         ))
 
-    all_formulas = (formulas or []) + _vision_figs_to_formulas(formula_figs)
-    if all_formulas:
+    if formulas:
         chunks.extend(create_formula_chunks(
-            all_formulas, paper_title=paper_title,
+            formulas, paper_title=paper_title,
             paper_id=paper_id, start_idx=len(chunks),
         ))
 

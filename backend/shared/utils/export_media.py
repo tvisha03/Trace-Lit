@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import shutil
 from pathlib import Path
 
 from shared.utils.export_text import build_export_blocks, format_structured_text
@@ -9,6 +10,13 @@ from shared.utils.export_text import build_export_blocks, format_structured_text
 _FORMULA_PATTERN = re.compile(
     r"(\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$\$[\s\S]+?\$\$|\$[^$\n]+\$)"
 )
+_TABLE_SEPARATOR_RE = re.compile(r"^\|?[\s:]*-{2,}[\s:]*(?:\|[\s:]*-{2,}[\s:]*)+\|?\s*$")
+_LEGACY_PREFIX_RE = re.compile(
+    r"^(?:\[(?:Paper:|TABLE,|Caption:|Equation on page|Eq\.)[^\]]*\]\s*)+",
+    re.IGNORECASE,
+)
+_CITATION_TAG_RE = re.compile(r"\[(?:[a-f0-9]{1,8}_)?[PTFE]\d+(?:-S\d+)?\]")
+_FORMULA_SIGNAL_RE = re.compile(r"(?:\\[A-Za-z]+|[=<>^_{}]|[∑∏∫∂∇∞≈±÷√∀∃≤≥≠⊗])")
 _FONT_CANDIDATES = [
     "C:/Windows/Fonts/consola.ttf",
     "C:/Windows/Fonts/calibri.ttf",
@@ -16,9 +24,26 @@ _FONT_CANDIDATES = [
 ]
 
 
+def strip_export_citation_tags(text: str) -> str:
+    cleaned = _CITATION_TAG_RE.sub("", text or "")
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _strip_legacy_prefixes(text: str) -> str:
+    cleaned_lines: list[str] = []
+    for line in (text or "").splitlines():
+        normalized = _LEGACY_PREFIX_RE.sub("", line).strip()
+        if normalized:
+            cleaned_lines.append(normalized)
+        elif cleaned_lines and cleaned_lines[-1] != "":
+            cleaned_lines.append("")
+    return "\n".join(cleaned_lines).strip()
+
+
 def _asset_source_text(asset: dict) -> str:
     source = str(asset.get("raw_content") or asset.get("content") or "")
-    return source.replace("\\r\\n", "\n").replace("\\n", "\n")
+    source = source.replace("\\r\\n", "\n").replace("\\n", "\n")
+    return _strip_legacy_prefixes(source)
 
 
 def _ensure_output_dir(output_dir: str | Path) -> Path:
@@ -103,13 +128,17 @@ def _render_table_image(target_path: Path, asset: dict) -> bool:
     Image = importlib.import_module("PIL.Image")
     ImageDraw = importlib.import_module("PIL.ImageDraw")
 
-    blocks = build_export_blocks(_asset_source_text(asset))
-    table_block = next((block for block in blocks if block.kind == "table"), None)
-    if not table_block or not table_block.headers:
+    headers = list(asset.get("table_headers") or [])
+    rows = list(asset.get("table_rows") or [])
+    if not headers:
+        blocks = build_export_blocks(_asset_source_text(asset))
+        table_block = next((block for block in blocks if block.kind == "table"), None)
+        if table_block:
+            headers = list(table_block.headers)
+            rows = list(table_block.rows or [])
+    if not headers:
         return False
 
-    headers = table_block.headers
-    rows = table_block.rows or []
     col_count = len(headers)
     col_width = 280
     row_height = 72
@@ -149,12 +178,64 @@ def _render_table_image(target_path: Path, asset: dict) -> bool:
     return True
 
 
+def _formula_line_score(line: str) -> int:
+    stripped = line.strip()
+    if not stripped:
+        return 0
+    score = 0
+    if _FORMULA_SIGNAL_RE.search(stripped):
+        score += 5
+    score += stripped.count("\\") * 2
+    score += sum(1 for char in stripped if char in "=<>^_{}()[]")
+    alpha_words = re.findall(r"\b[A-Za-z]{4,}\b", stripped)
+    if len(alpha_words) > 5 and "=" not in stripped:
+        score -= 4
+    return score
+
+
+def _is_valid_formula_text(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+
+    if "##" in stripped or stripped.endswith(":"):
+        return False
+
+    if len(stripped) > 220 and "=" not in stripped and "\\" not in stripped:
+        return False
+
+    alpha_words = re.findall(r"\b[A-Za-z]{3,}\b", stripped)
+    symbol_hits = len(re.findall(r"[=<>^_{}()\[\]+\-/*]", stripped))
+    if _FORMULA_PATTERN.search(stripped):
+        return True
+    if "=" in stripped and _FORMULA_SIGNAL_RE.search(stripped):
+        return True
+    if stripped.count("\\") >= 2 and len(alpha_words) <= 6:
+        return True
+    if symbol_hits >= 4 and len(alpha_words) <= 4 and len(stripped) <= 120:
+        return True
+    return False
+
+
 def _extract_formula_text(asset: dict) -> str:
+    existing = str(asset.get("formula_text") or "").strip()
+    if existing and _is_valid_formula_text(existing):
+        return existing
+
     source = _asset_source_text(asset)
     match = _FORMULA_PATTERN.search(source)
     if match:
-        return match.group(1).strip()
-    return format_structured_text(source)
+        candidate = match.group(1).strip()
+        if _is_valid_formula_text(candidate):
+            return candidate
+
+    candidates = [line.strip() for line in source.splitlines() if _formula_line_score(line) > 0]
+    if candidates:
+        candidate = max(candidates, key=_formula_line_score)
+        if _is_valid_formula_text(candidate):
+            return candidate
+
+    return ""
 
 
 def _render_formula_image(target_path: Path, asset: dict) -> bool:
@@ -184,24 +265,165 @@ def _render_missing_asset_image(target_path: Path, asset: dict) -> bool:
     return False
 
 
+def _extract_asset_description(asset: dict) -> str:
+    blocks = build_export_blocks(_asset_source_text(asset))
+    parts: list[str] = []
+    for block in blocks:
+        if block.kind == "table":
+            continue
+        text = block.text or format_structured_text(_asset_source_text(asset))
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+def _normalize_pipe_cell(cell: str) -> str:
+    return format_structured_text(cell.replace("<br>", "\n")).replace("\n", " ").strip()
+
+
+def _looks_like_header_row(row: list[str]) -> bool:
+    header_terms = (
+        "model",
+        "method",
+        "dimension",
+        "dataset",
+        "metric",
+        "language",
+        "generation",
+        "speed",
+        "efficiency",
+        "modality",
+        "paper",
+    )
+    hits = sum(1 for cell in row if any(term in cell.lower() for term in header_terms))
+    return hits >= max(2, len(row) // 2)
+
+
+def _extract_legacy_pipe_table(source: str) -> tuple[list[str], list[list[str]]]:
+    lines = [line.strip() for line in (source or "").splitlines() if "|" in line]
+    if not lines:
+        return [], []
+
+    expected_columns = 0
+    for line in lines:
+        if _TABLE_SEPARATOR_RE.match(line):
+            expected_columns = max(
+                expected_columns,
+                len([part for part in line.strip().strip("|").split("|") if part.strip()]),
+            )
+
+    parsed_rows: list[list[str]] = []
+    for line in lines:
+        if _TABLE_SEPARATOR_RE.match(line):
+            continue
+
+        raw_cells = [part.strip() for part in line.strip().strip("|").split("|")]
+        cleaned_cells = [_normalize_pipe_cell(cell) for cell in raw_cells if cell.strip()]
+        if not cleaned_cells:
+            continue
+
+        if expected_columns and len(cleaned_cells) > expected_columns:
+            for start in range(0, len(cleaned_cells), expected_columns):
+                group = cleaned_cells[start:start + expected_columns]
+                if len(group) == expected_columns:
+                    parsed_rows.append(group)
+        elif not expected_columns or len(cleaned_cells) == expected_columns:
+            parsed_rows.append(cleaned_cells)
+
+    if not parsed_rows:
+        return [], []
+
+    if expected_columns:
+        parsed_rows = [row for row in parsed_rows if len(row) == expected_columns]
+        if not parsed_rows:
+            return [], []
+
+    headers = parsed_rows[0]
+    rows = parsed_rows[1:]
+    if not rows or not _looks_like_header_row(headers):
+        headers = ["Model", *[f"Column {idx}" for idx in range(2, len(parsed_rows[0]) + 1)]]
+        rows = parsed_rows
+
+    return headers, rows
+
+
+def _extract_table_payload(asset: dict) -> tuple[list[str], list[list[str]]]:
+    source = _asset_source_text(asset)
+    headers, rows = _extract_legacy_pipe_table(source)
+    if headers:
+        return headers, rows
+
+    blocks = build_export_blocks(source)
+    for block in blocks:
+        if block.kind == "table" and block.headers:
+            return list(block.headers), [list(row) for row in block.rows]
+    return [], []
+
+
+def _copy_asset_image(source_path: str, render_dir: Path, asset: dict, source: str) -> Path | None:
+    source_file = Path(source_path)
+    if not source_file.exists():
+        return None
+
+    suffix = source_file.suffix or ".png"
+    digest = _asset_digest(asset, source)
+    target_path = render_dir / f"{asset.get('citation_id', 'asset')}_{digest}{suffix}"
+    if not target_path.exists():
+        shutil.copy2(source_file, target_path)
+    return target_path
+
+
 def prepare_cited_assets(cited_assets: list[dict] | None, output_dir: str | Path) -> list[dict]:
     if not cited_assets:
         return []
 
+    output_root = Path(output_dir)
     render_dir = _ensure_output_dir(output_dir)
     prepared: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
     for asset in cited_assets:
         normalized = dict(asset)
+        source = _asset_source_text(normalized)
+        normalized["raw_content"] = source
+        normalized["content"] = format_structured_text(source)
+        headers, rows = _extract_table_payload(normalized)
+        if headers:
+            normalized["table_headers"] = headers
+            normalized["table_rows"] = rows
+        description = _extract_asset_description(normalized)
+        if description:
+            normalized["description"] = description
+        formula_text = _extract_formula_text(normalized)
+        if formula_text:
+            normalized["formula_text"] = formula_text
+
+        dedupe_key = (
+            str(normalized.get("paper_title", "")),
+            str(normalized.get("citation_id", "")),
+            str(normalized.get("chunk_type", "")),
+            _asset_digest(normalized, source),
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
         image_path = normalized.get("image_path")
+        copied_image: Path | None = None
         if image_path and Path(image_path).exists():
+            copied_image = _copy_asset_image(str(image_path), render_dir, normalized, source)
+        if str(normalized.get("chunk_type", "")).lower() == "formula" and not copied_image and not formula_text:
+            continue
+        if copied_image and copied_image.exists():
+            normalized["image_path"] = str(copied_image)
+            normalized["image_rel_path"] = copied_image.relative_to(output_root).as_posix()
             prepared.append(normalized)
             continue
 
-        source = _asset_source_text(normalized)
         digest = _asset_digest(normalized, source)
         target_path = render_dir / f"{normalized.get('citation_id', 'asset')}_{digest}.png"
         if target_path.exists() or _render_missing_asset_image(target_path, normalized):
             normalized["image_path"] = str(target_path)
+            normalized["image_rel_path"] = target_path.relative_to(output_root).as_posix()
 
         prepared.append(normalized)
     return prepared

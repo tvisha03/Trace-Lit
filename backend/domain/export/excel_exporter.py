@@ -8,7 +8,7 @@ from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
 
 from shared.logger import get_logger
-from shared.utils.export_media import prepare_cited_assets
+from shared.utils.export_media import prepare_cited_assets, strip_export_citation_tags
 from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text, strip_markdown
 
 logger = get_logger(__name__)
@@ -34,6 +34,19 @@ _CONF_FONTS = {
     "medium": Font(bold=True, color="B8860B"),
     "low": Font(bold=True, color="CC3333"),
 }
+
+def _configure_sheet(ws: Worksheet) -> None:
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 90
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.print_title_rows = "$1:$1"
+
+
+def _sheet_text(value: str) -> str:
+    text = strip_export_citation_tags(strip_markdown(str(value or "")))
+    return format_structured_text(text)
 
 def _set_cell(ws: Worksheet, row: int, col: int, value: str,
               font: Font | None = None, fill: PatternFill | None = None) -> None:
@@ -68,6 +81,7 @@ def _set_header_row(ws: Worksheet, headers: list[str]) -> None:
         cell.alignment = _WRAP_ALIGNMENT
         cell.border = _THIN_BORDER
     ws.freeze_panes = "A2"
+    ws.row_dimensions[1].height = 24
     last_col = get_column_letter(len(headers))
     ws.auto_filter.ref = f"A1:{last_col}1"
 
@@ -91,7 +105,7 @@ def _populate_comparison_rows(ws: Worksheet, paper_data: list[dict]) -> None:
 
 
 def _split_for_sheet(value: str, chunk_size: int = 320) -> list[str]:
-    normalized = format_structured_text(value or "")
+    normalized = _sheet_text(value)
     if len(normalized) <= chunk_size:
         return [normalized]
 
@@ -127,7 +141,7 @@ def _populate_chat_blocks_sheet(ws: Worksheet, messages: list[dict]) -> None:
                     _set_cell(ws, row_idx, 2, role)
                     _set_cell(ws, row_idx, 3, f"{block_label} Row")
                     _set_cell(ws, row_idx, 4, f"{block_idx}.{table_row_idx}")
-                    _set_cell(ws, row_idx, 5, " | ".join(pairs))
+                    _set_cell(ws, row_idx, 5, _sheet_text(" | ".join(pairs)))
                     row_idx += 1
                 continue
 
@@ -160,7 +174,7 @@ def _populate_paper_fields_sheet(ws: Worksheet, paper_data: list[dict]) -> None:
     for paper in paper_data:
         paper_title = str(paper.get("title", ""))
         for key, label in fields:
-            value = str(paper.get(key, "") or "")
+            value = _sheet_text(str(paper.get(key, "") or ""))
             parts = _split_for_sheet(value, chunk_size=280)
             for part_idx, part in enumerate(parts, start=1):
                 _set_cell(ws, row_idx, 1, paper_title)
@@ -174,7 +188,7 @@ def _populate_paper_fields_sheet(ws: Worksheet, paper_data: list[dict]) -> None:
 
 def _populate_citation_rows(ws: Worksheet, citations: list[dict]) -> None:
     for row_idx, cit in enumerate(citations, start=2):
-        _set_cell(ws, row_idx, 1, strip_markdown(str(cit.get("claim", ""))))
+        _set_cell(ws, row_idx, 1, _sheet_text(str(cit.get("claim", ""))))
 
         confidence = str(cit.get("confidence", "low")).lower()
         conf_cell = ws.cell(row=row_idx, column=2, value=confidence.upper())
@@ -188,7 +202,7 @@ def _populate_citation_rows(ws: Worksheet, citations: list[dict]) -> None:
         score_cell.number_format = "0%"
         score_cell.border = _THIN_BORDER
 
-        _set_cell(ws, row_idx, 4, strip_markdown(str(cit.get("source_sentence", ""))))
+        _set_cell(ws, row_idx, 4, _sheet_text(str(cit.get("source_sentence", ""))))
         _set_cell(ws, row_idx, 5, str(cit.get("paragraph_id", "")))
 
 
@@ -204,12 +218,15 @@ def _populate_comparison_table_sheet(
     for row_idx, row in enumerate(comparison_table, start=2):
         _set_cell(ws, row_idx, 1, str(row.get("dimension", "")))
         for col_idx, cell in enumerate(row.get("cells", []), start=2):
-            value = format_structured_text(str(cell.get("content", "")))
+            value = _sheet_text(str(cell.get("content", "")))
             _set_cell(ws, row_idx, col_idx, value)
-        _set_cell(ws, row_idx, len(headers), format_structured_text(str(row.get("synthesis", ""))))
+        _set_cell(ws, row_idx, len(headers), _sheet_text(str(row.get("synthesis", ""))))
 
     _apply_alternating_rows(ws)
     _auto_column_widths(ws, min_width=18, max_width=36)
+    for col_idx in range(1, len(headers) + 1):
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = 22 if col_idx == 1 else 30
 
 
 def _populate_cited_media_sheet(ws: Worksheet, cited_assets: list[dict]) -> None:
@@ -222,8 +239,14 @@ def _populate_cited_media_sheet(ws: Worksheet, cited_assets: list[dict]) -> None
         _set_cell(ws, row_idx, 3, str(asset.get("paper_title", "")))
         _set_cell(ws, row_idx, 4, str(asset.get("page_number", "") or ""))
         _set_cell(ws, row_idx, 5, str(asset.get("section_title", "") or ""))
-        _set_cell(ws, row_idx, 6, format_structured_text(str(asset.get("content", ""))))
-        _set_cell(ws, row_idx, 7, str(asset.get("image_path", "") or ""))
+        _set_cell(ws, row_idx, 6, _sheet_text(str(asset.get("description") or asset.get("content", ""))))
+        relative_image_path = str(asset.get("image_rel_path", "") or "")
+        link_cell = ws.cell(row=row_idx, column=7, value=relative_image_path)
+        link_cell.alignment = _WRAP_ALIGNMENT
+        link_cell.border = _THIN_BORDER
+        if relative_image_path:
+            link_cell.hyperlink = relative_image_path
+            link_cell.style = "Hyperlink"
 
         image_path = asset.get("image_path")
         if image_path:
@@ -241,6 +264,7 @@ def _populate_cited_media_sheet(ws: Worksheet, cited_assets: list[dict]) -> None
 
     _apply_alternating_rows(ws)
     _auto_column_widths(ws, min_width=14, max_width=42)
+    ws.column_dimensions["H"].width = 34
 
 def export_comparison_to_excel(
     paper_data: list[dict],
@@ -257,6 +281,7 @@ def export_comparison_to_excel(
     if ws_comp is None:
         raise ValueError("Failed to create worksheet")
     ws_comp.title = "Comparison"
+    _configure_sheet(ws_comp)
 
     if comparison_table:
         _populate_comparison_table_sheet(ws_comp, comparison_table, paper_data)
@@ -272,6 +297,7 @@ def export_comparison_to_excel(
         date_cell.font = Font(italic=True, size=9, color="888888")
 
         cleaned = format_structured_text(comparison_content) if comparison_content else ""
+        cleaned = _sheet_text(cleaned)
         if cleaned:
             row_idx = 4
             for paragraph in cleaned.split("\n\n"):
@@ -283,10 +309,12 @@ def export_comparison_to_excel(
         ws_comp.column_dimensions["A"].width = 110
 
     ws_papers = wb.create_sheet(title="Paper Fields")
+    _configure_sheet(ws_papers)
     _populate_paper_fields_sheet(ws_papers, paper_data)
 
     if cited_assets:
         ws_media = wb.create_sheet(title="Cited Media")
+        _configure_sheet(ws_media)
         _populate_cited_media_sheet(ws_media, cited_assets)
 
     wb.save(str(output_path))
@@ -308,12 +336,14 @@ def export_citations_to_excel(
     if ws_chat is None:
         raise ValueError("Failed to create worksheet")
     ws_chat.title = "Chat Blocks"
+    _configure_sheet(ws_chat)
     if messages:
         _populate_chat_blocks_sheet(ws_chat, messages)
     else:
         _set_header_row(ws_chat, ["Message", "Role", "Block", "Order", "Content"])
 
     ws_cit = wb.create_sheet(title="Citation Verification")
+    _configure_sheet(ws_cit)
     cit_headers = ["Claim", "Confidence", "Score", "Source Sentence", "Paragraph ID"]
     _set_header_row(ws_cit, cit_headers)
     _populate_citation_rows(ws_cit, citations)
@@ -322,6 +352,7 @@ def export_citations_to_excel(
 
     if cited_assets:
         ws_media = wb.create_sheet(title="Cited Media")
+        _configure_sheet(ws_media)
         _populate_cited_media_sheet(ws_media, cited_assets)
 
     wb.save(str(output_path))

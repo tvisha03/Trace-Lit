@@ -1,4 +1,5 @@
 import asyncio
+import csv
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -99,6 +100,32 @@ def _normalize_cell_text(text: str) -> str:
     return " ".join(part.strip() for part in (text or "").replace("<br>", "\n").splitlines() if part.strip())
 
 
+def _parse_delimited_rows(comparison_text: str, expected_columns: int) -> list[list[str]]:
+    lines = [line.strip() for line in (comparison_text or "").splitlines() if line.strip()]
+    candidate_lines = [line for line in lines if any(delim in line for delim in (",", "\t", ";"))]
+    if len(candidate_lines) < 2:
+        return []
+
+    sample = "\n".join(candidate_lines[: min(5, len(candidate_lines))])
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+
+    rows = [
+        [cell.strip().strip('"') for cell in row]
+        for row in csv.reader(candidate_lines, dialect)
+    ]
+    rows = [row for row in rows if any(cell for cell in row)]
+    if len(rows) < 2:
+        return []
+
+    column_count = max(len(row) for row in rows)
+    if column_count < expected_columns:
+        return []
+    return rows
+
+
 def _build_comparison_rows(
     comparison_text: str,
     paper_ids: list[str],
@@ -131,6 +158,35 @@ def _build_comparison_rows(
                     "dimension": dimension,
                     "cells": cells,
                     "synthesis": synthesis,
+                }
+            )
+        if rows:
+            return rows
+
+    parsed_rows = _parse_delimited_rows(comparison_text, expected_columns=len(paper_ids) + 2)
+    if parsed_rows:
+        header, *data_rows = parsed_rows
+        rows: list[dict] = []
+        for row in data_rows:
+            if not row:
+                continue
+            dimension = _normalize_cell_text(row[0]) or _FALLBACK_DIMENSION
+            cells = []
+            for idx, paper_id in enumerate(paper_ids, start=1):
+                cell_text = _normalize_cell_text(row[idx] if idx < len(row) else "")
+                cells.append(
+                    {
+                        "paper_id": paper_id,
+                        "paper_title": titles[idx - 1],
+                        "content": cell_text,
+                    }
+                )
+            synthesis_index = len(paper_ids) + 1
+            rows.append(
+                {
+                    "dimension": dimension,
+                    "cells": cells,
+                    "synthesis": _normalize_cell_text(row[synthesis_index] if synthesis_index < len(row) else ""),
                 }
             )
         if rows:

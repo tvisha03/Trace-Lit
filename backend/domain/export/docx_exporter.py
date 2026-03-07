@@ -9,6 +9,16 @@ from shared.utils.export_text import build_export_blocks, format_structured_text
 
 logger = get_logger(__name__)
 
+def _configure_document(doc, Pt) -> None:
+    normal_style = doc.styles["Normal"]
+    normal_style.font.name = "Calibri"
+    normal_style.font.size = Pt(10.5)
+    section = doc.sections[0]
+    section.top_margin = Pt(54)
+    section.bottom_margin = Pt(54)
+    section.left_margin = Pt(54)
+    section.right_margin = Pt(54)
+
 def _confidence_rgb(confidence: str):
     from docx.shared import RGBColor
 
@@ -103,7 +113,10 @@ def _set_paragraph_run_size(paragraph, size) -> None:
 
 def _render_table_to_doc(doc, headers, rows, Pt) -> None:
     table = doc.add_table(rows=len(rows) + 1, cols=len(headers))
-    table.style = "Table Grid"
+    try:
+        table.style = "Light Shading Accent 1"
+    except Exception:
+        table.style = "Table Grid"
 
     for col_idx, header in enumerate(headers):
         cell = table.rows[0].cells[col_idx]
@@ -144,7 +157,7 @@ def _render_blocks_to_doc(doc, blocks, Pt) -> None:
 
 
 def _asset_body_text(asset: dict) -> str:
-    return str(asset.get("raw_content") or asset.get("content", ""))
+    return str(asset.get("description") or asset.get("raw_content") or asset.get("content", ""))
 
 
 def _asset_meta_text(asset: dict) -> str:
@@ -185,8 +198,32 @@ def _load_inches():
 
 def _append_cited_asset(doc, asset: dict, Pt, Inches) -> None:
     _add_cited_asset_heading(doc, asset, Pt)
-    _render_blocks_to_doc(doc, build_export_blocks(_asset_body_text(asset)), Pt)
-    _add_cited_asset_image(doc, asset.get("image_path"), Inches)
+    chunk_type = str(asset.get("chunk_type", "")).lower()
+
+    if chunk_type == "table" and asset.get("table_headers"):
+        description = str(asset.get("description") or "").strip()
+        if description:
+            _render_blocks_to_doc(doc, build_export_blocks(description), Pt)
+        _render_table_to_doc(
+            doc,
+            list(asset.get("table_headers") or []),
+            [list(row) for row in asset.get("table_rows") or []],
+            Pt,
+        )
+    elif chunk_type == "formula":
+        description = str(asset.get("description") or "").strip()
+        if description:
+            _render_blocks_to_doc(doc, build_export_blocks(description), Pt)
+        _add_cited_asset_image(doc, asset.get("image_path"), Inches)
+        if not asset.get("image_path") and asset.get("formula_text"):
+            paragraph = doc.add_paragraph(str(asset.get("formula_text")))
+            _set_paragraph_run_size(paragraph, Pt(10))
+    else:
+        body_text = _asset_body_text(asset)
+        if body_text:
+            _render_blocks_to_doc(doc, build_export_blocks(body_text), Pt)
+        _add_cited_asset_image(doc, asset.get("image_path"), Inches)
+
     doc.add_paragraph()
 
 
@@ -231,6 +268,7 @@ def export_chat_to_docx(
     cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     doc = Document()
+    _configure_document(doc, Pt)
 
     _setup_doc_with_heading_and_date(doc, session_title, Pt, RGBColor, WD_ALIGN_PARAGRAPH)
 
@@ -273,6 +311,7 @@ def export_comparison_to_docx(
     cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     doc = Document()
+    _configure_document(doc, Pt)
 
     _setup_doc_with_heading_and_date(doc, title, Pt, RGBColor, WD_ALIGN_PARAGRAPH)
 

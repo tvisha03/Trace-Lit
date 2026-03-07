@@ -57,6 +57,10 @@ class ExtractedDocument:
     pdf_metadata: dict | None = None
     layout_mode: bool = False
 
+def _figure_file_prefix(file_path: Path) -> str:
+    safe_stem = re.sub(r"[^A-Za-z0-9]+", "_", file_path.stem).strip("_")
+    return safe_stem or "paper"
+
 def _ensure_figure_dir(file_path: Path) -> Path:
     figure_dir = file_path.parent / "figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
@@ -177,10 +181,10 @@ def _find_caption_for_box(page_boxes: list[dict], picture_bbox: list, page_text:
     return ""
 
 def _render_box(
-    page, rect, page_num: int, idx: int, figure_dir: Path, caption: str = ""
+    page, rect, page_num: int, idx: int, figure_dir: Path, file_prefix: str, caption: str = ""
 ) -> ExtractedFigure | None:
     bbox = (rect.x0, rect.y0, rect.x1, rect.y1)
-    img_name = f"page{page_num}_fig{idx}.{FIGURE_IMAGE_FORMAT}"
+    img_name = f"{file_prefix}_page{page_num}_fig{idx}.{FIGURE_IMAGE_FORMAT}"
     img_path = figure_dir / img_name
 
     if not img_path.exists():
@@ -195,7 +199,7 @@ def _render_box(
     )
 
 def _render_page_figures(
-    doc, page_data: dict, figure_dir: Path
+    doc, page_data: dict, figure_dir: Path, file_prefix: str
 ) -> list[ExtractedFigure]:
     import pymupdf
 
@@ -222,7 +226,7 @@ def _render_page_figures(
             continue
 
         caption = _find_caption_for_box(page_boxes, bbox, page_text)
-        fig = _render_box(page, rect, page_num, idx, figure_dir, caption=caption)
+        fig = _render_box(page, rect, page_num, idx, figure_dir, file_prefix, caption=caption)
         if fig:
             rendered.append(fig)
 
@@ -236,10 +240,11 @@ def _render_missing_figures(
     import pymupdf
 
     rendered: list[ExtractedFigure] = []
+    file_prefix = _figure_file_prefix(file_path)
     doc = pymupdf.open(str(file_path))
     try:
         for page_data in page_chunks:
-            rendered.extend(_render_page_figures(doc, page_data, figure_dir))
+            rendered.extend(_render_page_figures(doc, page_data, figure_dir, file_prefix))
     finally:
         doc.close()
 
@@ -372,7 +377,7 @@ def _try_render_image_on_page(
     page_num: int,
     page_area: float,
     figure_dir: Path,
-    page_text: str,
+    file_prefix: str,
 ) -> ExtractedFigure | None:
     import pymupdf
 
@@ -384,7 +389,7 @@ def _try_render_image_on_page(
     if abs(rect.width * rect.height) / max(page_area, 1) < FIGURE_MIN_SIZE_RATIO:
         return None
 
-    img_name = f"page{page_num}_rendered{idx}.{FIGURE_IMAGE_FORMAT}"
+    img_name = f"{file_prefix}_page{page_num}_rendered{idx}.{FIGURE_IMAGE_FORMAT}"
     img_path = figure_dir / img_name
 
     try:
@@ -395,12 +400,11 @@ def _try_render_image_on_page(
         logger.debug(f"Pixmap render failed for page {page_num} img {idx}: {exc}")
         return None
 
-    caption = _find_figure_caption(page_text, 0) if page_text else ""
     return ExtractedFigure(
         image_path=str(img_path),
         page_number=page_num,
         bbox=tuple(bbox),
-        caption=caption,
+        caption="",
     )
 
 def _render_figures_by_rendering(
@@ -410,13 +414,12 @@ def _render_figures_by_rendering(
 ) -> list[ExtractedFigure]:
     import pymupdf
 
-    page_text_map = _build_page_text_map(page_chunks)
+    file_prefix = _figure_file_prefix(file_path)
     doc = pymupdf.open(str(file_path))
     figures: list[ExtractedFigure] = []
     try:
         for page_num, page in enumerate(doc):
             page_area = abs(page.rect.width * page.rect.height)
-            page_text = page_text_map.get(page_num, "")
             try:
                 image_infos = page.get_image_info()
             except Exception as exc:  # pragma: no cover
@@ -425,7 +428,7 @@ def _render_figures_by_rendering(
 
             for idx, img_info in enumerate(image_infos):
                 fig = _try_render_image_on_page(
-                    page, idx, img_info, page_num, page_area, figure_dir, page_text,
+                    page, idx, img_info, page_num, page_area, figure_dir, file_prefix,
                 )
                 if fig:
                     figures.append(fig)
@@ -473,7 +476,11 @@ def _assemble_document(
     pages = _build_pages(page_chunks)
 
     text_tables = extract_tables_from_pages(pages)
-    pdf_tables = [] if _LAYOUT_MODE else extract_tables_from_pdf(file_path)
+    try:
+        pdf_tables = extract_tables_from_pdf(file_path)
+    except Exception as exc:
+        logger.warning(f"Native PDF table extraction failed for {file_path.name}: {exc}")
+        pdf_tables = []
     all_tables = merge_tables(text_tables, pdf_tables)
 
     all_formulas = extract_formulas_from_pages(pages)

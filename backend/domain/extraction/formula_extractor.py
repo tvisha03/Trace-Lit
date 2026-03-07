@@ -309,8 +309,12 @@ def _extract_box_formulas(page) -> list[ExtractedFormula]:
         pos = box.get("pos")
         if not pos or len(pos) < 2:
             continue
-        raw = page_text[pos[0]:pos[1]].strip()
+        raw = _clean_formula(page_text[pos[0]:pos[1]])
         if len(raw) < _MIN_FORMULA_LENGTH:
+            continue
+        if not _is_meaningful_formula(raw):
+            continue
+        if not _has_math_content(raw):
             continue
         formulas.append(ExtractedFormula(
             content=raw,

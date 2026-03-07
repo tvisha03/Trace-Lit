@@ -1,6 +1,7 @@
 import uuid
 from pathlib import Path
 from typing import Optional
+import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,10 +19,22 @@ from app.config import get_settings
 from shared.enums import ExportFormat
 from shared.errors import NotFoundError, TraceLitError
 from shared.logger import get_logger
-from shared.utils.export_text import extract_citation_ids, format_structured_text
+from shared.utils.export_text import build_export_blocks, extract_citation_ids, format_structured_text
 from workers.export_worker import run_export_in_thread
 
 logger = get_logger(__name__)
+
+_COMPARISON_SECTION_MARKERS = (
+    "research problem and motivation",
+    "methodology and approach",
+    "key findings and results",
+    "datasets used",
+    "limitations acknowledged",
+)
+_COMPARISON_INTRO_RE = re.compile(
+    r"structured comparison of the (?:three|3) academic papers|paper comparison",
+    re.IGNORECASE,
+)
 
 def _check_export_size(output_path: Path) -> None:
     if not output_path.exists():
@@ -162,6 +175,7 @@ async def export_chat(
         }
         for m in messages_db
     ]
+    messages = _filter_chat_export_messages(messages)
     papers_db = await get_papers_by_session(db, session_id)
     paper_title_map = {
         str(p.id): p.title or p.filename or f"Paper {str(p.id)[:8]}"
@@ -442,15 +456,17 @@ async def export_comparison(
 
 def _serialize_cited_asset(chunk, paper_title: str) -> dict:
     chunk_type = getattr(chunk, "chunk_type", "text")
-    raw_content = getattr(chunk, "enriched_text", None) or getattr(chunk, "text", "")
+    display_content = getattr(chunk, "text", None) or getattr(chunk, "enriched_text", "")
+    enriched_content = getattr(chunk, "enriched_text", None) or display_content
     return {
         "citation_id": str(getattr(chunk, "paragraph_id", "")),
         "chunk_type": str(chunk_type),
         "paper_title": paper_title,
         "section_title": getattr(chunk, "section_title", None),
         "page_number": getattr(chunk, "page_number", None),
-        "raw_content": raw_content,
-        "content": format_structured_text(raw_content),
+        "raw_content": display_content,
+        "content": format_structured_text(display_content),
+        "enriched_content": enriched_content,
         "image_path": getattr(chunk, "image_path", None),
     }
 
@@ -568,4 +584,44 @@ def _flatten_citations(messages: list[dict]) -> list[dict]:
             if isinstance(result, dict):
                 citations.append(result)
     return citations
+
+
+def _looks_like_comparison_table(content: str) -> bool:
+    for block in build_export_blocks(content or ""):
+        if block.kind != "table" or not block.headers:
+            continue
+        headers = [format_structured_text(header).strip().lower() for header in block.headers]
+        if not headers:
+            continue
+        if headers[0] == "dimension" and "synthesis" in headers and any(
+            header.startswith("paper 1") for header in headers[1:]
+        ):
+            return True
+    return False
+
+
+def _looks_like_comparison_message(message: dict) -> bool:
+    if str(message.get("role", "")).lower() != "assistant":
+        return False
+
+    content = str(message.get("content", "") or "")
+    if not content.strip():
+        return False
+
+    normalized = format_structured_text(content).lower()
+    if _COMPARISON_INTRO_RE.search(normalized):
+        return True
+    if _looks_like_comparison_table(content):
+        return True
+
+    marker_hits = sum(1 for marker in _COMPARISON_SECTION_MARKERS if marker in normalized)
+    return marker_hits >= 3 and "paper 1" in normalized and "paper 2" in normalized
+
+
+def _filter_chat_export_messages(messages: list[dict]) -> list[dict]:
+    filtered = [message for message in messages if not _looks_like_comparison_message(message)]
+    removed = len(messages) - len(filtered)
+    if removed:
+        logger.info("Filtered %s comparison message(s) from chat export", removed)
+    return filtered
 
