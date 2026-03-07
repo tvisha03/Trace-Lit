@@ -4,6 +4,7 @@ from pathlib import Path
 
 from shared.logger import get_logger
 from shared.errors import TraceLitError
+from shared.utils.export_media import prepare_cited_assets
 from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text
 
 logger = get_logger(__name__)
@@ -21,8 +22,8 @@ def _add_separator(doc, Pt, RGBColor) -> None:
     from docx.oxml.ns import qn
 
     sep = doc.add_paragraph()
-    sep.paragraph_format.space_before = Pt(2)
-    sep.paragraph_format.space_after = Pt(2)
+    sep.paragraph_format.space_before = Pt(6)
+    sep.paragraph_format.space_after = Pt(8)
     pPr = sep._element.get_or_add_pPr()
     pBdr = pPr.makeelement(qn("w:pBdr"), {})
     bottom = pBdr.makeelement(qn("w:bottom"), {
@@ -40,8 +41,8 @@ def _add_message_to_doc(doc, msg, Pt, RGBColor, WD_ALIGN_PARAGRAPH):
     havf_results = msg.get("havf_results") or []
 
     role_para = doc.add_paragraph()
-    role_para.paragraph_format.space_before = Pt(6)
-    role_para.paragraph_format.space_after = Pt(2)
+    role_para.paragraph_format.space_before = Pt(10)
+    role_para.paragraph_format.space_after = Pt(6)
     role_run = role_para.add_run(f"[{role}]")
     role_run.bold = True
     role_run.font.size = Pt(11)
@@ -124,55 +125,80 @@ def _render_blocks_to_doc(doc, blocks, Pt) -> None:
         if block.kind == "heading":
             level = min(max(block.level, 1), 4)
             heading = doc.add_heading(block.text, level=level)
-            heading.paragraph_format.space_after = Pt(4)
+            heading.paragraph_format.space_before = Pt(4)
+            heading.paragraph_format.space_after = Pt(6)
             _set_paragraph_run_size(heading, Pt(max(10, 15 - level)))
         elif block.kind == "bullet":
             paragraph = doc.add_paragraph(style="List Bullet")
             paragraph.add_run(block.text)
-            paragraph.paragraph_format.space_after = Pt(2)
+            paragraph.paragraph_format.left_indent = Pt(18)
+            paragraph.paragraph_format.space_after = Pt(4)
             _set_paragraph_run_size(paragraph, Pt(10))
         elif block.kind == "table":
             _render_table_to_doc(doc, block.headers, block.rows, Pt)
             doc.add_paragraph()
         else:
             paragraph = doc.add_paragraph(inline_tokens_to_text(block.tokens))
-            paragraph.paragraph_format.space_after = Pt(4)
+            paragraph.paragraph_format.space_after = Pt(6)
             _set_paragraph_run_size(paragraph, Pt(10))
+
+
+def _asset_body_text(asset: dict) -> str:
+    return str(asset.get("raw_content") or asset.get("content", ""))
+
+
+def _asset_meta_text(asset: dict) -> str:
+    parts = [str(asset.get("paper_title", ""))]
+    if asset.get("page_number"):
+        parts.append(f"page {asset.get('page_number')}")
+    if asset.get("section_title"):
+        parts.append(str(asset.get("section_title")))
+    return " | ".join(part for part in parts if part)
+
+
+def _add_cited_asset_image(doc, image_path: str | None, Inches) -> None:
+    if not Inches or not image_path or not Path(image_path).exists():
+        return
+    try:
+        doc.add_picture(str(image_path), width=Inches(5.8))
+    except Exception:
+        return
+
+
+def _add_cited_asset_heading(doc, asset, Pt) -> None:
+    label = f"[{asset.get('citation_id', '')}] {str(asset.get('chunk_type', '')).title()}"
+    heading = doc.add_paragraph()
+    heading.add_run(label).bold = True
+    meta = _asset_meta_text(asset)
+    if meta:
+        heading.add_run(f"  {meta}")
+    _set_paragraph_run_size(heading, Pt(10))
+
+
+def _load_inches():
+    try:
+        from docx.shared import Inches
+    except ImportError:
+        return None
+    return Inches
+
+
+def _append_cited_asset(doc, asset: dict, Pt, Inches) -> None:
+    _add_cited_asset_heading(doc, asset, Pt)
+    _render_blocks_to_doc(doc, build_export_blocks(_asset_body_text(asset)), Pt)
+    _add_cited_asset_image(doc, asset.get("image_path"), Inches)
+    doc.add_paragraph()
 
 
 def _add_cited_media_section(doc, cited_assets, Pt) -> None:
     if not cited_assets:
         return
 
-    try:
-        from docx.shared import Inches
-    except ImportError:
-        Inches = None
+    Inches = _load_inches()
 
     doc.add_heading("Cited Figures, Tables, and Formulas", level=2)
     for asset in cited_assets:
-        label = f"[{asset.get('citation_id', '')}] {str(asset.get('chunk_type', '')).title()}"
-        meta = f"{asset.get('paper_title', '')}"
-        if asset.get("page_number"):
-            meta += f" | page {asset.get('page_number')}"
-        if asset.get("section_title"):
-            meta += f" | {asset.get('section_title')}"
-
-        heading = doc.add_paragraph()
-        heading.add_run(label).bold = True
-        if meta.strip():
-            heading.add_run(f"  {meta}")
-        _set_paragraph_run_size(heading, Pt(10))
-
-        _render_blocks_to_doc(doc, build_export_blocks(str(asset.get("content", ""))), Pt)
-
-        image_path = asset.get("image_path")
-        if Inches and image_path and Path(image_path).exists():
-            try:
-                doc.add_picture(str(image_path), width=Inches(5.8))
-            except Exception:
-                pass
-        doc.add_paragraph()
+        _append_cited_asset(doc, asset, Pt, Inches)
 
 def _setup_doc_with_heading_and_date(doc, title, Pt, RGBColor, WD_ALIGN_PARAGRAPH):
     heading = doc.add_heading(title, level=1)
@@ -202,6 +228,7 @@ def export_chat_to_docx(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     doc = Document()
 
@@ -210,7 +237,7 @@ def export_chat_to_docx(
     for msg in messages:
         _add_message_to_doc(doc, msg, Pt, RGBColor, WD_ALIGN_PARAGRAPH)
 
-    _add_cited_media_section(doc, cited_assets or [], Pt)
+    _add_cited_media_section(doc, cited_assets, Pt)
 
     try:
         doc.save(str(output_path))
@@ -243,6 +270,7 @@ def export_comparison_to_docx(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     doc = Document()
 
@@ -268,7 +296,7 @@ def export_comparison_to_docx(
     else:
         _render_blocks_to_doc(doc, build_export_blocks(comparison_content), Pt)
 
-    _add_cited_media_section(doc, cited_assets or [], Pt)
+    _add_cited_media_section(doc, cited_assets, Pt)
 
     try:
         doc.save(str(output_path))

@@ -71,6 +71,24 @@ def _escape_bibtex(value: str) -> str:
         .replace("^", "\\textasciicircum{}")
     )
 
+
+def _wrap_bibtex_value(value: str, width: int = 88) -> str:
+    if len(value) <= width:
+        return value
+
+    parts: list[str] = []
+    remaining = value
+    while remaining:
+        if len(remaining) <= width:
+            parts.append(remaining)
+            break
+        split_at = remaining.rfind(" ", 0, width)
+        if split_at <= 0:
+            split_at = width
+        parts.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    return "\n    ".join(parts)
+
 def _format_entry(paper: dict, cite_key: str) -> str:
     entry_type = paper.get("entry_type", "article")
     lines: list[str] = [f"@{entry_type}{{{cite_key},"]
@@ -78,6 +96,7 @@ def _format_entry(paper: dict, cite_key: str) -> str:
     def _field(name: str, value: str | int | None) -> None:
         if value:
             escaped = _escape_bibtex(str(value))
+            escaped = _wrap_bibtex_value(escaped)
             lines.append(f"  {name} = {{{escaped}}},")
 
     _field("title", paper.get("title"))

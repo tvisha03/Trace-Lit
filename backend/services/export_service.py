@@ -442,13 +442,15 @@ async def export_comparison(
 
 def _serialize_cited_asset(chunk, paper_title: str) -> dict:
     chunk_type = getattr(chunk, "chunk_type", "text")
+    raw_content = getattr(chunk, "enriched_text", None) or getattr(chunk, "text", "")
     return {
         "citation_id": str(getattr(chunk, "paragraph_id", "")),
         "chunk_type": str(chunk_type),
         "paper_title": paper_title,
         "section_title": getattr(chunk, "section_title", None),
         "page_number": getattr(chunk, "page_number", None),
-        "content": format_structured_text(getattr(chunk, "enriched_text", None) or getattr(chunk, "text", "")),
+        "raw_content": raw_content,
+        "content": format_structured_text(raw_content),
         "image_path": getattr(chunk, "image_path", None),
     }
 
@@ -465,15 +467,32 @@ async def _build_chunk_lookup(
             citation_id = str(getattr(chunk, "paragraph_id", ""))
             if not citation_id:
                 continue
-            lookup[(paper_id, citation_id)] = _serialize_cited_asset(
+            asset = _serialize_cited_asset(
                 chunk,
                 paper_title_map.get(paper_id, f"Paper {paper_id[:8]}"),
             )
+            for candidate in _citation_candidates(citation_id):
+                lookup[(paper_id, candidate)] = asset
     return lookup
 
 
+def _citation_candidates(citation_id: str | None, citation_ref: str | None = None) -> list[str]:
+    candidates: list[str] = []
+    for value in (citation_id, citation_ref):
+        normalized = str(value or "").strip().strip("[]")
+        if not normalized:
+            continue
+        if normalized not in candidates:
+            candidates.append(normalized)
+        if "_" in normalized:
+            suffix = normalized.rsplit("_", 1)[-1]
+            if suffix and suffix not in candidates:
+                candidates.append(suffix)
+    return candidates
+
+
 def _is_media_citation(citation_id: str) -> bool:
-    return citation_id.startswith(("F", "T", "E"))
+    return any(candidate.startswith(("F", "T", "E")) for candidate in _citation_candidates(citation_id))
 
 
 def _deduplicate_assets(assets: list[dict]) -> list[dict]:
@@ -505,9 +524,11 @@ async def _collect_chat_cited_assets(
             citation_id = result.get("paragraph_id")
             if not paper_id or not citation_id or not _is_media_citation(str(citation_id)):
                 continue
-            asset = lookup.get((str(paper_id), str(citation_id)))
-            if asset:
-                assets.append(asset)
+            for candidate in _citation_candidates(citation_id, result.get("citation_ref")):
+                asset = lookup.get((str(paper_id), candidate))
+                if asset:
+                    assets.append(asset)
+                    break
     return _deduplicate_assets(assets)
 
 
@@ -530,9 +551,11 @@ async def _collect_comparison_cited_assets(
             for citation_id in extract_citation_ids(cell.get("content", "")):
                 if not _is_media_citation(citation_id):
                     continue
-                asset = lookup.get((str(paper_id), citation_id))
-                if asset:
-                    assets.append(asset)
+                for candidate in _citation_candidates(citation_id):
+                    asset = lookup.get((str(paper_id), candidate))
+                    if asset:
+                        assets.append(asset)
+                        break
     return _deduplicate_assets(assets)
 
 def _flatten_citations(messages: list[dict]) -> list[dict]:

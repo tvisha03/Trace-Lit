@@ -1,9 +1,12 @@
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+import importlib
 
 from shared.logger import get_logger
 from shared.errors import PDFExportError
+from shared.utils.export_media import prepare_cited_assets
 from shared.utils.export_text import build_export_blocks, inline_tokens_to_text, sanitize_for_pdf, format_structured_text
 from shared.utils.time_utils import timer
 
@@ -65,6 +68,25 @@ def _safe_multi_cell(pdf, text: str, line_height: float = 4.5) -> None:
         fallback = _break_long_words(sanitize_for_pdf(safe_text), max_word=24)
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(w=0, h=line_height, text=fallback)
+
+
+def _write_flowing_text(pdf, text: str, line_height: float = 4.5) -> None:
+    pdf.set_x(pdf.l_margin)
+    safe_text = sanitize_for_pdf(text or "")
+    try:
+        pdf.write(line_height, safe_text)
+    except Exception:
+        _safe_multi_cell(pdf, safe_text, line_height)
+
+
+def _prepare_landscape_pdf() -> Any:
+    FPDF = importlib.import_module("fpdf").FPDF
+    pdf = FPDF(orientation="L", format="A4", unit="mm")
+    pdf.set_margins(left=10, top=12, right=10)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    setattr(pdf, "trace_font_family", _configure_pdf_fonts(pdf))
+    pdf.add_page()
+    return pdf
 
 def _havf_confidence_color(confidence: str) -> tuple[int, int, int]:
     if confidence == "high":
@@ -190,6 +212,31 @@ def _render_table_as_sections(pdf, headers: list[str], rows: list[list[str]]) ->
         pdf.ln(1)
 
 
+def _render_landscape_table(pdf, headers: list[str], rows: list[list[str]]) -> None:
+    normalized_rows = []
+    for row in rows:
+        padded = row + [""] * max(0, len(headers) - len(row))
+        normalized_rows.append([sanitize_for_pdf(format_structured_text(cell)) for cell in padded[:len(headers)]])
+
+    available_width = pdf.w - pdf.l_margin - pdf.r_margin
+    col_width = available_width / max(len(headers), 1)
+    _set_font(pdf, "", 8)
+    with pdf.table(
+        col_widths=[col_width] * len(headers),
+        line_height=4.2,
+        text_align="LEFT",
+        borders_layout="SINGLE_TOP_LINE",
+        width=available_width,
+    ) as table:
+        header_row = table.row()
+        for header in headers:
+            header_row.cell(sanitize_for_pdf(header))
+        for row in normalized_rows:
+            body_row = table.row()
+            for cell in row:
+                body_row.cell(cell)
+
+
 def _render_blocks_pdf(pdf, blocks: list) -> None:
     for block in blocks:
         if block.kind == "heading":
@@ -200,14 +247,15 @@ def _render_blocks_pdf(pdf, blocks: list) -> None:
         elif block.kind == "bullet":
             _set_font(pdf, "", 9)
             bullet_text = sanitize_for_pdf(_break_long_words(block.text, max_word=42))
-            _safe_multi_cell(pdf, f"- {bullet_text}", 4.5)
+            _write_flowing_text(pdf, f"- {bullet_text}", 4.5)
+            pdf.ln(4.5)
         elif block.kind == "table":
             _render_table_as_sections(pdf, block.headers, block.rows)
         else:
             _set_font(pdf, "", 9)
             paragraph = sanitize_for_pdf(_break_long_words(inline_tokens_to_text(block.tokens), max_word=42))
-            _safe_multi_cell(pdf, paragraph, 4.5)
-            pdf.ln(1)
+            _write_flowing_text(pdf, paragraph, 4.5)
+            pdf.ln(5.5)
 
 
 def _render_cited_assets_pdf(pdf, cited_assets: list[dict]) -> None:
@@ -234,7 +282,7 @@ def _render_cited_assets_pdf(pdf, cited_assets: list[dict]) -> None:
             _set_font(pdf, "I", 8)
             _safe_multi_cell(pdf, sanitize_for_pdf(" | ".join(part for part in meta_parts if part)), 4)
 
-        _render_blocks_pdf(pdf, build_export_blocks(str(asset.get("content", ""))))
+        _render_blocks_pdf(pdf, build_export_blocks(str(asset.get("raw_content") or asset.get("content", ""))))
 
         image_path = asset.get("image_path")
         if image_path and Path(image_path).exists():
@@ -253,14 +301,16 @@ def export_chat_to_pdf(
     output_path: str | Path,
 ) -> Path:
     try:
-        from fpdf import FPDF
+        importlib.import_module("fpdf")
     except ImportError as e:
         raise PDFExportError("fpdf2 library not installed") from e
 
     output_path = Path(output_path)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     try:
         with timer("PDF generation"):
+            FPDF = importlib.import_module("fpdf").FPDF
             pdf = FPDF(format="A4", unit="mm")
             pdf.set_margins(left=15, top=15, right=15)
             pdf.set_auto_page_break(auto=True, margin=20)
@@ -277,7 +327,7 @@ def export_chat_to_pdf(
             for msg in messages:
                 _render_message_block(pdf, msg)
 
-            _render_cited_assets_pdf(pdf, cited_assets or [])
+            _render_cited_assets_pdf(pdf, cited_assets)
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             pdf.output(str(output_path))
@@ -296,18 +346,15 @@ def export_comparison_to_pdf(
     output_path: str | Path,
 ) -> Path:
     try:
-        from fpdf import FPDF
+        importlib.import_module("fpdf")
     except ImportError as e:
         raise PDFExportError("fpdf2 library not installed") from e
 
     output_path = Path(output_path)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     try:
-        pdf = FPDF(format="A4", unit="mm")
-        pdf.set_margins(left=15, top=15, right=15)
-        pdf.set_auto_page_break(auto=True, margin=20)
-        setattr(pdf, "trace_font_family", _configure_pdf_fonts(pdf))
-        pdf.add_page()
+        pdf = _prepare_landscape_pdf()
 
         _setup_pdf_title_and_date(pdf, title)
         _add_papers_compared_section(pdf, paper_titles)
@@ -329,11 +376,11 @@ def export_comparison_to_pdf(
                     *[format_structured_text(str(cell.get("content", ""))) for cell in row.get("cells", [])],
                     format_structured_text(str(row.get("synthesis", ""))),
                 ])
-            _render_table_as_sections(pdf, headers, rows)
+            _render_landscape_table(pdf, headers, rows)
         else:
             _render_blocks_pdf(pdf, build_export_blocks(comparison_content))
 
-        _render_cited_assets_pdf(pdf, cited_assets or [])
+        _render_cited_assets_pdf(pdf, cited_assets)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         pdf.output(str(output_path))

@@ -8,7 +8,8 @@ from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
 
 from shared.logger import get_logger
-from shared.utils.export_text import strip_markdown, format_structured_text
+from shared.utils.export_media import prepare_cited_assets
+from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text, strip_markdown
 
 logger = get_logger(__name__)
 
@@ -88,6 +89,89 @@ def _populate_comparison_rows(ws: Worksheet, paper_data: list[dict]) -> None:
         _set_cell(ws, row_idx, 7, str(paper.get("results", "") or ""))
         _set_cell(ws, row_idx, 8, str(paper.get("keywords", "") or ""))
 
+
+def _split_for_sheet(value: str, chunk_size: int = 320) -> list[str]:
+    normalized = format_structured_text(value or "")
+    if len(normalized) <= chunk_size:
+        return [normalized]
+
+    chunks: list[str] = []
+    remaining = normalized
+    while remaining:
+        if len(remaining) <= chunk_size:
+            chunks.append(remaining)
+            break
+        split_at = remaining.rfind(" ", 0, chunk_size)
+        if split_at <= 0:
+            split_at = chunk_size
+        chunks.append(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+    return [chunk for chunk in chunks if chunk]
+
+
+def _populate_chat_blocks_sheet(ws: Worksheet, messages: list[dict]) -> None:
+    headers = ["Message", "Role", "Block", "Order", "Content"]
+    _set_header_row(ws, headers)
+    row_idx = 2
+    for message_idx, msg in enumerate(messages, start=1):
+        role = str(msg.get("role", "user")).upper()
+        for block_idx, block in enumerate(build_export_blocks(str(msg.get("content", ""))), start=1):
+            block_label = block.kind.title()
+            if block.kind == "table":
+                for table_row_idx, table_row in enumerate(block.rows, start=1):
+                    pairs = []
+                    for cell_idx, cell in enumerate(table_row):
+                        label = block.headers[cell_idx] if cell_idx < len(block.headers) else f"Column {cell_idx + 1}"
+                        pairs.append(f"{label}: {cell}")
+                    _set_cell(ws, row_idx, 1, str(message_idx))
+                    _set_cell(ws, row_idx, 2, role)
+                    _set_cell(ws, row_idx, 3, f"{block_label} Row")
+                    _set_cell(ws, row_idx, 4, f"{block_idx}.{table_row_idx}")
+                    _set_cell(ws, row_idx, 5, " | ".join(pairs))
+                    row_idx += 1
+                continue
+
+            content = inline_tokens_to_text(block.tokens) if block.tokens else block.text
+            for part_idx, part in enumerate(_split_for_sheet(content), start=1):
+                _set_cell(ws, row_idx, 1, str(message_idx))
+                _set_cell(ws, row_idx, 2, role)
+                _set_cell(ws, row_idx, 3, block_label)
+                _set_cell(ws, row_idx, 4, f"{block_idx}.{part_idx}")
+                _set_cell(ws, row_idx, 5, part)
+                row_idx += 1
+
+    _apply_alternating_rows(ws)
+    _auto_column_widths(ws, min_width=10, max_width=42)
+
+
+def _populate_paper_fields_sheet(ws: Worksheet, paper_data: list[dict]) -> None:
+    headers = ["Paper", "Field", "Part", "Content"]
+    _set_header_row(ws, headers)
+    row_idx = 2
+    fields = [
+        ("authors", "Authors"),
+        ("year", "Year"),
+        ("abstract", "Abstract"),
+        ("problem", "Problem"),
+        ("method", "Method"),
+        ("results", "Results"),
+        ("keywords", "Keywords"),
+    ]
+    for paper in paper_data:
+        paper_title = str(paper.get("title", ""))
+        for key, label in fields:
+            value = str(paper.get(key, "") or "")
+            parts = _split_for_sheet(value, chunk_size=280)
+            for part_idx, part in enumerate(parts, start=1):
+                _set_cell(ws, row_idx, 1, paper_title)
+                _set_cell(ws, row_idx, 2, label)
+                _set_cell(ws, row_idx, 3, str(part_idx))
+                _set_cell(ws, row_idx, 4, part)
+                row_idx += 1
+
+    _apply_alternating_rows(ws)
+    _auto_column_widths(ws, min_width=12, max_width=40)
+
 def _populate_citation_rows(ws: Worksheet, citations: list[dict]) -> None:
     for row_idx, cit in enumerate(citations, start=2):
         _set_cell(ws, row_idx, 1, strip_markdown(str(cit.get("claim", ""))))
@@ -120,11 +204,12 @@ def _populate_comparison_table_sheet(
     for row_idx, row in enumerate(comparison_table, start=2):
         _set_cell(ws, row_idx, 1, str(row.get("dimension", "")))
         for col_idx, cell in enumerate(row.get("cells", []), start=2):
-            _set_cell(ws, row_idx, col_idx, format_structured_text(str(cell.get("content", ""))))
+            value = format_structured_text(str(cell.get("content", "")))
+            _set_cell(ws, row_idx, col_idx, value)
         _set_cell(ws, row_idx, len(headers), format_structured_text(str(row.get("synthesis", ""))))
 
     _apply_alternating_rows(ws)
-    _auto_column_widths(ws, min_width=18, max_width=48)
+    _auto_column_widths(ws, min_width=18, max_width=36)
 
 
 def _populate_cited_media_sheet(ws: Worksheet, cited_assets: list[dict]) -> None:
@@ -140,6 +225,20 @@ def _populate_cited_media_sheet(ws: Worksheet, cited_assets: list[dict]) -> None
         _set_cell(ws, row_idx, 6, format_structured_text(str(asset.get("content", ""))))
         _set_cell(ws, row_idx, 7, str(asset.get("image_path", "") or ""))
 
+        image_path = asset.get("image_path")
+        if image_path:
+            try:
+                from openpyxl.drawing.image import Image as XLImage
+
+                if Path(image_path).exists():
+                    image = XLImage(str(image_path))
+                    image.width = min(image.width, 220)
+                    image.height = min(image.height, 160)
+                    ws.add_image(image, f"H{row_idx}")
+                    ws.row_dimensions[row_idx].height = max(ws.row_dimensions[row_idx].height or 15, 120)
+            except Exception:
+                pass
+
     _apply_alternating_rows(ws)
     _auto_column_widths(ws, min_width=14, max_width=42)
 
@@ -151,6 +250,7 @@ def export_comparison_to_excel(
     cited_assets: list[dict] | None = None,
 ) -> Path:
     output_path = Path(output_path)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
     wb = Workbook()
 
     ws_comp = wb.active
@@ -182,12 +282,8 @@ def export_comparison_to_excel(
         _auto_column_widths(ws_comp)
         ws_comp.column_dimensions["A"].width = 110
 
-    ws_papers = wb.create_sheet(title="Paper Details")
-    headers = ["Title", "Authors", "Year", "Abstract", "Problem", "Method", "Results", "Keywords"]
-    _set_header_row(ws_papers, headers)
-    _populate_comparison_rows(ws_papers, paper_data)
-    _apply_alternating_rows(ws_papers)
-    _auto_column_widths(ws_papers)
+    ws_papers = wb.create_sheet(title="Paper Fields")
+    _populate_paper_fields_sheet(ws_papers, paper_data)
 
     if cited_assets:
         ws_media = wb.create_sheet(title="Cited Media")
@@ -205,24 +301,17 @@ def export_citations_to_excel(
     cited_assets: list[dict] | None = None,
 ) -> Path:
     output_path = Path(output_path)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
     wb = Workbook()
 
     ws_chat = wb.active
     if ws_chat is None:
         raise ValueError("Failed to create worksheet")
-    ws_chat.title = session_title[:31]
-
-    chat_headers = ["Role", "Content"]
-    _set_header_row(ws_chat, chat_headers)
-
+    ws_chat.title = "Chat Blocks"
     if messages:
-        for row_idx, msg in enumerate(messages, start=2):
-            role = msg.get("role", "user").upper()
-            content = strip_markdown(msg.get("content", ""))
-            _set_cell(ws_chat, row_idx, 1, role)
-            _set_cell(ws_chat, row_idx, 2, content)
-    _apply_alternating_rows(ws_chat)
-    _auto_column_widths(ws_chat)
+        _populate_chat_blocks_sheet(ws_chat, messages)
+    else:
+        _set_header_row(ws_chat, ["Message", "Role", "Block", "Order", "Content"])
 
     ws_cit = wb.create_sheet(title="Citation Verification")
     cit_headers = ["Claim", "Confidence", "Score", "Source Sentence", "Paragraph ID"]
