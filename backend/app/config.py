@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
     USE_LOCAL_LLM: bool = True
     OLLAMA_MODEL: str = "qwen2.5:7b"
     OLLAMA_VISION_MODEL: str = "qwen2.5vl:3b"
@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     MEMORY_PRESSURE_THRESHOLD: float = 0.80
     PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600
     COMPARISON_TIMEOUT_SECONDS: int = 600
+
+    EMBEDDING_MODEL: str = "mixedbread-ai/mxbai-embed-large-v1"
+    EMBEDDING_DIMENSIONS: int = 1024
+    KEYBERT_MODEL: str = "all-mpnet-base-v2"
 
     HAVF_HIGH_THRESHOLD: float = 0.85
     HAVF_MEDIUM_THRESHOLD: float = 0.65

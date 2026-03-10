@@ -123,6 +123,10 @@ See `.env.example` for the full list. Key variables:
 | `MAX_FILE_SIZE_MB` | `50` | Max upload size |
 | `MAX_FILES_PER_SESSION` | `7` | Max papers per session |
 | `MAX_PARALLEL_PAPERS` | `3` | Concurrent processing limit |
+| `EMBEDDING_MODEL` | `mixedbread-ai/mxbai-embed-large-v1` | Sentence embedding model |
+| `EMBEDDING_DIMENSIONS` | `1024` | Must match the chosen model's output size |
+| `CROSS_ENCODER_MODEL` | `BAAI/bge-reranker-base` | HAVF Level-2 reranker |
+| `KEYBERT_MODEL` | `all-mpnet-base-v2` | KeyBERT backbone for keyword extraction |
 
 ---
 
@@ -143,12 +147,36 @@ python -m scripts.seed_db
 
 ## Hardware Target
 
-Optimised for **8 GB unified memory** (M-series Mac / equivalent):
+### Windows / Linux (≥ 16 GB RAM or CUDA GPU) — default
+
+The default `.env.example` values target this profile for the best retrieval quality.
 
 | Component | Memory |
 |---|---|
-| Embedding model (mixedbread-ai/mxbai-embed-large-v1) | ~200 MB |
-| Cross-encoder (lazy-loaded) | ~80 MB |
-| FAISS index (7 papers) | ~5 MB |
+| Embedding model (`mixedbread-ai/mxbai-embed-large-v1`, 1024d) | ~430 MB |
+| Cross-encoder (`BAAI/bge-reranker-base`, lazy-loaded) | ~90 MB |
+| FAISS index (7 papers) | ~10 MB |
 | SQLite + app overhead | ~100 MB |
-| **Total** | **~3.1 GB headroom** |
+| **Total** | **~630 MB** |
+
+### Mac M1/M2 (8 GB unified memory) — lower-RAM alternative
+
+Switch to the smaller models in `.env` to keep memory usage under 1 GB:
+
+```dotenv
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+EMBEDDING_DIMENSIONS=384
+CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+KEYBERT_MODEL=all-MiniLM-L6-v2
+```
+
+| Component | Memory |
+|---|---|
+| Embedding model (`BAAI/bge-small-en-v1.5`, 384d) | ~90 MB |
+| Cross-encoder (`ms-marco-MiniLM-L-6-v2`, lazy-loaded) | ~50 MB |
+| FAISS index (7 papers) | ~4 MB |
+| SQLite + app overhead | ~100 MB |
+| **Total** | **~244 MB** |
+
+> ⚠️ **After switching models**, delete `data/faiss_indexes/` and reprocess all papers.
+> The FAISS index dimension must match `EMBEDDING_DIMENSIONS` or the server will crash on startup.

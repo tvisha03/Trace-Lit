@@ -28,7 +28,7 @@ class FileStorage:
             raise ValueError(f"File '{filename}' is empty; refusing to save.")
         dest_dir = self._uploads / session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / filename
+        dest = (dest_dir / filename).resolve()
         try:
             dest.write_bytes(content)
         except OSError as exc:
@@ -41,7 +41,7 @@ class FileStorage:
         return dest
 
     def get_upload_path(self, filename: str, session_id: str) -> Path:
-        return self._uploads / session_id / filename
+        return (self._uploads / session_id / filename).resolve()
 
     def delete_session_uploads(self, session_id: str) -> None:
         session_dir = self._uploads / session_id
@@ -52,13 +52,40 @@ class FileStorage:
     def save_export(self, content: bytes, filename: str, session_id: str) -> Path:
         dest_dir = self._exports / session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / filename
+        dest = (dest_dir / filename).resolve()
         dest.write_bytes(content)
         logger.info(f"Saved export: {dest}")
         return dest
 
     def get_export_path(self, filename: str, session_id: str) -> Path:
-        return self._exports / session_id / filename
+        return (self._exports / session_id / filename).resolve()
+
+    def find_export(self, filename: str) -> Path | None:
+        """Search all session subdirectories for *filename*.
+
+        Called when the download request carries a session_id that doesn't
+        match where the file was actually saved (e.g. the user copied the
+        filename but navigated to a different session URL).  Export filenames
+        embed the originating session prefix and a random suffix so collisions
+        are practically impossible.
+        """
+        exports_root = self._exports.resolve()
+        if not exports_root.is_dir():
+            return None
+        for session_dir in exports_root.iterdir():
+            if not session_dir.is_dir():
+                continue
+            candidate = session_dir / filename
+            if candidate.exists():
+                return candidate.resolve()
+        return None
+
+    def list_exports(self, session_id: str) -> list[Path]:
+        """Return all export files that currently exist for *session_id*."""
+        exports_dir = (self._exports / session_id).resolve()
+        if not exports_dir.is_dir():
+            return []
+        return sorted(exports_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
 
     def delete_session_exports(self, session_id: str) -> None:
         exports_dir = self._exports / session_id

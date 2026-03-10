@@ -22,14 +22,16 @@ _PERSISTENCE_PATH = Path(
 
 _PROVIDER_LIMITS: dict[str, dict[str, int]] = {
     LLMProvider.GEMINI.value: {
+        # Gemini 2.5 Flash free tier: 10 RPM, 250k TPD, ~500 RPD (conservative)
         "tpm": 250_000,
-        "rpm": 20,
-        "rpd": 200,
+        "rpm": 10,
+        "rpd": 500,
     },
     LLMProvider.GROQ.value: {
-        "tpm": 12_000,
+        # llama-3.1-8b-instant free tier: 20k TPM, 30 RPM, 14.4k RPD
+        "tpm": 20_000,
         "rpm": 30,
-        "rpd": 1_000,
+        "rpd": 14_400,
     },
     LLMProvider.OLLAMA.value: {
         "tpm": 999_999,
@@ -228,7 +230,7 @@ class RateLimitMonitor:
     def can_make_request(
         self,
         provider: LLMProvider,
-        estimated_tokens: int = 8_500,
+        estimated_tokens: int = 3_000,
     ) -> bool:
         cooldown_remaining = self.cooldown_remaining(provider)
         if cooldown_remaining > 0:
@@ -343,7 +345,7 @@ class RateLimitMonitor:
     def get_available_provider(
         self,
         provider_order: list[LLMProvider],
-        estimated_tokens: int = 8_500,
+        estimated_tokens: int = 3_000,
     ) -> LLMProvider | None:
         for provider in provider_order:
             if self.can_make_request(provider, estimated_tokens):

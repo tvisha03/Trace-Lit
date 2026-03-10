@@ -1,9 +1,10 @@
 
-from fastapi import APIRouter, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, Path, Request, BackgroundTasks
 from fastapi.responses import FileResponse
+from typing import Annotated
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.v1.schemas import ExportRequest, ComparisonExportRequest, ExportResponse
+from api.v1.schemas import ExportRequest, ComparisonExportRequest, ExportResponse, ExportListItem, ExportListResponse
 from app.dependencies import get_db
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.db.crud.paper_crud import get_paper
@@ -35,6 +36,27 @@ def _validate_filename(filename: str) -> None:
 
 def _get_llm(request: Request) -> FallbackChain:
     return request.app.state.llm
+
+@router.get("", response_model=ExportListResponse)
+async def list_exports(session_id: str):
+    """List all export files currently available for download in this session.
+
+    Use the returned ``filename`` values with the
+    ``GET /export/download/{filename}`` endpoint.
+    Note: each file is deleted from disk once it has been downloaded.
+    """
+    file_storage = FileStorage()
+    files = file_storage.list_exports(session_id)
+    items = [
+        ExportListItem(
+            filename=f.name,
+            download_url=f"/api/v1/sessions/{session_id}/export/download/{f.name}",
+            size_bytes=f.stat().st_size,
+        )
+        for f in files
+    ]
+    return ExportListResponse(exports=items)
+
 
 @router.post("", response_model=ExportResponse)
 async def export_session(
@@ -120,13 +142,34 @@ async def export_comparison_route(
 @router.get("/download/{filename}")
 async def download_export(
     session_id: str,
-    filename: str,
+    filename: Annotated[
+        str,
+        Path(
+            description=(
+                "Exact filename returned by the POST /export or POST /export/comparison "
+                "endpoint (e.g. 'chat_0ef9e115_ab12cd.pdf'). "
+                "Use GET /export to list files that are currently available for download."
+            )
+        ),
+    ],
     background_tasks: BackgroundTasks,
 ):
     _validate_filename(filename)
 
     file_storage = FileStorage()
     file_path = file_storage.get_export_path(filename, session_id)
+
+    # If the file isn't under the requested session, check all sessions.
+    # This happens when the user copies a filename but the download URL
+    # references a different session than the one used during export.
+    if not file_path.exists():
+        found = file_storage.find_export(filename)
+        if found is not None:
+            logger.info(
+                f"Export '{filename}' not found under session {session_id!r} — "
+                f"resolved via cross-session search to {found}"
+            )
+            file_path = found
 
     try:
         file_path.resolve().relative_to(file_storage._exports.resolve())

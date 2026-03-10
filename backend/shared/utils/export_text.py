@@ -14,7 +14,10 @@ _MD_LIST_MARKER = re.compile(r"^[\s]*[-*+]\s+")
 _MD_NUMBERED_LIST = re.compile(r"^[\s]*(\d+)\.\s+")
 _MD_TABLE_SEP_RE = re.compile(r"^\|?[\s:]*-{2,}[\s:]*(?:\|[\s:]*-{2,}[\s:]*)+\|?\s*$")
 _PARA_ID_TAG = re.compile(r"\[[a-f0-9]{8}_[PTFE]\d+\]")
-_CITATION_TAG = re.compile(r"\[(?:[PTFE]\d+)(?:-S\d+)?\]")
+# Matches both old-style [P16] and new UUID-prefixed [abc12345_P16] citation tags.
+_CITATION_TAG = re.compile(r"\[(?:[a-f0-9]{1,8}_)?[PTFE]\d+(?:-S\d+)?\]")
+# Strips the AI-generated disclaimer note appended when citations cannot be verified.
+_DISCLAIMER_RE = re.compile(r"\n\n---\n_?⚠️[^\n]*(?:\n[^\n]*)*?_?\s*$", re.DOTALL)
 _INLINE_PATTERN = re.compile(
     r"(\*\*[^*\n]+\*\*|\*[^*\n]+\*|\\\$[^$\n]+\\\$|\$[^$\n]+\$|\\\([^\n]+?\\\)|\\\[[\s\S]+?\\\])"
 )
@@ -85,6 +88,18 @@ class ExportBlock:
     tokens: list[InlineToken] = field(default_factory=list)
     headers: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
+
+
+def shorten_paragraph_id(paragraph_id: str) -> str:
+    """Return the human-readable part of a paragraph ID.
+
+    Full IDs stored in the DB are prefixed with an 8-char hex chunk hash,
+    e.g. ``b081c7f5_P16``.  For display in exports we only need ``P16``.
+    Plain IDs without a prefix (legacy format) are returned unchanged.
+    """
+    if "_" in paragraph_id:
+        return paragraph_id.split("_", 1)[1]
+    return paragraph_id
 
 
 def extract_citation_ids(text: str) -> list[str]:
@@ -166,6 +181,9 @@ def _normalize_source_text(text: str) -> str:
     text = text or ""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("<br/>", "\n").replace("<br />", "\n").replace("<br>", "\n")
+    # Strip the disclaimer note before further processing so it never reaches
+    # the exported document body.
+    text = _DISCLAIMER_RE.sub("", text)
     text = _MD_IMAGE.sub("", text)
     text = _MD_CODE_BLOCK.sub("", text)
     text = _MD_INLINE_CODE.sub(r"\1", text)

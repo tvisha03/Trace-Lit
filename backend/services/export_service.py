@@ -36,6 +36,20 @@ _COMPARISON_INTRO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Strips the disclaimer note appended when attribution verification fails.
+_EXPORT_DISCLAIMER_RE = re.compile(
+    r"\n\n---\n_?\u26a0\ufe0f[^\n]*(?:\n[^\n]*)*?_?\s*$",
+    re.DOTALL,
+)
+
+# Substrings that signal a message contains no useful answer for export.
+_ERROR_CONTENT_FRAGMENTS = (
+    "i apologize, but i was unable",
+    "this information is not available in the",
+    "could not find relevant information",
+    "unable to generate a verified response",
+)
+
 def _check_export_size(output_path: Path) -> None:
     if not output_path.exists():
         return
@@ -618,10 +632,37 @@ def _looks_like_comparison_message(message: dict) -> bool:
     return marker_hits >= 3 and "paper 1" in normalized and "paper 2" in normalized
 
 
+def _looks_like_error_message(message: dict) -> bool:
+    """Return True for assistant messages that contain only an error/apology fallback.
+
+    These messages add no scholarly value to an exported document.  We look for
+    the well-known error fragments after stripping the trailing disclaimer note
+    so that the check is not confused by the ``⚠️ Note`` suffix that the system
+    appends to otherwise valid (but unattributed) answers.
+    """
+    if str(message.get("role", "")).lower() != "assistant":
+        return False
+
+    content = str(message.get("content", "") or "")
+    # Strip the disclaimer suffix, then inspect what remains.
+    real_content = _EXPORT_DISCLAIMER_RE.sub("", content).strip()
+    if not real_content:
+        # Nothing left after removing the disclaimer — pure error message.
+        return True
+
+    normalised = real_content.lower()
+    return any(fragment in normalised for fragment in _ERROR_CONTENT_FRAGMENTS)
+
+
 def _filter_chat_export_messages(messages: list[dict]) -> list[dict]:
-    filtered = [message for message in messages if not _looks_like_comparison_message(message)]
+    filtered = [
+        message
+        for message in messages
+        if not _looks_like_comparison_message(message)
+        and not _looks_like_error_message(message)
+    ]
     removed = len(messages) - len(filtered)
     if removed:
-        logger.info("Filtered %s comparison message(s) from chat export", removed)
+        logger.info("Filtered %s low-quality message(s) from chat export", removed)
     return filtered
 

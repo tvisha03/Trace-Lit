@@ -7,7 +7,7 @@ import importlib
 from shared.logger import get_logger
 from shared.errors import PDFExportError
 from shared.utils.export_media import prepare_cited_assets
-from shared.utils.export_text import build_export_blocks, inline_tokens_to_text, sanitize_for_pdf, format_structured_text
+from shared.utils.export_text import build_export_blocks, inline_tokens_to_text, sanitize_for_pdf, format_structured_text, shorten_paragraph_id
 from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
@@ -143,7 +143,7 @@ def _render_havf_results(pdf, havf_results: list[dict]) -> None:
 
         badge = f"  [{confidence.upper()}] ({score:.0%})"
         if paragraph_id:
-            badge += f"  [{paragraph_id}]"
+            badge += f"  [{shorten_paragraph_id(paragraph_id)}]"
         if chunk_type and chunk_type != "text":
             badge += f"  ({chunk_type})"
         pdf.cell(w=0, h=3.5, text=badge, ln=True)

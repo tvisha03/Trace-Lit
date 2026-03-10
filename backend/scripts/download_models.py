@@ -1,16 +1,26 @@
 def main():
+    import sys, os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from app.config import get_settings
+    settings = get_settings()
+
     print("=" * 60)
     print("Trace-Lit Model Downloader")
     print("=" * 60)
 
-    print("\n[1/2] Downloading embedding model: mixedbread-ai/mxbai-embed-large-v1 ...")
+    print(f"\n[1/3] Downloading embedding model: {settings.EMBEDDING_MODEL} ...")
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("mixedbread-ai/mxbai-embed-large-v1")
+    model = SentenceTransformer(settings.EMBEDDING_MODEL)
     print(f"  ✓ Loaded ({model.get_sentence_embedding_dimension()} dims)")
 
-    print("\n[2/2] Downloading cross-encoder: BAAI/bge-reranker-base ...")
+    print(f"\n[2/3] Downloading cross-encoder: {settings.CROSS_ENCODER_MODEL} ...")
     from sentence_transformers import CrossEncoder
-    CrossEncoder("BAAI/bge-reranker-base")
+    CrossEncoder(settings.CROSS_ENCODER_MODEL)
+    print("  ✓ Loaded")
+
+    print(f"\n[3/3] Downloading KeyBERT model: {settings.KEYBERT_MODEL} ...")
+    from keybert import KeyBERT
+    KeyBERT(model=settings.KEYBERT_MODEL)
     print("  ✓ Loaded")
 
     print("\n" + "=" * 60)

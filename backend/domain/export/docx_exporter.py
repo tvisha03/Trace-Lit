@@ -5,7 +5,7 @@ from pathlib import Path
 from shared.logger import get_logger
 from shared.errors import TraceLitError
 from shared.utils.export_media import prepare_cited_assets
-from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text
+from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text, shorten_paragraph_id
 
 logger = get_logger(__name__)
 
@@ -92,7 +92,7 @@ def _add_verification_section(doc, havf_results, Pt, RGBColor):
         badge_run.font.color.rgb = _confidence_rgb(confidence)
 
         if paragraph_id:
-            ref_run = r_para.add_run(f"  [{paragraph_id}]")
+            ref_run = r_para.add_run(f"  [{shorten_paragraph_id(paragraph_id)}]")
             ref_run.font.size = Pt(8)
             ref_run.font.color.rgb = RGBColor(100, 100, 100)
 

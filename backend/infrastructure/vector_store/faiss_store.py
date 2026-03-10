@@ -16,7 +16,7 @@ else:
         faiss = None  # type: ignore
 
 from app.config import get_settings
-from shared.constants import EMBEDDING_DIMENSIONS, FAISS_TOP_K_PER_PAPER, FAISS_MAX_VECTORS
+from shared.constants import FAISS_TOP_K_PER_PAPER, FAISS_MAX_VECTORS
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -45,7 +45,7 @@ class FAISSStore:
             if self._index is not None:
                 logger.info(f"FAISS index loaded — {self._index.ntotal} vectors")
         else:
-            self._index = faiss.IndexFlatIP(EMBEDDING_DIMENSIONS)
+            self._index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
             self._id_map = []
             logger.info("Created fresh FAISS index")
 
@@ -207,16 +207,16 @@ class FAISSStore:
                 except Exception as exc:
                     logger.warning(f"Skipping vector at index {i} during rebuild: {exc}")
             if not reconstructed:
-                self._index = faiss.IndexFlatIP(EMBEDDING_DIMENSIONS)
+                self._index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
                 self._id_map = []
                 return
             all_vectors = np.array(reconstructed)
-            new_index = faiss.IndexFlatIP(EMBEDDING_DIMENSIONS)
+            new_index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
             new_index.add(all_vectors)
             self._index = new_index
             self._id_map = [self._id_map[i] for i in keep_indices]
         else:
-            self._index = faiss.IndexFlatIP(EMBEDDING_DIMENSIONS)
+            self._index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
             self._id_map = []
 
     @property
@@ -225,7 +225,8 @@ class FAISSStore:
 
     def get_stats(self) -> dict:
         total = self.total_vectors
-        memory_bytes = total * EMBEDDING_DIMENSIONS * 4
+        dims = get_settings().EMBEDDING_DIMENSIONS
+        memory_bytes = total * dims * 4
         return {
             "total_vectors": total,
             "max_vectors": FAISS_MAX_VECTORS,

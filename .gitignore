@@ -43,3 +43,7 @@ test_papers/
 
 #Ignore vscode AI rules
 .github\instructions\codacy.instructions.md
+
+#Ignore postman collection
+postman/
+

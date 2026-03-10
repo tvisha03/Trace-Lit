@@ -61,6 +61,30 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Patch OpenAPI schema so Swagger UI renders file upload as a file picker.
+    # FastAPI 0.99+ defaults to OpenAPI 3.1 which represents binary items as
+    # {type: string, contentMediaType: ...} — Swagger UI doesn't recognise that
+    # format and falls back to plain text inputs.  We rewrite every component
+    # schema that has a "files" array property to use the OAS 3.0-style
+    # {type: string, format: binary} that Swagger UI correctly maps to a file
+    # chooser.  We patch components/schemas (where FastAPI puts the $ref'd
+    # body model) rather than the inline requestBody, which only holds a $ref.
+    _original_openapi = app.openapi
+
+    def _patched_openapi():
+        schema = _original_openapi()
+        for component_schema in schema.get("components", {}).get("schemas", {}).values():
+            props = component_schema.get("properties", {})
+            if "files" in props:
+                props["files"] = {
+                    "type": "array",
+                    "items": {"type": "string", "format": "binary"},
+                    "title": "PDF files to upload",
+                }
+        return schema
+
+    app.openapi = _patched_openapi
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,

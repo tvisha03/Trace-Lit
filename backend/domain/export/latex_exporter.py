@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 from shared.logger import get_logger
 from shared.errors import TraceLitError
-from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text
+from shared.utils.export_text import build_export_blocks, format_structured_text, inline_tokens_to_text, shorten_paragraph_id
 
 logger = get_logger(__name__)
 _DISPLAY_FORMULA_RE = re.compile(r"(?:\\\[|\$\$)([\s\S]+?)(?:\\\]|\$\$)|\\\(([\s\S]+?)\\\)|\$([^$\n]+)\$")
@@ -53,7 +53,7 @@ def _add_verification_section_latex(lines: list[str], havf_results: list) -> Non
         score = r.get("score", 0)
 
         badge = f"{confidence.upper()} {score:.0%}"
-        ref = f" [{_escape_latex(paragraph_id)}]" if paragraph_id else ""
+        ref = f" [{_escape_latex(shorten_paragraph_id(paragraph_id))}]" if paragraph_id else ""
         claim_text = _latexify_plain_text(format_structured_text(claim))
         lines.append(r"  \item \textbf{[" + _escape_latex(badge) + r"]} " + claim_text + ref)
     lines.append(r"\end{itemize}")

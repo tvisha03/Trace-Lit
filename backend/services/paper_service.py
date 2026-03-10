@@ -137,6 +137,10 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
             await asyncio.sleep(0.5 * attempt)
 
 async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
+    # Only clean up partial DB chunks — the uploaded PDF is intentionally kept
+    # on disk so that the user does not lose it and can retry processing without
+    # having to re-upload.  The file is only removed when the user explicitly
+    # deletes the paper via the DELETE /papers/{id} endpoint.
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     try:
         await delete_chunks_by_paper(db, paper_id)
@@ -145,18 +149,6 @@ async def _cleanup_after_failure(paper_id: str, db: AsyncSession):
     except Exception as exc:
         await db.rollback()
         logger.warning(f"Could not clean up chunks for {paper_id}: {exc}")
-
-    try:
-        paper = await get_paper(db, paper_id)
-        if paper and paper.file_path:
-            from pathlib import Path
-
-            file_path = Path(paper.file_path)
-            if file_path.exists():
-                file_path.unlink()
-                logger.info(f"Cleaned up orphaned upload after failure: {file_path}")
-    except Exception as exc:
-        logger.warning(f"Could not clean up upload for {paper_id}: {exc}")
 
 def _classify_figure(fig) -> ChunkType:
     fig_type = (getattr(fig, "figure_type", "") or "").lower()

@@ -26,13 +26,19 @@ async def validate_response_has_citations(
         if not context:
             return ("I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers.",
                     True)
-        return (
-            "I apologize, but I was unable to properly attribute my response to specific "
-            "sections of the uploaded papers. The information provided may not be "
-            "accurately sourced. Please try rephrasing your question or verify the "
-            "information independently.",
-            True
+        # LLM produced an answer but without traceable citations — surface the
+        # answer rather than hiding it behind an opaque apology.  The disclaimer
+        # lets the user know they should verify the content themselves.
+        logger.warning(
+            "validate_response_has_citations: LLM response contains no traceable "
+            "paragraph citations. Returning the answer with an unverified disclaimer."
         )
+        disclaimer = (
+            "\n\n---\n"
+            "_⚠️ Note: This response could not be automatically attributed to specific "
+            "sections of the uploaded papers. Please verify the information independently._"
+        )
+        return (response.strip() + disclaimer, True)
 
     if retrieved_paragraph_ids:
         raw_cited = set(extract_paragraph_ids(response))
@@ -88,7 +94,10 @@ async def _validate_and_update_response_content(
     )
     response.content = validated_content
     if citations_stripped:
-        logger.info("Citation validation: some citations were removed due to invalid references")
+        # This fires when either (a) no citations were found and a disclaimer was
+        # appended, or (b) some citations referenced non-existent paragraphs and
+        # were stripped.  Both cases degrade attribution quality.
+        logger.info("Citation validation: response modified — citations absent or referencing unknown paragraphs")
 
 async def _process_and_save_response(
     response: ChatResponse,

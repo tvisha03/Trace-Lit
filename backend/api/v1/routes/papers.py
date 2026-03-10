@@ -1,5 +1,6 @@
 
 from fastapi import APIRouter, Depends, UploadFile, File, Request
+from typing import Annotated
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import asyncio
@@ -223,7 +224,7 @@ async def _register_all_papers(
 async def upload_papers(
     session_id: str,
     request: Request,
-    files: list[UploadFile] = File(...),
+    files: Annotated[list[UploadFile], File(description="PDF files to upload")],
     db: AsyncSession = Depends(get_db),
 ):
     _upload_limiter.enforce(request)

@@ -139,6 +139,20 @@ async def _classify_and_validate_query(
         logger.error(f"Query classification failed: {exc}")
         raise
 
+
+def _apply_keyword_filter(chunks: list, keywords: list[str] | None) -> list:
+    """Return *chunks* filtered to those mentioning any keyword.
+
+    Falls back to the full unfiltered list when the filter would eliminate
+    everything (e.g. a Swagger UI placeholder keyword like ``"string"``).
+    """
+    if not keywords or not chunks:
+        return chunks
+    lower_kw = [kw.lower() for kw in keywords]
+    filtered = [c for c in chunks if any(kw in c.text.lower() for kw in lower_kw)]
+    return filtered if filtered else chunks
+
+
 async def _retrieve_and_filter_chunks(
     query: str,
     paper_ids: list[str],
@@ -159,10 +173,7 @@ async def _retrieve_and_filter_chunks(
         logger.error(f"Retrieval failed during streaming: {exc}")
         raise
 
-    if keywords and chunks:
-        lower_kw = [kw.lower() for kw in keywords]
-        chunks = [c for c in chunks if any(kw in c.text.lower() for kw in lower_kw)]
-    return chunks
+    return _apply_keyword_filter(chunks, keywords)
 
 async def _persist_response(
     session_id: str,
@@ -247,13 +258,16 @@ async def stream_chat_response(
         full_text, has_citations = _validate_and_strip_citations(full_text, chunks, session_id)
 
         if not has_citations:
-            full_text = (
-                "I was unable to provide a properly cited response based on "
-                "the uploaded papers. Please try rephrasing your question or "
-                "ensure the relevant papers have been uploaded."
+            # Keep the LLM's actual answer — appending a disclaimer is far more
+            # useful than replacing the whole response with an opaque apology.
+            disclaimer = (
+                "\n\n---\n"
+                "_⚠️ Note: This response could not be automatically attributed to specific "
+                "sections of the uploaded papers. Please verify the information independently._"
             )
+            full_text = full_text.strip() + disclaimer
             yield sse_event("warning", json.dumps(
-                {"detail": "Response replaced — no citations found. Confidence scores may be unreliable."}
+                {"detail": "Citations absent or invalid — answer shown with unverified disclaimer."}
             ))
 
         havf_data = await _emit_havf_results(full_text, chunks)

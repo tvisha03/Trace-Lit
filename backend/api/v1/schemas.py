@@ -186,6 +186,14 @@ class ExportResponse(BaseModel):
     filename: str
     format: str
 
+class ExportListItem(BaseModel):
+    filename: str
+    download_url: str
+    size_bytes: int
+
+class ExportListResponse(BaseModel):
+    exports: list[ExportListItem]
+
 class KeywordItem(BaseModel):
     keyword: str
     score: float

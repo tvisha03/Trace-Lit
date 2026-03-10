@@ -39,7 +39,10 @@ def _filter_chunks_by_keywords(
     if not keywords or not chunks:
         return chunks
     lower_kw = [kw.lower() for kw in keywords]
-    return [c for c in chunks if any(kw in c.text.lower() for kw in lower_kw)]
+    filtered = [c for c in chunks if any(kw in c.text.lower() for kw in lower_kw)]
+    # If the filter eliminates all chunks (e.g. a placeholder keyword like "string"
+    # sent from Swagger UI), ignore the filter so the LLM still gets context.
+    return filtered if filtered else chunks
 
 def _build_user_prompt(
     query_type: QueryType,
@@ -143,12 +146,15 @@ async def generate_response(
 
     with timer("LLM generation"):
         settings = get_settings()
+        # Use the cloud token ceiling — each provider clamps to its own hard limit
+        # (local Ollama: 2048, Ollama Cloud/Gemini/Groq: 4096).
+        chat_max_tokens = settings.OLLAMA_CLOUD_MAX_TOKENS
         prompt_tokens = estimate_tokens(SYSTEM_PROMPT + user_prompt)
-        estimated_total = prompt_tokens + settings.OLLAMA_MAX_TOKENS
+        estimated_total = prompt_tokens + chat_max_tokens
         response_text, provider, _ = await llm.generate(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_tokens=settings.OLLAMA_MAX_TOKENS,
+            max_tokens=chat_max_tokens,
             estimated_tokens=estimated_total,
         )
 
@@ -275,7 +281,7 @@ async def generate_summary(
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
-        max_tokens=settings.OLLAMA_MAX_TOKENS,
+        max_tokens=settings.OLLAMA_CLOUD_MAX_TOKENS,
     )
     return response_text, provider
 

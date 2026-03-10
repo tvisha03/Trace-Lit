@@ -2,8 +2,8 @@ import os
 import numpy as np
 import torch # Explicit import to ensure it's available
 from sentence_transformers import SentenceTransformer
+from app.config import get_settings
 from infrastructure.vector_store.faiss_store import FAISSStore
-from shared.constants import EMBEDDING_MODEL_NAME, EMBEDDING_BATCH_SIZE
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
 
@@ -29,16 +29,16 @@ def _detect_best_device() -> str:
 def _get_encoder() -> SentenceTransformer:
     global _encoder, _encoder_device
     if _encoder is None:
+        model_name = get_settings().EMBEDDING_MODEL
         with timer("Load embedding model"):
             device = _detect_best_device()
             try:
-                # Force loading on the detected device
-                _encoder = SentenceTransformer(EMBEDDING_MODEL_NAME, device=device)
+                _encoder = SentenceTransformer(model_name, device=device)
                 _encoder_device = device
-                logger.info(f"🚀 SUCCESS: Using {device.upper()} for embeddings")
+                logger.info(f"🚀 SUCCESS: Using {device.upper()} for embeddings ({model_name})")
             except Exception as exc:
                 logger.warning(f"⚠️ GPU Init failed, falling back to CPU: {exc}")
-                _encoder = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
+                _encoder = SentenceTransformer(model_name, device="cpu")
                 _encoder_device = "cpu"
     return _encoder
 

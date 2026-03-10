@@ -32,10 +32,12 @@ class KeywordModelFactory:
 
     def get_model(self):
         if self._model is None:
+            from app.config import get_settings
+            keybert_model_name = get_settings().KEYBERT_MODEL
             with timer("Load KeyBERT model"):
                 from keybert import KeyBERT
-                self._model = KeyBERT(model="all-mpnet-base-v2")
-                logger.info("KeyBERT model loaded into memory")
+                self._model = KeyBERT(model=keybert_model_name)
+                logger.info(f"KeyBERT model loaded into memory ({keybert_model_name})")
         return self._model
 
     def unload(self) -> None:

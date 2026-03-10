@@ -3,17 +3,19 @@ You help researchers understand, compare, and analyse academic papers.
 
 STRICT RULES:
 1. ONLY use information from the provided source paragraphs, figure descriptions, tables, and equations.
-2. EVERY factual claim MUST include a citation in [P#], [F#], [T#], or [E#] format.
+2. EVERY factual claim MUST be cited using the EXACT paragraph ID shown in the context in square brackets
+   (for example: [abc12345_P12], [abc12345_F3], [abc12345_T2], [abc12345_E5]).
+   Copy the ID verbatim — do NOT invent IDs or use generic numbers like [P1] or [P2].
 3. If the answer is NOT in the provided context, say: "This information is not available in the uploaded papers."
 4. NEVER fabricate, assume, or infer information beyond what the sources state.
 5. When comparing papers, cite both sources for each comparison point.
 6. Use precise academic language. Be concise and specific.
-7. When referencing figures or charts, use [F#] citations and describe what the figure shows.
-8. When referencing tables or tabular data, use [T#] citations and summarise the relevant data.
-9. When referencing equations or formulas, use [E#] citations and explain the mathematical relationship.
+7. When referencing figures or charts, copy the [abc12345_F#] ID verbatim and describe what the figure shows.
+8. When referencing tables or tabular data, copy the [abc12345_T#] ID verbatim and summarise the relevant data.
+9. When referencing equations or formulas, copy the [abc12345_E#] ID verbatim and explain the relationship.
 
-You will receive context labeled with [P#] for paragraphs, [F#] for figures,
-[T#] for tables, and [E#] for equations.
+The context paragraphs are labelled with full IDs such as [abc12345_P12] or [abc12345_E394].
+You MUST reproduce those exact IDs in your citations — never shorten or renumber them.
 """
 
 CHAT_PROMPT_TEMPLATE = """Context from uploaded papers:
@@ -24,7 +26,8 @@ Conversation history:
 
 User question: {question}
 
-Respond using ONLY the context above. Cite every claim with [P#], [F#], [T#], or [E#].
+Respond using ONLY the context above. Cite every claim with the EXACT paragraph ID from the context
+(e.g. [abc12345_P12]). Do NOT use generic numbers like [P1] — copy the full ID verbatim.
 """
 
 COMPARISON_PROMPT_TEMPLATE = """You are comparing {paper_count} academic papers.
@@ -45,7 +48,7 @@ Compare ALL {paper_count} papers on the following dimensions:
 5. Limitations acknowledged
 
 If the user question focuses on a specific aspect, prioritise that dimension.
-For every comparison point, cite ALL relevant papers using [P#].
+For every comparison point, cite ALL relevant papers using the EXACT paragraph IDs from the context (e.g. [abc12345_P12]).
 When discussing differences or similarities, explicitly name which papers agree or disagree.
 Return ONLY a markdown table with this exact header:
 | {table_header} |
@@ -54,7 +57,7 @@ Return ONLY a markdown table with this exact header:
 Rules for the table:
 - The rows must appear in exactly this order: Research problem and motivation, Methodology and approach, Key findings and results, Datasets used, Limitations acknowledged.
 - The first column must be the dimension name.
-- Each paper cell must contain 1-2 concise sentences and preserve citations such as [P#], [F#], [T#], or [E#].
+- Each paper cell must contain 1-2 concise sentences and preserve citations using the exact paragraph IDs from the context (e.g. [abc12345_P12]).
 - The final synthesis column must summarize the cross-paper comparison for that row in 1 concise sentence with citations.
 - Use <br> inside a cell instead of adding extra newlines.
 - Do not add any prose before or after the table."""
@@ -65,13 +68,14 @@ SUMMARY_PROMPT_TEMPLATE = """Context from the paper:
 User question: {question}
 
 Provide a concise summary of this paper covering:
-1. **Problem**: What problem does this paper address? [P#]
-2. **Approach**: What methodology is used? [P#]
-3. **Key Findings**: What are the main results? [P#]
-4. **Contributions**: What is novel about this work? [P#]
+1. **Problem**: What problem does this paper address?
+2. **Approach**: What methodology is used?
+3. **Key Findings**: What are the main results?
+4. **Contributions**: What is novel about this work?
 
 If the user question requests a specific focus, address it directly.
-Cite every point with [P#].
+Cite every point with the EXACT paragraph ID shown in the context (e.g. [abc12345_P12]).
+Do NOT use generic numbers like [P1] — copy the full ID verbatim.
 """
 
 GAP_ANALYSIS_PROMPT_TEMPLATE = """You are analysing {paper_count} academic papers together.
@@ -83,32 +87,34 @@ Context from the papers:
 {context}
 
 Analyse the research landscape represented by ALL {paper_count} papers above:
-1. **Common themes**: What topics do multiple papers address? Identify which specific papers cover each theme. [P#]
+1. **Common themes**: What topics do multiple papers address? Identify which specific papers cover each theme.
 2. **Methodological gaps**: What approaches are underexplored across the set of papers? Which papers use which methods?
 3. **Missing perspectives**: What viewpoints, datasets, or populations are absent from the collective body of work?
-4. **Contradictions & agreements**: Where do the papers agree or disagree? Cite specific papers for each point. [P#]
+4. **Contradictions & agreements**: Where do the papers agree or disagree? Cite specific papers for each point.
 5. **Future directions**: Based on the limitations mentioned across ALL papers, what should be studied next?
 
 Ensure you reference ALL {paper_count} papers in your analysis, not just a subset.
-Cite every observation with [P#]."""
+Cite every observation with the EXACT paragraph ID from the context (e.g. [abc12345_P12]).
+Do NOT use generic numbers like [P1] — copy the full ID verbatim."""
 
 LITERATURE_REVIEW_PROMPT_TEMPLATE = """Context from multiple papers:
 {context}
 
 Write a structured literature review covering the papers above:
-1. **Introduction**: Briefly describe the research area and scope of the reviewed papers. [P#]
-2. **Thematic Analysis**: Group papers by theme or methodology, discussing each paper's contribution. [P#]
-3. **Comparative Discussion**: Highlight agreements, contradictions, and complementary findings across papers. [P#]
-4. **Synthesis**: Summarise the overall state of knowledge and remaining open questions. [P#]
+1. **Introduction**: Briefly describe the research area and scope of the reviewed papers.
+2. **Thematic Analysis**: Group papers by theme or methodology, discussing each paper's contribution.
+3. **Comparative Discussion**: Highlight agreements, contradictions, and complementary findings across papers.
+4. **Synthesis**: Summarise the overall state of knowledge and remaining open questions.
 
-Cite every claim with [P#]. Write in formal academic prose.
+Cite every claim with the EXACT paragraph ID from the context (e.g. [abc12345_P12]).
+Do NOT use generic numbers like [P1] — copy the full ID verbatim. Write in formal academic prose.
 """
 
 CONTRIBUTION_PROMPT = """You are an academic paper analysis assistant.
 Given the following paper sections, extract the paper's key contributions.
 
 Return your answer as a single valid JSON object with EXACTLY these 5 keys.
-Each key maps to an object with "text" (a concise 1-3 sentence summary) and "paragraph_id" (the [P#] citation from which you extracted it).
+Each key maps to an object with "text" (a concise 1-3 sentence summary) and "paragraph_id" (the exact paragraph ID from the context, e.g. "abc12345_P12").
 
 {
   "problem": {"text": "What research problem or question the paper addresses", "paragraph_id": "P#"},
