@@ -1,0 +1,1666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TraceLit — Research Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ══════════════════════════════════════════════
+   TOKENS
+══════════════════════════════════════════════ */
+:root {
+  --bg:  #080808;
+  --s1:  #0f0f0f;
+  --s2:  #141414;
+  --s3:  #1a1a1a;
+  --s4:  #212121;
+  --s5:  #2a2a2a;
+  --b1:  #222222;
+  --b2:  #2e2e2e;
+  --b3:  #3a3a3a;
+  --t1:  #ececec;
+  --t2:  #aaaaaa;
+  --t3:  #666666;
+  --t4:  #444444;
+  --gold:      #c9a96e;
+  --gold-dim:  rgba(201,169,110,0.12);
+  --gold-glow: rgba(201,169,110,0.06);
+  --gold-line: rgba(201,169,110,0.25);
+  --hi:   #34d399;  --hi-dim:  rgba(52,211,153,0.12);
+  --med:  #fbbf24;  --med-dim: rgba(251,191,36,0.12);
+  --low:  #f87171;  --low-dim: rgba(248,113,113,0.12);
+  --info: #60a5fa;  --info-dim:rgba(96,165,250,0.10);
+  --teal: #2dd4bf;  --teal-dim:rgba(45,212,191,0.10);
+  --serif: 'DM Serif Display', Georgia, serif;
+  --mono:  'DM Mono', monospace;
+  --sans:  'DM Sans', system-ui, sans-serif;
+  --r: 6px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; font-family: var(--sans);
+  background: var(--bg); color: var(--t1);
+  font-size: 14px; line-height: 1.5;
+  overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--s5); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--b3); }
+
+/* ══════════════════════════════════════════════
+   SHELL
+══════════════════════════════════════════════ */
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+/* ══════════════════════════════════════════════
+   TOPBAR
+══════════════════════════════════════════════ */
+.topbar {
+  display: flex; align-items: center;
+  height: 50px; padding: 0 20px;
+  background: var(--s1); border-bottom: 1px solid var(--b1);
+  flex-shrink: 0;
+}
+
+.logo { display: flex; align-items: baseline; gap: 7px; margin-right: 32px; }
+.logo-name { font-family: var(--serif); font-size: 17px; color: var(--t1); }
+.logo-badge {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
+  color: var(--gold); opacity: 0.75;
+  border: 1px solid var(--gold-line); padding: 1px 5px; border-radius: 3px;
+}
+
+.nav-tabs { display: flex; gap: 1px; flex: 1; }
+.nav-tab {
+  padding: 5px 13px; border-radius: var(--r);
+  font-size: 13px; color: var(--t3); cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.nav-tab:hover { color: var(--t2); background: var(--s2); }
+.nav-tab.active { color: var(--t1); background: var(--s3); }
+.nav-badge {
+  font-family: var(--mono); font-size: 9px;
+  background: var(--gold-dim); color: var(--gold);
+  padding: 1px 5px; border-radius: 3px;
+}
+
+.topbar-right { display: flex; align-items: center; gap: 14px; }
+.status-indicator { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--t3); }
+.status-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--hi); box-shadow: 0 0 6px var(--hi);
+  animation: breathe 3s ease-in-out infinite;
+}
+@keyframes breathe { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+.tb-btn {
+  padding: 5px 11px; font-size: 12px; color: var(--t3);
+  background: var(--s2); border: 1px solid var(--b1); border-radius: var(--r);
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.tb-btn:hover { background: var(--s3); color: var(--t2); border-color: var(--b2); }
+.tb-btn.gold { background: var(--gold-dim); border-color: var(--gold-line); color: var(--gold); }
+.tb-btn.gold:hover { background: rgba(201,169,110,0.18); }
+
+.avatar {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--s4); border: 1.5px solid var(--b3);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--gold); cursor: pointer; transition: border-color 0.2s;
+}
+.avatar:hover { border-color: var(--gold); }
+
+/* ══════════════════════════════════════════════
+   WORKSPACE
+══════════════════════════════════════════════ */
+.workspace { display: flex; flex: 1; overflow: hidden; }
+
+.panel { display: flex; flex-direction: column; overflow: hidden; background: var(--s1); border-right: 1px solid var(--b1); }
+
+/* ══════════════════════════════════════════════
+   LEFT PANEL
+══════════════════════════════════════════════ */
+.panel-left { width: 224px; flex-shrink: 0; }
+
+.pane-header {
+  padding: 11px 16px; display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--b1);
+}
+.pane-title { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.09em; color: var(--t4); text-transform: uppercase; }
+.pane-action { font-size: 16px; color: var(--t3); cursor: pointer; line-height: 1; background: none; border: none; font-family: var(--sans); }
+.pane-action:hover { color: var(--gold); }
+
+/* Sessions */
+.sessions-pane { height: 220px; overflow-y: auto; border-bottom: 1px solid var(--b1); }
+.session-item {
+  padding: 10px 16px; cursor: pointer; position: relative; transition: background 0.15s;
+}
+.session-item:hover { background: var(--s2); }
+.session-item.active { background: var(--gold-glow); }
+.session-item.active::before {
+  content: ''; position: absolute; left: 0; top: 22%; height: 56%;
+  width: 2px; background: var(--gold); border-radius: 0 1px 1px 0;
+}
+.session-name { font-size: 13px; color: var(--t1); margin-bottom: 2px; font-weight: 500; }
+.session-meta { font-family: var(--mono); font-size: 10px; color: var(--t3); }
+
+/* Tools pane */
+.tools-pane { flex: 1; overflow-y: auto; padding: 10px 8px; }
+.tool-group { margin-bottom: 20px; }
+.tool-group-label {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--t4); padding: 4px 10px; margin-bottom: 3px;
+}
+.tool-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: var(--r); cursor: pointer; transition: all 0.15s;
+}
+.tool-item:hover { background: var(--s2); }
+.tool-item.active { background: var(--gold-glow); }
+.tool-icon { font-size: 13px; width: 18px; text-align: center; }
+.tool-name { flex: 1; font-size: 12.5px; color: var(--t2); }
+.tool-item.active .tool-name { color: var(--gold); }
+.tool-key { font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
+.tool-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); opacity: 0.7; }
+
+/* Keywords */
+.kw-cloud { padding: 4px 10px 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+.kw {
+  padding: 3px 8px; border-radius: 20px; font-size: 11px;
+  background: var(--s3); border: 1px solid var(--b1); color: var(--t3);
+  cursor: pointer; transition: all 0.15s; font-family: var(--mono);
+}
+.kw:hover { border-color: var(--gold); color: var(--gold); }
+.kw.hi { background: var(--gold-dim); border-color: var(--gold-line); color: var(--gold); }
+
+/* ══════════════════════════════════════════════
+   MAIN CONTENT AREA (tab panels)
+══════════════════════════════════════════════ */
+.panel-main { flex: 1; min-width: 0; }
+
+.panel-bar {
+  height: 46px; padding: 0 24px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--b1);
+  flex-shrink: 0;
+}
+.context-pill {
+  padding: 3px 10px; border-radius: 100px;
+  background: var(--s2); border: 1px solid var(--b1);
+  font-size: 11.5px; color: var(--t3);
+  display: flex; align-items: center; gap: 5px;
+}
+.pill-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--hi); }
+.spacer { flex: 1; }
+.bar-btn {
+  padding: 5px 10px; font-size: 11.5px; color: var(--t3);
+  cursor: pointer; border-radius: var(--r); transition: all 0.15s;
+  background: none; border: none; font-family: var(--sans);
+}
+.bar-btn:hover { background: var(--s2); color: var(--t2); }
+
+.tab-panels { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.tab-panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+.tab-panel.visible { display: flex; }
+
+/* ══════════════════════════════════════════════
+   CHAT
+══════════════════════════════════════════════ */
+.messages { flex: 1; overflow-y: auto; padding: 28px 44px; }
+.message { margin-bottom: 28px; }
+.msg-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.msg-author { font-size: 12.5px; font-weight: 600; color: var(--t1); }
+.msg-time { font-family: var(--mono); font-size: 10px; color: var(--t3); }
+.msg-badge {
+  font-family: var(--mono); font-size: 9px; padding: 1px 6px;
+  border-radius: 3px; border: 1px solid;
+}
+.msg-badge.web { color: var(--info); border-color: rgba(96,165,250,0.3); background: var(--info-dim); }
+
+.msg-body {
+  padding: 16px 20px; border-radius: 8px;
+  background: var(--s2); line-height: 1.78; font-size: 14px;
+}
+.message.user .msg-body { background: var(--s3); color: var(--t2); }
+
+/* Cited sentences */
+.cs {
+  border-radius: 3px; padding: 1px 2px; margin: 0 -2px;
+  transition: background 0.18s; cursor: default;
+}
+.cs:hover { background: var(--gold-dim); }
+.cs.peek-active { background: rgba(201,169,110,0.14); }
+
+/* Citation superscripts */
+.cit {
+  color: var(--gold); font-size: 0.72em; vertical-align: super;
+  cursor: pointer; padding: 0 1.5px; border-radius: 2px;
+  font-weight: 600; font-family: var(--mono); transition: all 0.15s;
+}
+.cit:hover { background: var(--gold-dim); }
+
+/* Web citation */
+.wcit {
+  color: var(--info); font-size: 0.72em; vertical-align: super;
+  cursor: pointer; padding: 0 2px; font-family: var(--mono);
+  font-weight: 600; transition: all 0.15s;
+}
+.wcit:hover { background: var(--info-dim); border-radius: 2px; }
+
+/* Web inline source chip */
+.wsource {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-family: var(--mono); font-size: 10px; color: var(--info);
+  background: var(--info-dim); border: 1px solid rgba(96,165,250,0.2);
+  padding: 1px 7px; border-radius: 3px; cursor: pointer;
+  margin-left: 3px; transition: all 0.15s;
+}
+.wsource:hover { background: rgba(96,165,250,0.15); }
+
+.conf-bar {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--b1);
+  display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--t3);
+  flex-wrap: wrap;
+}
+.conf-item { display: flex; align-items: center; gap: 4px; font-weight: 500; }
+.conf-dot-sm { width: 5px; height: 5px; border-radius: 50%; }
+.conf-verify-btn {
+  margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--t3);
+  cursor: pointer; padding: 3px 9px; border-radius: 3px; border: 1px solid var(--b2);
+  background: none; transition: all 0.15s;
+}
+.conf-verify-btn:hover { color: var(--gold); border-color: var(--gold-line); background: var(--gold-glow); }
+
+/* Streaming */
+.streaming-cursor { display: inline-block; width: 2px; height: 13px; background: var(--gold); vertical-align: middle; margin-left: 2px; animation: blink .85s step-end infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* ══════════════════════════════════════════════
+   INPUT
+══════════════════════════════════════════════ */
+.chat-input { border-top: 1px solid var(--b1); padding: 14px 24px; flex-shrink: 0; }
+.input-wrapper { display: flex; flex-direction: column; gap: 10px; }
+.input-field { display: flex; gap: 8px; }
+
+textarea {
+  flex: 1; background: var(--s2); border: 1px solid var(--b1);
+  border-radius: var(--r); padding: 11px 14px; color: var(--t1);
+  font-family: var(--sans); font-size: 14px; resize: none;
+  min-height: 48px; transition: border-color 0.15s; outline: none;
+}
+textarea::placeholder { color: var(--t4); }
+textarea:focus { border-color: rgba(201,169,110,0.4); }
+
+.send-btn {
+  background: var(--gold); color: var(--bg); border: none;
+  padding: 11px 22px; border-radius: var(--r); font-weight: 600;
+  font-size: 13px; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  font-family: var(--sans);
+}
+.send-btn:hover { opacity: .88; }
+
+.input-controls { display: flex; gap: 7px; }
+.ctrl {
+  padding: 5px 11px; background: var(--s2); border: 1px solid var(--b1);
+  border-radius: var(--r); font-size: 11.5px; color: var(--t2);
+  cursor: pointer; transition: all 0.15s; font-family: var(--sans);
+}
+.ctrl:hover { background: var(--s3); }
+.ctrl.on { background: var(--gold-dim); border-color: var(--gold-line); color: var(--gold); }
+.ctrl.web-on { background: var(--info-dim); border-color: rgba(96,165,250,0.3); color: var(--info); }
+
+/* ══════════════════════════════════════════════
+   COMPARE TABLE
+══════════════════════════════════════════════ */
+.comp-toolbar {
+  height: 46px; padding: 0 24px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--b1); flex-shrink: 0;
+}
+.comp-title { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.07em; color: var(--t2); text-transform: uppercase; }
+.comp-sub { font-size: 12px; color: var(--t3); }
+
+.table-wrap { flex: 1; overflow: auto; padding: 0; }
+table.ct { width: 100%; border-collapse: collapse; }
+table.ct th {
+  text-align: left; padding: 9px 18px; font-family: var(--mono);
+  font-size: 10px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--t3); background: var(--s2); border-bottom: 1px solid var(--b1);
+  position: sticky; top: 0; z-index: 5; white-space: nowrap;
+}
+table.ct th:first-child { width: 110px; }
+table.ct td {
+  padding: 12px 18px; font-size: 13px; color: var(--t2);
+  border-bottom: 1px solid var(--b1); vertical-align: top;
+  line-height: 1.55; cursor: pointer; transition: background 0.12s;
+  background: var(--gold-glow);
+}
+table.ct td:first-child {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--t4); background: var(--s2); cursor: default;
+}
+table.ct td.user-edited { background: transparent; }
+table.ct td:not(:first-child):hover { background: var(--gold-dim); color: var(--t1); }
+table.ct tr:last-child td { border-bottom: none; }
+.table-footer { padding: 10px 18px; font-family: var(--mono); font-size: 10px; color: var(--t4); border-top: 1px solid var(--b1); display: flex; gap: 20px; }
+
+/* ══════════════════════════════════════════════
+   GAPS
+══════════════════════════════════════════════ */
+.gaps-wrap { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; }
+.gap-card {
+  background: var(--s2); border: 1px solid var(--b1);
+  border-radius: 8px; padding: 16px 18px; cursor: pointer; transition: all 0.15s;
+}
+.gap-card:hover { border-color: var(--b2); background: var(--s3); }
+.gap-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.gap-num { font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
+.gap-bar-track { flex: 1; height: 2px; background: var(--b1); border-radius: 1px; overflow: hidden; }
+.gap-bar-fill { height: 100%; border-radius: 1px; }
+.gap-score { font-family: var(--mono); font-size: 10px; color: var(--t3); }
+.gap-theme { font-size: 14px; font-weight: 500; color: var(--t1); margin-bottom: 7px; line-height: 1.4; }
+.gap-desc { font-size: 13px; color: var(--t3); line-height: 1.65; margin-bottom: 10px; }
+.gap-footer { display: flex; gap: 8px; flex-wrap: wrap; }
+.gap-tag {
+  font-family: var(--mono); font-size: 10px; padding: 2px 8px;
+  border-radius: 3px; background: var(--s3); border: 1px solid var(--b1); color: var(--t3);
+}
+.gap-tag.hi { color: var(--gold); border-color: var(--gold-line); background: var(--gold-glow); }
+
+/* ══════════════════════════════════════════════
+   REVIEW
+══════════════════════════════════════════════ */
+.review-wrap { flex: 1; overflow-y: auto; padding: 32px 48px; }
+.review-h1 { font-family: var(--serif); font-size: 22px; color: var(--t1); line-height: 1.3; margin-bottom: 24px; }
+.review-sh {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--t4); margin-bottom: 10px; margin-top: 22px;
+}
+.review-body { font-size: 14px; color: var(--t2); line-height: 1.78; }
+.review-body p { margin-bottom: 14px; }
+
+/* ══════════════════════════════════════════════
+   VERIFY
+══════════════════════════════════════════════ */
+.verify-wrap { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+.verify-input-row {
+  display: flex; gap: 8px; align-items: flex-start;
+  background: var(--s2); border: 1px solid var(--b1); border-radius: var(--r); padding: 11px 14px;
+}
+.verify-ta {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--t1); font-family: var(--sans); font-size: 14px;
+  resize: none; min-height: 22px; line-height: 1.5;
+}
+.verify-ta::placeholder { color: var(--t4); }
+.verify-btn {
+  padding: 7px 16px; border-radius: var(--r); background: var(--teal-dim);
+  border: 1px solid rgba(45,212,191,0.25); color: var(--teal); font-size: 12.5px;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap; font-family: var(--sans);
+}
+.verify-btn:hover { background: rgba(45,212,191,0.18); }
+
+.vr { background: var(--s2); border: 1px solid var(--b1); border-radius: 8px; overflow: hidden; }
+.vr-head {
+  padding: 12px 16px; background: var(--s3); border-bottom: 1px solid var(--b1);
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.vr-claim { font-size: 13px; color: var(--t2); flex: 1; font-style: italic; line-height: 1.5; }
+.vr-verdict {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  padding: 3px 10px; border-radius: 3px; flex-shrink: 0;
+}
+.v-sup { color: var(--hi); background: var(--hi-dim); border: 1px solid rgba(52,211,153,0.2); }
+.v-par { color: var(--med); background: var(--med-dim); border: 1px solid rgba(251,191,36,0.2); }
+.v-no  { color: var(--low); background: var(--low-dim); border: 1px solid rgba(248,113,113,0.2); }
+.vr-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.vr-score-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.vr-score-label { font-family: var(--mono); font-size: 10px; color: var(--t4); }
+.vr-score-track { flex: 1; height: 2px; background: var(--b1); border-radius: 1px; overflow: hidden; }
+.vr-score-fill { height: 100%; border-radius: 1px; }
+.vr-score-val { font-family: var(--mono); font-size: 10.5px; }
+.vr-note {
+  font-size: 12px; color: var(--t3); background: var(--s3); border-radius: 4px;
+  padding: 8px 11px; border-left: 2px solid; line-height: 1.55;
+}
+.ev-row { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; border-radius: 4px; padding: 4px; transition: background 0.12s; }
+.ev-row:hover { background: var(--s3); }
+.ev-para { font-family: var(--mono); font-size: 10px; color: var(--gold); flex-shrink: 0; margin-top: 2px; }
+.ev-text { font-size: 12.5px; color: var(--t2); line-height: 1.6; flex: 1; }
+.ev-sim { font-family: var(--mono); font-size: 10px; color: var(--t4); flex-shrink: 0; margin-top: 2px; }
+
+/* ══════════════════════════════════════════════
+   RIGHT PANEL
+══════════════════════════════════════════════ */
+.panel-right { width: 274px; flex-shrink: 0; }
+
+.tab-bar { display: flex; border-bottom: 1px solid var(--b1); }
+.rtab {
+  flex: 1; padding: 11px 6px; text-align: center;
+  font-size: 11.5px; color: var(--t3); cursor: pointer;
+  border-bottom: 2px solid transparent; transition: all 0.15s;
+  background: none; border-top: none; border-left: none; border-right: none;
+  font-family: var(--sans);
+}
+.rtab:hover { color: var(--t2); background: var(--s2); }
+.rtab.active { color: var(--gold); border-bottom-color: var(--gold); }
+
+.rtab-panels { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.rtab-panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+.rtab-panel.visible { display: flex; }
+.rtab-content { flex: 1; overflow-y: auto; padding: 14px; }
+
+/* Paper cards */
+.paper-card {
+  padding: 11px; margin-bottom: 7px;
+  border-radius: var(--r); border: 1px solid var(--b1); transition: all 0.15s; cursor: pointer;
+}
+.paper-card:hover { background: var(--s2); border-color: var(--b2); }
+.paper-card.active { background: var(--gold-glow); border-color: rgba(201,169,110,0.3); }
+.pc-head { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 5px; }
+.pc-num {
+  background: var(--s3); color: var(--t3); padding: 2px 5px;
+  border-radius: 3px; font-size: 9.5px; font-family: var(--mono); font-weight: 600; flex-shrink: 0;
+}
+.paper-card.active .pc-num { background: var(--gold); color: var(--bg); }
+.pc-title { flex: 1; font-size: 12.5px; font-weight: 500; color: var(--t1); line-height: 1.4; }
+.pc-meta { font-size: 10.5px; color: var(--t3); display: flex; align-items: center; gap: 6px; }
+.pc-status { display: flex; align-items: center; gap: 4px; }
+.ring-sm { position: relative; width: 14px; height: 14px; flex-shrink: 0; }
+.ring-sm svg { transform: rotate(-90deg); }
+.pdf-btn {
+  background: none; border: none; font-size: 13px;
+  cursor: pointer; opacity: 0.5; transition: all 0.2s; padding: 0;
+}
+.pdf-btn:hover { opacity: 1; }
+
+/* Source viewer inside right panel */
+.src-rp-toolbar {
+  padding: 8px 12px; border-bottom: 1px solid var(--b1);
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.rp-sel {
+  background: var(--s2); border: 1px solid var(--b1); border-radius: var(--r);
+  color: var(--t2); font-family: var(--sans); font-size: 11.5px; padding: 4px 7px;
+  outline: none; cursor: pointer; min-width: 0; flex: 1;
+}
+.src-scroll { flex: 1; overflow-y: auto; }
+.sum-card {
+  margin: 12px 12px 6px; padding: 12px 14px;
+  background: var(--s3); border: 1px solid var(--b1); border-left: 2.5px solid var(--gold);
+  border-radius: var(--r);
+}
+.sum-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); margin-bottom: 6px; }
+.sum-text { font-size: 12px; color: var(--t2); line-height: 1.6; }
+.sum-meta { font-family: var(--mono); font-size: 10px; color: var(--t4); margin-top: 6px; }
+
+.src-sec-head {
+  padding: 7px 12px; display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+}
+.src-sec-head:hover { background: var(--s2); }
+.src-sec-name { font-family: var(--mono); font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--t4); }
+.src-para {
+  display: flex; gap: 8px; padding: 6px 12px;
+  border-left: 2px solid transparent; transition: all 0.2s; cursor: default;
+}
+.src-para:hover { background: var(--s2); }
+.src-para.lit {
+  background: rgba(201,169,110,0.07);
+  border-left-color: var(--gold);
+  animation: srcPulse 2.5s forwards;
+}
+@keyframes srcPulse {
+  0%   { background: rgba(201,169,110,0.2); }
+  100% { background: rgba(201,169,110,0.07); }
+}
+.sp-id { font-family: var(--mono); font-size: 9px; color: var(--gold); min-width: 26px; padding-top: 3px; flex-shrink: 0; }
+.sp-text { font-size: 12px; color: var(--t2); line-height: 1.65; }
+.sp-word { border-radius: 2px; transition: all 0.15s; }
+.sp-word:hover { color: var(--t1); background: rgba(255,255,255,0.05); }
+.sp-word.lit { color: var(--t1); }
+
+/* Web search panel */
+.web-search-area {
+  padding: 12px; border-bottom: 1px solid var(--b1); flex-shrink: 0;
+}
+.ws-row { display: flex; gap: 6px; }
+.ws-input {
+  flex: 1; background: var(--s2); border: 1px solid var(--b1); border-radius: var(--r);
+  color: var(--t1); padding: 7px 10px; font-family: var(--sans); font-size: 12.5px;
+  outline: none; transition: border-color 0.15s;
+}
+.ws-input:focus { border-color: rgba(96,165,250,0.4); }
+.ws-btn {
+  padding: 7px 12px; border-radius: var(--r); background: var(--info-dim);
+  border: 1px solid rgba(96,165,250,0.25); color: var(--info); font-size: 12px;
+  cursor: pointer; transition: all 0.15s; font-family: var(--sans);
+}
+.ws-btn:hover { background: rgba(96,165,250,0.18); }
+.ws-filters { display: flex; gap: 5px; margin-top: 8px; }
+.wf {
+  padding: 3px 9px; border-radius: 3px; font-family: var(--mono); font-size: 10px;
+  color: var(--t3); border: 1px solid var(--b1); background: var(--s2); cursor: pointer; transition: all 0.15s;
+}
+.wf:hover { color: var(--t2); }
+.wf.on { color: var(--info); border-color: rgba(96,165,250,0.3); background: var(--info-dim); }
+
+.web-results { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.wrc {
+  background: var(--s2); border: 1px solid var(--b1); border-radius: 6px;
+  padding: 11px 13px; cursor: pointer; transition: all 0.15s;
+}
+.wrc:hover { border-color: var(--b2); background: var(--s3); }
+.wrc-dom {
+  font-family: var(--mono); font-size: 9.5px; color: var(--info); margin-bottom: 4px;
+  display: flex; align-items: center; gap: 4px;
+}
+.wrc-fav { width: 11px; height: 11px; border-radius: 2px; background: var(--s4); flex-shrink: 0; }
+.wrc-title { font-size: 12.5px; font-weight: 500; color: var(--t1); margin-bottom: 5px; line-height: 1.4; }
+.wrc-snip { font-size: 12px; color: var(--t3); line-height: 1.55; }
+.wrc-actions { display: flex; gap: 5px; margin-top: 8px; }
+.wrc-btn {
+  padding: 3px 9px; border-radius: 3px; font-family: var(--mono); font-size: 10px;
+  border: 1px solid var(--b1); background: var(--s3); color: var(--t3);
+  cursor: pointer; transition: all 0.15s;
+}
+.wrc-btn:hover { color: var(--t2); border-color: var(--b2); }
+.wrc-btn.cite { color: var(--gold); border-color: var(--gold-line); }
+.wrc-btn.cite:hover { background: var(--gold-glow); }
+
+/* ══════════════════════════════════════════════
+   PDF SIDE PANEL
+══════════════════════════════════════════════ */
+.panel-pdf {
+  width: 520px; flex-shrink: 0;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.panel-pdf.hidden { width: 0; border: none; overflow: hidden; }
+
+.pdf-header {
+  height: 54px; padding: 0 20px; border-bottom: 1px solid var(--b1);
+  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+}
+.pdf-title-info { flex: 1; min-width: 0; }
+.pdf-title { font-size: 13px; font-weight: 600; color: var(--t1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+.pdf-meta { font-size: 10.5px; color: var(--t3); }
+.pdf-ctrls { display: flex; gap: 6px; }
+.pdf-cbtn {
+  background: var(--s2); border: 1px solid var(--b1); padding: 5px 9px;
+  border-radius: var(--r); font-size: 12px; color: var(--t2); cursor: pointer; transition: all 0.15s;
+  font-family: var(--sans);
+}
+.pdf-cbtn:hover { background: var(--s3); border-color: var(--b2); }
+
+.pdf-nav {
+  height: 38px; padding: 0 20px; border-bottom: 1px solid var(--b1);
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11.5px; color: var(--t3); flex-shrink: 0;
+}
+
+.pdf-content { flex: 1; overflow-y: auto; padding: 24px; }
+.pdf-section { margin-bottom: 28px; }
+.pdf-h1 { font-size: 18px; font-weight: 700; margin-bottom: 14px; color: var(--t1); }
+.pdf-h2 { font-size: 14px; font-weight: 600; margin: 16px 0 9px; color: var(--t2); }
+.pdf-p {
+  padding: 10px 14px; margin: 6px 0; border-radius: var(--r);
+  line-height: 1.72; color: var(--t2); transition: all 0.3s ease; position: relative;
+  font-size: 13.5px;
+}
+.pdf-p.lit {
+  background: linear-gradient(90deg,rgba(201,169,110,0) 0%,rgba(201,169,110,0.15) 4%,rgba(201,169,110,0.15) 96%,rgba(201,169,110,0) 100%);
+  box-shadow: 0 0 0 1px rgba(201,169,110,0.22);
+  color: var(--t1);
+  animation: ppulse 2.2s ease-in-out;
+}
+@keyframes ppulse { 0%{background-color:rgba(201,169,110,0.3)} 100%{background-color:rgba(201,169,110,0.12)} }
+.pdf-p.lit::before {
+  content: "↓ Citation source";
+  position: absolute; top: -18px; left: 14px;
+  font-size: 9.5px; font-family: var(--mono); color: var(--gold);
+  animation: lfade 2.2s ease-in-out forwards;
+}
+@keyframes lfade { 0%{opacity:0;transform:translateY(4px)} 15%,80%{opacity:1;transform:translateY(0)} 100%{opacity:0} }
+
+/* ══════════════════════════════════════════════
+   PEEK PANE
+══════════════════════════════════════════════ */
+.peek-pane {
+  position: fixed; width: 430px; max-height: 520px;
+  background: var(--s2); border: 1px solid var(--b2); border-radius: 10px;
+  box-shadow: 0 0 0 1px rgba(201,169,110,0.08), 0 20px 50px rgba(0,0,0,0.72), 0 4px 16px rgba(0,0,0,0.5);
+  z-index: 900; overflow: hidden; display: flex; flex-direction: column;
+  opacity: 0; transform: translateY(8px) scale(0.98); pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.peek-pane.visible { opacity: 1; transform: translateY(0) scale(1); pointer-events: all; }
+
+.peek-header {
+  padding: 14px 18px 12px;
+  background: linear-gradient(180deg, var(--s3) 0%, var(--s2) 100%);
+  border-bottom: 1px solid var(--b2);
+}
+.peek-tag { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; color: var(--gold); margin-bottom: 6px; }
+.peek-title { font-family: var(--serif); font-size: 14.5px; color: var(--t1); margin-bottom: 3px; line-height: 1.35; }
+.peek-authors { font-family: var(--mono); font-size: 10.5px; color: var(--t3); margin-bottom: 8px; }
+.peek-path { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--t3); }
+.peek-path strong { color: var(--t2); }
+.peek-chevron { color: var(--t4); font-size: 12px; }
+
+.peek-body { flex: 1; overflow-y: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+.peek-ctx {
+  font-size: 12.5px; color: var(--t3); line-height: 1.65;
+  padding: 10px 12px; background: var(--s3); border-radius: var(--r); border: 1px solid var(--b1);
+}
+.peek-cited-label {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--gold); display: flex; align-items: center; gap: 5px;
+}
+.peek-main {
+  font-size: 13px; color: var(--t1); line-height: 1.7;
+  padding: 12px 14px; background: var(--gold-glow);
+  border: 1px solid rgba(201,169,110,0.18); border-radius: var(--r);
+}
+.peek-hl { background: rgba(201,169,110,0.25); border-radius: 2px; padding: 0 2px; color: var(--gold); }
+
+.peek-footer {
+  padding: 10px 18px; border-top: 1px solid var(--b2);
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--s3);
+}
+.peek-conf { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.peek-conf-dot { width: 7px; height: 7px; border-radius: 50%; }
+.peek-conf-text { font-weight: 500; font-family: var(--mono); font-size: 11px; }
+.peek-conf-sub { color: var(--t4); font-family: var(--mono); font-size: 10.5px; }
+.peek-jump {
+  font-family: var(--mono); font-size: 10.5px; color: var(--t3);
+  cursor: pointer; padding: 4px 10px; border-radius: 3px;
+  border: 1px solid var(--b2); background: none; transition: all 0.15s;
+}
+.peek-jump:hover { color: var(--gold); border-color: var(--gold-line); background: var(--gold-glow); }
+
+/* Small tooltip */
+.tooltip {
+  position: fixed; background: var(--s3); border: 1px solid var(--b2);
+  border-radius: 6px; padding: 8px 12px; min-width: 200px; max-width: 260px;
+  z-index: 1000; pointer-events: none; font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  opacity: 0; transition: opacity 0.12s; display: flex; flex-direction: column; gap: 4px;
+}
+.tooltip.show { opacity: 1; }
+.tt-paper { font-family: var(--mono); font-size: 10px; color: var(--gold); }
+.tt-preview { color: var(--t2); line-height: 1.5; }
+.tt-conf { font-family: var(--mono); font-size: 10px; color: var(--t3); }
+.tt-hint { font-family: var(--mono); font-size: 9.5px; color: var(--t4); }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ════ TOPBAR ════ -->
+<div class="topbar">
+  <div class="logo">
+    <span class="logo-name">TraceLit</span>
+    <span class="logo-badge">BETA</span>
+  </div>
+
+  <div class="nav-tabs">
+    <div class="nav-tab active" id="nt-chat" onclick="switchTab('chat')">Chat</div>
+    <div class="nav-tab" id="nt-compare" onclick="switchTab('compare')">Compare <span class="nav-badge">3</span></div>
+    <div class="nav-tab" id="nt-gaps" onclick="switchTab('gaps')">Gaps <span class="nav-badge">4</span></div>
+    <div class="nav-tab" id="nt-review" onclick="switchTab('review')">Review</div>
+    <div class="nav-tab" id="nt-verify" onclick="switchTab('verify')">Verify</div>
+  </div>
+
+  <div class="topbar-right">
+    <div class="status-indicator">
+      <div class="status-dot"></div>
+      <span>Gemini Flash</span>
+    </div>
+    <button class="tb-btn">AI Safety Survey ▾</button>
+    <button class="tb-btn gold">↓ Export</button>
+    <div class="avatar">A</div>
+  </div>
+</div>
+
+<div class="workspace">
+
+<!-- ════ LEFT PANEL ════ -->
+<div class="panel panel-left">
+
+  <div class="sessions-pane">
+    <div class="pane-header">
+      <span class="pane-title">Sessions</span>
+      <button class="pane-action">+</button>
+    </div>
+    <div class="session-item active">
+      <div class="session-name">AI Safety Survey</div>
+      <div class="session-meta">4 papers · today</div>
+    </div>
+    <div class="session-item" onclick="selectSession(this)">
+      <div class="session-name">LLM Benchmarks</div>
+      <div class="session-meta">3 papers · 2h ago</div>
+    </div>
+    <div class="session-item" onclick="selectSession(this)">
+      <div class="session-name">Multimodal Review</div>
+      <div class="session-meta">6 papers · yesterday</div>
+    </div>
+    <div class="session-item" onclick="selectSession(this)">
+      <div class="session-name">Transformer Variants</div>
+      <div class="session-meta">5 papers · 3d ago</div>
+    </div>
+  </div>
+
+  <div class="tools-pane">
+    <div class="tool-group">
+      <div class="tool-group-label">Analysis</div>
+      <div class="tool-item" onclick="switchTab('compare'); markTool(this)">
+        <span class="tool-icon">⊞</span>
+        <span class="tool-name">Compare Papers</span>
+        <span class="tool-dot"></span>
+      </div>
+      <div class="tool-item" onclick="switchTab('gaps'); markTool(this)">
+        <span class="tool-icon">◈</span>
+        <span class="tool-name">Research Gaps</span>
+        <span class="tool-dot"></span>
+      </div>
+      <div class="tool-item" onclick="switchTab('review'); markTool(this)">
+        <span class="tool-icon">≡</span>
+        <span class="tool-name">Literature Review</span>
+        <span class="tool-key">⌘R</span>
+      </div>
+      <div class="tool-item" onclick="switchTab('verify'); markTool(this)">
+        <span class="tool-icon">✓</span>
+        <span class="tool-name">Verify Claims</span>
+        <span class="tool-key">⌘V</span>
+      </div>
+    </div>
+
+    <div class="tool-group">
+      <div class="tool-group-label">Papers</div>
+      <div class="tool-item" onclick="markTool(this)">
+        <span class="tool-icon">📄</span>
+        <span class="tool-name">On-demand Summary</span>
+        <span class="tool-key">⌘S</span>
+      </div>
+      <div class="tool-item" onclick="markTool(this)">
+        <span class="tool-icon">🔑</span>
+        <span class="tool-name">Keywords</span>
+      </div>
+    </div>
+
+    <div class="tool-group">
+      <div class="tool-group-label">Keywords</div>
+      <div class="kw-cloud">
+        <span class="kw hi">RLHF</span>
+        <span class="kw hi">constitutional</span>
+        <span class="kw">reward model</span>
+        <span class="kw hi">harmlessness</span>
+        <span class="kw">red-teaming</span>
+        <span class="kw">SFT</span>
+        <span class="kw">alignment</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /panel-left -->
+
+<!-- ════ MAIN PANEL ════ -->
+<div class="panel panel-main">
+
+  <div class="tab-panels">
+
+    <!-- ─── CHAT ─── -->
+    <div class="tab-panel visible" id="tp-chat">
+
+      <div class="panel-bar">
+        <div class="context-pill">
+          <span class="pill-dot"></span>
+          2 papers indexed
+        </div>
+        <div class="context-pill" style="border-color:rgba(96,165,250,0.2);color:var(--info)" id="webPill" onclick="toggleWebPill()">
+          🌐 Web off
+        </div>
+        <div class="spacer"></div>
+        <button class="bar-btn">Clear history</button>
+      </div>
+
+      <div class="messages" id="messages">
+
+        <!-- User -->
+        <div class="message user">
+          <div class="msg-header">
+            <span class="msg-author">You</span>
+            <span class="msg-time">4 min ago</span>
+          </div>
+          <div class="msg-body">How does Constitutional AI eliminate the need for human harm labels during safety training?</div>
+        </div>
+
+        <!-- Assistant — paper citations -->
+        <div class="message">
+          <div class="msg-header">
+            <span class="msg-author">TraceLit</span>
+            <span class="msg-time">4 min ago</span>
+          </div>
+          <div class="msg-body">
+            <p>
+              <span class="cs"
+                data-paper="Constitutional AI: Harmlessness from AI Feedback"
+                data-authors="Bai et al. 2022"
+                data-section="3. Constitutional AI"
+                data-subsection="3.1 Supervised Stage"
+                data-page="3"
+                data-para="The only human oversight is provided through a list of rules or principles — a &quot;constitution&quot; — and so we call the method Constitutional AI. This approach allows us to control AI behavior more precisely, and with far less human effort, since we can specify principles in natural language rather than demonstrating them through human labels."
+                data-context-before="Inspired by the challenges of collecting human labels for harmful content, we developed a method that requires no such labels."
+                data-context-after="The constitution covers a wide range of potential AI harms and instructs the model to revise outputs that violate these principles."
+                data-conf="96"
+                data-para-id="src-p2">
+                Constitutional AI replaces human harm labels entirely with a written set of principles — a "constitution" — that guides the model's own self-critique process<span class="cit" data-source-id="src-p2">¹</span>.
+              </span>
+              <span class="cs"
+                data-paper="Constitutional AI: Harmlessness from AI Feedback"
+                data-authors="Bai et al. 2022"
+                data-section="3. Constitutional AI"
+                data-subsection="3.2 RL Stage"
+                data-page="5"
+                data-para="The CAI training process begins with a supervised learning phase where the model critiques its own outputs according to constitutional principles. It then revises those outputs and learns from the improved versions, bootstrapping better behavior without any human annotation of specific harmful outputs."
+                data-context-before="Once the constitution is established, training proceeds in two stages."
+                data-context-after="This self-critique and revision loop continues for multiple rounds, progressively refining the model's harmlessness."
+                data-conf="93"
+                data-para-id="src-p5">
+                In the supervised phase, the model critiques and revises its own outputs according to these principles — bootstrapping safer behavior purely through self-improvement<span class="cit" data-source-id="src-p5">¹</span>.
+              </span>
+              <span class="cs"
+                data-paper="Constitutional AI: Harmlessness from AI Feedback"
+                data-authors="Bai et al. 2022"
+                data-section="4. Evaluation"
+                data-subsection="4.1 Human Evaluations"
+                data-page="7"
+                data-para="In the RL phase, a preference model is trained on model-generated comparisons, replacing the need for human preference labels on harmful content. The resulting RL-CAI model achieves 96% harmlessness ratings from crowdworkers while maintaining helpfulness comparable to the RLHF baseline."
+                data-context-before="After the supervised stage, we proceed to reinforcement learning from model feedback."
+                data-context-after="These results suggest constitutional methods can match or exceed RLHF on safety metrics without any human harm annotation."
+                data-conf="89"
+                data-para-id="src-p12">
+                The RL phase uses model-generated preference comparisons instead of human harm annotations — the resulting model reaches 96% harmlessness while matching RLHF helpfulness<span class="cit" data-source-id="src-p12">¹</span>.
+              </span>
+            </p>
+            <div class="conf-bar">
+              <div class="conf-item"><span class="conf-dot-sm" style="background:var(--hi);box-shadow:0 0 4px var(--hi)"></span><span style="color:var(--hi)">93% avg confidence</span></div>
+              <span style="color:var(--b3)">·</span>
+              <span>Sources: ¹ Constitutional AI — Bai et al. 2022</span>
+              <button class="conf-verify-btn" onclick="switchTab('verify')">Verify →</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- User — web mode -->
+        <div class="message user">
+          <div class="msg-header">
+            <span class="msg-author">You</span>
+            <span class="msg-time">2 min ago</span>
+            <span class="msg-badge web">🌐 WEB + PAPERS</span>
+          </div>
+          <div class="msg-body">What are the latest benchmarks comparing Constitutional AI vs standard RLHF on safety metrics?</div>
+        </div>
+
+        <!-- Assistant — web + paper hybrid -->
+        <div class="message">
+          <div class="msg-header">
+            <span class="msg-author">TraceLit</span>
+            <span class="msg-time">2 min ago</span>
+            <span class="msg-badge web">🌐 WEB + PAPERS</span>
+          </div>
+          <div class="msg-body">
+            <p>
+              From your papers, CAI-trained models are rated as less harmful and equally helpful compared to RLHF baselines<span class="cit" data-source-id="src-p12">¹</span>.
+              A 2024 Stanford study found CAI models score 18% lower on ToxiGen while retaining 95% of helpfulness across 7 safety benchmarks<span class="wcit">W1</span> <span class="wsource" onclick="switchRTab('web')">arxiv.org →</span>.
+              Anthropic's model card reports HHH scores of 0.87 for CAI versus 0.79 for SFT baselines<span class="wcit">W2</span> <span class="wsource" onclick="switchRTab('web')">anthropic.com →</span>.
+            </p>
+            <div class="conf-bar">
+              <div class="conf-item"><span class="conf-dot-sm" style="background:var(--hi);box-shadow:0 0 4px var(--hi)"></span><span style="color:var(--hi)">¹ 93% confidence</span></div>
+              <span style="color:var(--b3)">·</span>
+              <div class="conf-item" style="color:var(--info)">W1, W2 web-sourced</div>
+              <button class="conf-verify-btn" onclick="switchRTab('web')">See web sources →</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Streaming message -->
+        <div class="message user">
+          <div class="msg-header"><span class="msg-author">You</span><span class="msg-time">just now</span></div>
+          <div class="msg-body">Compare the dataset sizes used across both papers.</div>
+        </div>
+        <div class="message">
+          <div class="msg-header">
+            <span class="msg-author">TraceLit</span>
+            <span class="msg-time">now</span>
+          </div>
+          <div class="msg-body" style="color:var(--t2)">
+            Stiennon et al. used TL;DR and CNN/DailyMail totalling approximately 180k training examples<span class="streaming-cursor"></span>
+          </div>
+        </div>
+
+      </div><!-- /messages -->
+
+      <div class="chat-input">
+        <div class="input-wrapper">
+          <div class="input-field">
+            <textarea id="chatInput" placeholder="Ask a question across your papers..." rows="2"></textarea>
+            <button class="send-btn">Send →</button>
+          </div>
+          <div class="input-controls">
+            <button class="ctrl on" id="havfCtrl" onclick="this.classList.toggle('on')">⚡ HAVF On</button>
+            <button class="ctrl" id="webCtrl" onclick="toggleWebCtrl()">🌐 Web Off</button>
+            <button class="ctrl" id="scopeCtrl">🎯 All Papers ▾</button>
+            <button class="ctrl">📎 Attach</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /chat -->
+
+    <!-- ─── COMPARE ─── -->
+    <div class="tab-panel" id="tp-compare">
+      <div class="comp-toolbar">
+        <span class="comp-title">Paper Comparison</span>
+        <span class="comp-sub">3 papers · LLM-extracted</span>
+        <div class="spacer"></div>
+        <button class="tb-btn">↻ Regenerate</button>
+        <button class="tb-btn">↓ LaTeX</button>
+        <button class="tb-btn gold">↓ Excel</button>
+      </div>
+      <div class="table-wrap">
+        <table class="ct">
+          <thead>
+            <tr>
+              <th></th>
+              <th>[1] Constitutional AI <span style="color:var(--t4);font-weight:400">Bai 2022</span></th>
+              <th>[2] RLHF Scalability <span style="color:var(--t4);font-weight:400">Stiennon 2022</span></th>
+              <th>[3] InstructGPT <span style="color:var(--t4);font-weight:400">Ouyang 2022</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Problem</td>
+              <td onclick="litPDF('src-p2')">Harmless AI without human harm labels — safety via self-critique and principles</td>
+              <td>Scalable human feedback for text summarisation quality</td>
+              <td>Aligning LLMs to follow user instructions accurately</td>
+            </tr>
+            <tr>
+              <td>Method</td>
+              <td onclick="litPDF('src-p5')">Constitutional self-critique (SL-CAI) + RLHF with model-generated preferences (RL-CAI)</td>
+              <td>Recursive reward modeling; human preference labels on summaries</td>
+              <td>SFT baseline → PPO with human preference labels</td>
+            </tr>
+            <tr>
+              <td>Dataset</td>
+              <td>Red-team prompts; self-generated critiques; no human harm labels</td>
+              <td>TL;DR Reddit, CNN/DailyMail (~180k)</td>
+              <td class="user-edited">InstructGPT prompt set (~13k demonstrations) ✎</td>
+            </tr>
+            <tr>
+              <td>Eval</td>
+              <td>Crowdworker harmlessness + helpfulness; HHH evals</td>
+              <td>Summary quality human preference; ROUGE secondary</td>
+              <td>Helpfulness, truthfulness, harmlessness ratings</td>
+            </tr>
+            <tr>
+              <td>Key Result</td>
+              <td onclick="litPDF('src-p12')">96% harmlessness; comparable helpfulness to RLHF baseline</td>
+              <td>Outperforms supervised baselines; generalises to unseen domains</td>
+              <td>Preferred over GPT-3 by 85% of raters; fewer toxic outputs</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="table-footer">
+          <span>Amber tint = LLM-generated &nbsp;·&nbsp; White = user-edited ✎</span>
+          <span>Click any cell to view source paragraph in PDF</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── GAPS ─── -->
+    <div class="tab-panel" id="tp-gaps">
+      <div class="comp-toolbar">
+        <span class="comp-title">Research Gaps</span>
+        <span class="comp-sub">Across 3 papers · 4 clusters</span>
+        <div class="spacer"></div>
+        <button class="tb-btn">↻ Re-analyze</button>
+        <button class="tb-btn gold">↓ Export</button>
+      </div>
+      <div class="gaps-wrap">
+
+        <div class="gap-card" onclick="litPDF('src-p5')">
+          <div class="gap-head">
+            <span class="gap-num">GAP 01</span>
+            <div class="gap-bar-track"><div class="gap-bar-fill" style="width:92%;background:var(--hi)"></div></div>
+            <span class="gap-score">0.92</span>
+          </div>
+          <div class="gap-theme">No cross-domain evaluation benchmarks for constitutional methods</div>
+          <div class="gap-desc">All three papers evaluate within narrow, task-specific distributions. No work systematically tests whether constitutional principles transfer across domains — from code assistance to medical advice — without manual re-engineering.</div>
+          <div class="gap-footer">
+            <span class="gap-tag hi">Mentioned in 3/3 papers</span>
+            <span class="gap-tag hi">High priority</span>
+            <span class="gap-tag">Limitation sections</span>
+          </div>
+        </div>
+
+        <div class="gap-card">
+          <div class="gap-head">
+            <span class="gap-num">GAP 02</span>
+            <div class="gap-bar-track"><div class="gap-bar-fill" style="width:78%;background:var(--med)"></div></div>
+            <span class="gap-score">0.78</span>
+          </div>
+          <div class="gap-theme">Scalability of human preference collection at frontier model sizes</div>
+          <div class="gap-desc">Reward model training bottlenecks when model capability significantly exceeds human ability to evaluate outputs. None of the papers address preference collection when models surpass human evaluators.</div>
+          <div class="gap-footer">
+            <span class="gap-tag">Mentioned in 2/3 papers</span>
+            <span class="gap-tag">Medium priority</span>
+          </div>
+        </div>
+
+        <div class="gap-card">
+          <div class="gap-head">
+            <span class="gap-num">GAP 03</span>
+            <div class="gap-bar-track"><div class="gap-bar-fill" style="width:61%;background:var(--med)"></div></div>
+            <span class="gap-score">0.61</span>
+          </div>
+          <div class="gap-theme">No longitudinal analysis of value drift during extended RL training</div>
+          <div class="gap-desc">All evaluations are point-in-time. Drift in model values across many RL iterations — particularly under distribution shift — remains entirely unexplored in these works.</div>
+          <div class="gap-footer">
+            <span class="gap-tag">Mentioned in 2/3 papers</span>
+          </div>
+        </div>
+
+        <div class="gap-card">
+          <div class="gap-head">
+            <span class="gap-num">GAP 04</span>
+            <div class="gap-bar-track"><div class="gap-bar-fill" style="width:43%;background:var(--low)"></div></div>
+            <span class="gap-score">0.43</span>
+          </div>
+          <div class="gap-theme">Interpretability of learned reward models largely unexplored</div>
+          <div class="gap-desc">Reward models are treated as black boxes. Understanding what internal representations drive high-reward predictions is essential for safety but absent from all three papers.</div>
+          <div class="gap-footer">
+            <span class="gap-tag">Mentioned in 1/3 papers</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ─── REVIEW ─── -->
+    <div class="tab-panel" id="tp-review">
+      <div class="comp-toolbar">
+        <span class="comp-title">Literature Review</span>
+        <span class="comp-sub">Generated across 3 papers · Gemini Flash</span>
+        <div class="spacer"></div>
+        <button class="tb-btn">↻ Regenerate</button>
+        <button class="tb-btn">↓ Word</button>
+        <button class="tb-btn gold">↓ PDF</button>
+      </div>
+      <div class="review-wrap">
+        <div class="review-h1">Reinforcement Learning from Human Feedback and Constitutional Methods for AI Alignment: A Comparative Survey</div>
+
+        <div class="review-sh">Introduction</div>
+        <div class="review-body">
+          <p>The alignment of large language models with human values has emerged as one of the central technical challenges in AI safety research<span class="cit">¹</span>. Three methodological approaches have accumulated significant empirical support: reinforcement learning from human feedback (RLHF), constitutional AI (CAI), and instruction tuning with human-preference fine-tuning<span class="cit">²</span>. Each makes different assumptions about the availability of human feedback, annotation cost, and the generality of the resulting aligned behaviour.</p>
+        </div>
+
+        <div class="review-sh">Methodology Survey</div>
+        <div class="review-body">
+          <p>Stiennon et al. demonstrated that recursive reward modeling could substantially improve summarisation quality beyond supervised fine-tuning, using human preferences as the primary training signal<span class="cit">²</span>. Crucially, their work established that reward models generalise to out-of-distribution tasks, suggesting they capture broadly useful quality notions rather than surface-level patterns. Building on this, Bai et al. introduced Constitutional AI as a method for generating preference data without any human annotation of harmful content<span class="cit">¹</span>. The model critiques its own outputs according to a written constitution and generates preference pairs autonomously — dramatically reducing the annotation burden for safety training.</p>
+        </div>
+
+        <div class="review-sh">Key Findings</div>
+        <div class="review-body">
+          <p>Both RLHF and CAI achieve meaningful improvements over supervised baselines on human preference evaluations. CAI models demonstrate substantially reduced harmful outputs with minimal loss in helpfulness<span class="cit">¹</span>. InstructGPT's findings reinforce that instruction-following is itself a learnable proxy for human intent, and that even small volumes of high-quality preference data can meaningfully shift model behaviour<span class="cit">³</span>.</p>
+        </div>
+
+        <div class="review-sh">Research Gaps & Future Directions</div>
+        <div class="review-body">
+          <p>A consistent limitation across all three bodies of work is the absence of cross-domain evaluation. Principles and reward models trained in one task distribution have not been systematically tested against novel domains. Scalability of human preference collection as model capability exceeds human evaluator ability remains an unresolved challenge with significant practical implications for frontier model alignment.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── VERIFY ─── -->
+    <div class="tab-panel" id="tp-verify">
+      <div class="comp-toolbar">
+        <span class="comp-title">Claim Verification</span>
+        <span class="comp-sub">HAVF · check any claim against your papers</span>
+        <div class="spacer"></div>
+        <button class="tb-btn">Verification history</button>
+      </div>
+      <div class="verify-wrap">
+
+        <div class="verify-input-row">
+          <textarea class="verify-ta" placeholder="Paste or type a claim to verify against your papers..." rows="2"></textarea>
+          <button class="verify-btn">Verify →</button>
+        </div>
+
+        <!-- Supported -->
+        <div class="vr">
+          <div class="vr-head">
+            <span class="vr-claim">"Constitutional AI models achieve harmlessness without sacrificing helpfulness compared to RLHF baselines."</span>
+            <span class="vr-verdict v-sup">✓ Supported</span>
+          </div>
+          <div class="vr-body">
+            <div class="vr-score-row">
+              <span class="vr-score-label">HAVF Score</span>
+              <div class="vr-score-track"><div class="vr-score-fill" style="width:91%;background:var(--hi)"></div></div>
+              <span class="vr-score-val" style="color:var(--hi)">0.91 · HIGH</span>
+            </div>
+            <div class="ev-row" onclick="litPDF('src-p12')">
+              <span class="ev-para">¶P12</span>
+              <span class="ev-text">Constitutional AI models are rated by crowdworkers as both less harmful and comparably helpful to RLHF-trained baselines...</span>
+              <span class="ev-sim">0.94</span>
+            </div>
+            <div class="ev-row" onclick="litPDF('src-p2')">
+              <span class="ev-para">¶P2</span>
+              <span class="ev-text">This approach allows us to control AI behavior more precisely, and with far less human effort, while maintaining assistant helpfulness...</span>
+              <span class="ev-sim">0.88</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Partial -->
+        <div class="vr">
+          <div class="vr-head">
+            <span class="vr-claim">"RLHF eliminates all forms of model hallucination across domains."</span>
+            <span class="vr-verdict v-par">~ Partial</span>
+          </div>
+          <div class="vr-body">
+            <div class="vr-score-row">
+              <span class="vr-score-label">HAVF Score</span>
+              <div class="vr-score-track"><div class="vr-score-fill" style="width:58%;background:var(--med)"></div></div>
+              <span class="vr-score-val" style="color:var(--med)">0.58 · MEDIUM</span>
+            </div>
+            <div class="vr-note" style="border-color:var(--med);color:var(--t3)">
+              Papers show RLHF reduces, but does not eliminate, hallucination. No paper makes a universal cross-domain claim. Level 2 cross-encoder triggered.
+            </div>
+            <div class="ev-row">
+              <span class="ev-para">¶P7</span>
+              <span class="ev-text">The preference model generalises to unseen domains but quality varies with distributional distance from training data...</span>
+              <span class="ev-sim">0.61</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Not found -->
+        <div class="vr">
+          <div class="vr-head">
+            <span class="vr-claim">"Constitutional AI was trained on 10 billion parameters."</span>
+            <span class="vr-verdict v-no">✗ Not Found</span>
+          </div>
+          <div class="vr-body">
+            <div class="vr-note" style="border-color:var(--low);color:var(--t3)">
+              No relevant content found in your 2 completed papers. This specific figure does not appear in any indexed source.
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /tab-panels -->
+</div><!-- /panel-main -->
+
+<!-- ════ RIGHT PANEL ════ -->
+<div class="panel panel-right">
+  <div class="tab-bar">
+    <button class="rtab active" id="rt-papers" onclick="switchRTab('papers')">Papers</button>
+    <button class="rtab" id="rt-source" onclick="switchRTab('source')">Source</button>
+    <button class="rtab" id="rt-web" onclick="switchRTab('web')">Web</button>
+  </div>
+
+  <div class="rtab-panels">
+
+    <!-- Papers tab -->
+    <div class="rtab-panel visible" id="rp-papers">
+      <div class="rtab-content">
+        <div class="paper-card active" onclick="selectPC(this)">
+          <div class="pc-head">
+            <span class="pc-num">[1]</span>
+            <span class="pc-title">Constitutional AI: Harmlessness from AI Feedback</span>
+            <button class="pdf-btn" onclick="event.stopPropagation();togglePDF()" title="Open in PDF">📖</button>
+          </div>
+          <div class="pc-meta">
+            <span>Bai et al. 2022</span>
+            <span class="pc-status">
+              <svg class="ring-sm" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="#333" stroke-width="1.5"/><circle cx="7" cy="7" r="5.5" fill="none" stroke="var(--hi)" stroke-width="1.5" stroke-dasharray="34.6" stroke-dashoffset="0"/></svg>
+              Indexed
+            </span>
+          </div>
+        </div>
+
+        <div class="paper-card" onclick="selectPC(this)">
+          <div class="pc-head">
+            <span class="pc-num">[2]</span>
+            <span class="pc-title">Learning to Summarize from Human Feedback</span>
+            <button class="pdf-btn" onclick="event.stopPropagation();togglePDF()" title="Open in PDF">📖</button>
+          </div>
+          <div class="pc-meta">
+            <span>Stiennon et al. 2022</span>
+            <span class="pc-status">
+              <svg class="ring-sm" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="#333" stroke-width="1.5"/><circle cx="7" cy="7" r="5.5" fill="none" stroke="var(--hi)" stroke-width="1.5" stroke-dasharray="34.6" stroke-dashoffset="0"/></svg>
+              Indexed
+            </span>
+          </div>
+        </div>
+
+        <div class="paper-card" onclick="selectPC(this)">
+          <div class="pc-head">
+            <span class="pc-num">[3]</span>
+            <span class="pc-title">Training language models to follow instructions</span>
+            <button class="pdf-btn" onclick="event.stopPropagation();togglePDF()" title="Open in PDF">📖</button>
+          </div>
+          <div class="pc-meta">
+            <span>Ouyang et al. 2022</span>
+            <span class="pc-status">
+              <svg class="ring-sm" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="none" stroke="#333" stroke-width="1.5"/><circle cx="7" cy="7" r="5.5" fill="none" stroke="var(--med)" stroke-width="1.5" stroke-dasharray="34.6" stroke-dashoffset="9" stroke-linecap="round"/></svg>
+              74%…
+            </span>
+          </div>
+        </div>
+
+        <div class="paper-card" onclick="selectPC(this)">
+          <div class="pc-head">
+            <span class="pc-num">[4]</span>
+            <span class="pc-title">Reward Modeling for Mitigating Toxicity</span>
+            <button class="pdf-btn" onclick="event.stopPropagation()" title="Not yet indexed">📖</button>
+          </div>
+          <div class="pc-meta">
+            <span>Perez et al. 2022</span>
+            <span class="pc-status" style="color:var(--t4)">Queued</span>
+          </div>
+        </div>
+
+        <button style="width:100%;margin-top:8px;padding:8px;background:var(--s2);border:1px dashed var(--b2);border-radius:var(--r);color:var(--t3);font-size:12.5px;cursor:pointer;transition:all .15s;font-family:var(--sans)" onmouseover="this.style.borderColor='var(--gold)';this.style.color='var(--gold)'" onmouseout="this.style.borderColor='var(--b2)';this.style.color='var(--t3)'">+ Upload paper</button>
+      </div>
+    </div>
+
+    <!-- Source tab -->
+    <div class="rtab-panel" id="rp-source">
+      <div class="src-rp-toolbar">
+        <select class="rp-sel" style="flex:1.6">
+          <option>Constitutional AI Methods</option>
+          <option>RLHF Scalability</option>
+        </select>
+        <select class="rp-sel">
+          <option>Abstract</option>
+          <option>Methods</option>
+          <option>Results</option>
+        </select>
+        <button class="tb-btn" style="font-size:11px;padding:4px 9px;white-space:nowrap">Summarise</button>
+      </div>
+      <div class="src-scroll">
+        <div class="sum-card">
+          <div class="sum-label">◈ Summary</div>
+          <div class="sum-text">Constitutional AI trains safe models using written principles + self-critique loops, eliminating human harm labels. SL-CAI then RL-CAI stages. Achieves 96% harmlessness at minimal helpfulness cost.</div>
+          <div class="sum-meta">Gemini Flash · 3 min ago</div>
+        </div>
+
+        <div class="src-sec-head">
+          <span class="src-sec-name">Abstract</span>
+          <span style="font-size:9px;color:var(--t4)">▾</span>
+        </div>
+        <div class="src-para" id="src-p1">
+          <span class="sp-id">¶P1</span>
+          <span class="sp-text"><span class="sp-word" id="sw-p1s1">As AI systems become more capable, we would like to enlist their help to supervise other AIs.</span> <span class="sp-word" id="sw-p1s2">We experiment with methods for training a harmless AI assistant through self-improvement, without any human labels identifying harmful outputs.</span></span>
+        </div>
+        <div class="src-para lit" id="src-p2">
+          <span class="sp-id">¶P2</span>
+          <span class="sp-text"><span class="sp-word lit" id="sw-p2s1">The only human oversight is provided through a list of rules or principles — a "constitution" — and so we call the method Constitutional AI.</span> <span class="sp-word" id="sw-p2s2">This approach allows us to control AI behavior more precisely, and with far less human effort.</span></span>
+        </div>
+
+        <div class="src-sec-head">
+          <span class="src-sec-name">Methods</span>
+          <span style="font-size:9px;color:var(--t4)">▾</span>
+        </div>
+        <div class="src-para" id="src-p5">
+          <span class="sp-id">¶P5</span>
+          <span class="sp-text"><span class="sp-word" id="sw-p5s1">The CAI training process begins with a supervised learning phase where the model critiques its own outputs according to constitutional principles.</span> <span class="sp-word" id="sw-p5s2">It then revises those outputs and learns from the improved versions, bootstrapping better behavior.</span></span>
+        </div>
+        <div class="src-para" id="src-p7">
+          <span class="sp-id">¶P7</span>
+          <span class="sp-text"><span class="sp-word">In the RL phase, a preference model is trained on model-generated comparisons, replacing the need for human preference labels on harmful content.</span></span>
+        </div>
+
+        <div class="src-sec-head">
+          <span class="src-sec-name">Results</span>
+          <span style="font-size:9px;color:var(--t4)">▾</span>
+        </div>
+        <div class="src-para" id="src-p12">
+          <span class="sp-id">¶P12</span>
+          <span class="sp-text"><span class="sp-word">Constitutional AI models are rated by crowdworkers as both less harmful and comparably helpful to RLHF-trained baselines.</span></span>
+        </div>
+        <div class="src-para" id="src-p14">
+          <span class="sp-id">¶P14</span>
+          <span class="sp-text"><span class="sp-word">Across red-team prompts, SL-CAI and RL-CAI achieve 96% and 98% harmless response rates respectively, with helpfulness within 3% of RLHF baseline.</span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Web tab -->
+    <div class="rtab-panel" id="rp-web">
+      <div class="web-search-area">
+        <div class="ws-row">
+          <input class="ws-input" type="text" value="Constitutional AI vs RLHF safety benchmarks 2024">
+          <button class="ws-btn">Search</button>
+        </div>
+        <div class="ws-filters">
+          <span class="wf on">Recent</span>
+          <span class="wf">Peer-reviewed</span>
+          <span class="wf">arXiv</span>
+        </div>
+      </div>
+      <div class="web-results">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--t4)">8 results · academic sources prioritised</div>
+        <div class="wrc">
+          <div class="wrc-dom"><div class="wrc-fav"></div>arxiv.org · Jan 2024</div>
+          <div class="wrc-title">Comparing Constitutional AI and RLHF on Multi-Domain Safety Benchmarks</div>
+          <div class="wrc-snip">CAI-trained models score 18% lower toxicity while retaining 95% helpfulness across ToxiGen, BBQ, HHH-Eval and 4 novel benchmarks...</div>
+          <div class="wrc-actions">
+            <span class="wrc-btn cite">+ Cite in chat</span>
+            <span class="wrc-btn">Open →</span>
+            <span class="wrc-btn">Add to papers</span>
+          </div>
+        </div>
+        <div class="wrc">
+          <div class="wrc-dom"><div class="wrc-fav"></div>anthropic.com · 2024</div>
+          <div class="wrc-title">Claude Model Card — Safety Evaluation</div>
+          <div class="wrc-snip">HHH alignment scores: 0.87 for CAI versus 0.79 for SFT baselines, evaluated on 12,000 human preference examples...</div>
+          <div class="wrc-actions">
+            <span class="wrc-btn cite">+ Cite in chat</span>
+            <span class="wrc-btn">Open →</span>
+          </div>
+        </div>
+        <div class="wrc">
+          <div class="wrc-dom"><div class="wrc-fav"></div>proceedings.neurips.cc · 2024</div>
+          <div class="wrc-title">Reward Model Generalisation Under Distributional Shift</div>
+          <div class="wrc-snip">RLHF reward models show 23% degradation on out-of-distribution tasks. Constitutional methods show more robust cross-domain transfer...</div>
+          <div class="wrc-actions">
+            <span class="wrc-btn cite">+ Cite in chat</span>
+            <span class="wrc-btn">Open →</span>
+            <span class="wrc-btn">Add to papers</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /rtab-panels -->
+</div><!-- /panel-right -->
+
+<!-- ════ PDF PANEL ════ -->
+<div class="panel panel-pdf hidden" id="pdfPanel">
+  <div class="pdf-header">
+    <div class="pdf-title-info">
+      <div class="pdf-title">Constitutional AI: Harmlessness from AI Feedback</div>
+      <div class="pdf-meta">Bai et al. 2022 · 26 pages</div>
+    </div>
+    <div class="pdf-ctrls">
+      <button class="pdf-cbtn">Summarise</button>
+      <button class="pdf-cbtn" onclick="togglePDF()">×</button>
+    </div>
+  </div>
+  <div class="pdf-nav">
+    <span>Page 5 / 26</span>
+    <div style="display:flex;gap:5px;align-items:center">
+      <button class="pdf-cbtn">←</button>
+      <button class="pdf-cbtn">→</button>
+      <button class="pdf-cbtn">−</button>
+      <span style="color:var(--t2);padding:0 4px;font-size:12px">100%</span>
+      <button class="pdf-cbtn">+</button>
+    </div>
+  </div>
+  <div class="pdf-content" id="pdfContent">
+    <div class="pdf-section">
+      <div class="pdf-h1">3. Constitutional AI</div>
+      <div class="pdf-h2">3.1 The Supervised Learning Stage (SL-CAI)</div>
+      <div class="pdf-p" id="pdf-src-p1">
+        We begin with a helpful-only model and generate responses to harmful prompts. We then ask the model to critique its own responses according to the constitution, and revise them to be less harmful.
+      </div>
+      <div class="pdf-p lit" id="pdf-src-p2">
+        The only human oversight is provided through a list of rules or principles — a "constitution" — and so we call the method Constitutional AI. This approach allows us to control AI behavior more precisely, and with far less human effort.
+      </div>
+      <div class="pdf-p" id="pdf-src-p3">
+        We iterate this critique-revision loop several times, finding that multiple rounds substantially improve the quality of the revised outputs beyond a single round.
+      </div>
+      <div class="pdf-h2">3.2 The RL Stage (RL-CAI)</div>
+      <div class="pdf-p lit" id="pdf-src-p5">
+        The CAI training process begins with a supervised learning phase where the model critiques its own outputs according to constitutional principles. It then revises those outputs and learns from the improved versions, bootstrapping better behavior without any human annotation of specific harmful outputs.
+      </div>
+      <div class="pdf-p" id="pdf-src-p6">
+        In the RL phase, we generate pairs of responses to red-team prompts and ask the model to pick the less harmful option, using the constitution as guidance. This creates a preference dataset without any human harm labels.
+      </div>
+    </div>
+    <div class="pdf-section">
+      <div class="pdf-h1">4. Results</div>
+      <div class="pdf-p lit" id="pdf-src-p12">
+        Constitutional AI models are rated by crowdworkers as both less harmful and comparably helpful to RLHF-trained baselines, suggesting that the constitution-guided self-critique is sufficient for achieving safe behavior without human harm annotation.
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /workspace -->
+</div><!-- /app -->
+
+<!-- ════ PEEK PANE ════ -->
+<div class="peek-pane" id="peekPane">
+  <div class="peek-header">
+    <div class="peek-tag" id="pkTag">PAPER [1] · PAGE 3</div>
+    <div class="peek-title" id="pkTitle">Constitutional AI</div>
+    <div class="peek-authors" id="pkAuthors">Bai et al. 2022</div>
+    <div class="peek-path">
+      <strong id="pkSection">3. Constitutional AI</strong>
+      <span class="peek-chevron">›</span>
+      <span id="pkSub">3.1 Supervised Stage</span>
+    </div>
+  </div>
+  <div class="peek-body" id="pkBody"></div>
+  <div class="peek-footer">
+    <div class="peek-conf">
+      <div class="peek-conf-dot" id="pkDot"></div>
+      <span class="peek-conf-text" id="pkConf">96% confidence</span>
+      <span class="peek-conf-sub">· HAVF verified</span>
+    </div>
+    <button class="peek-jump" id="pkJump">Open in PDF ↗</button>
+  </div>
+</div>
+
+<!-- Small citation tooltip -->
+<div class="tooltip" id="tooltip">
+  <div class="tt-paper" id="ttP"></div>
+  <div class="tt-preview" id="ttPrev"></div>
+  <div class="tt-conf" id="ttC"></div>
+  <div class="tt-hint">Click to jump in PDF →</div>
+</div>
+
+<script>
+// ── Utilities ──────────────────────────────────
+function clamp(v,lo,hi){ return Math.max(lo,Math.min(hi,v)); }
+
+// ── Main tab switching ─────────────────────────
+function switchTab(t) {
+  document.querySelectorAll('.nav-tab').forEach(n=>n.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('visible'));
+  document.getElementById('nt-'+t)?.classList.add('active');
+  document.getElementById('tp-'+t)?.classList.add('visible');
+}
+
+// ── Right panel tab switching ──────────────────
+function switchRTab(t) {
+  document.querySelectorAll('.rtab').forEach(r=>r.classList.remove('active'));
+  document.querySelectorAll('.rtab-panel').forEach(p=>p.classList.remove('visible'));
+  document.getElementById('rt-'+t)?.classList.add('active');
+  document.getElementById('rp-'+t)?.classList.add('visible');
+}
+
+// ── Tool selection ─────────────────────────────
+function markTool(el) {
+  document.querySelectorAll('.tool-item').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// ── Session selection ──────────────────────────
+function selectSession(el) {
+  document.querySelectorAll('.session-item').forEach(s=>s.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// ── Paper card selection ───────────────────────
+function selectPC(el) {
+  document.querySelectorAll('.paper-card').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// ── PDF panel ─────────────────────────────────
+function togglePDF() {
+  document.getElementById('pdfPanel').classList.toggle('hidden');
+}
+
+// ── Lit source in both panels ──────────────────
+function litPDF(paraId) {
+  // Source viewer
+  document.querySelectorAll('.src-para').forEach(p=>p.classList.remove('lit'));
+  document.querySelectorAll('.sp-word').forEach(w=>w.classList.remove('lit'));
+  const sp = document.getElementById(paraId);
+  if(sp){ sp.classList.add('lit'); sp.scrollIntoView({behavior:'smooth',block:'center'}); }
+  switchRTab('source');
+
+  // PDF panel
+  document.querySelectorAll('.pdf-p').forEach(p=>p.classList.remove('lit'));
+  const pp = document.getElementById('pdf-'+paraId);
+  if(pp){ pp.classList.add('lit'); setTimeout(()=>pp.classList.remove('lit'),2200); }
+  if(document.getElementById('pdfPanel').classList.contains('hidden'))
+    document.getElementById('pdfPanel').classList.remove('hidden');
+}
+
+// ── Web pill toggle ────────────────────────────
+function toggleWebPill(){
+  const p=document.getElementById('webPill');
+  if(p.textContent.includes('off')){ p.textContent='🌐 Web on'; p.style.background='var(--info-dim)'; p.style.borderColor='rgba(96,165,250,0.25)'; p.style.color='var(--info)'; }
+  else { p.textContent='🌐 Web off'; p.style.background=''; p.style.borderColor=''; p.style.color=''; }
+}
+function toggleWebCtrl(){
+  const b=document.getElementById('webCtrl');
+  if(b.classList.contains('web-on')){ b.classList.remove('web-on'); b.textContent='🌐 Web Off'; }
+  else { b.classList.add('web-on'); b.textContent='🌐 Web On'; }
+}
+
+// ── Peek Pane ──────────────────────────────────
+const peekPane = document.getElementById('peekPane');
+const pkBody   = document.getElementById('pkBody');
+let   peekTimer = null, activeSent = null;
+
+function showPeek(sent, e) {
+  clearTimeout(peekTimer);
+  if(activeSent && activeSent !== sent) activeSent.classList.remove('peek-active');
+  activeSent = sent;
+  sent.classList.add('peek-active');
+
+  const d = sent.dataset;
+  const conf = parseInt(d.conf)||0;
+  const color = conf>=85?'var(--hi)':conf>=65?'var(--med)':'var(--low)';
+  const num = d.paper?.includes('Constitutional')?'1':d.paper?.includes('Summarize')?'2':'3';
+
+  document.getElementById('pkTag').textContent    = `PAPER [${num}] · PAGE ${d.page||''}`;
+  document.getElementById('pkTitle').textContent  = d.paper||'';
+  document.getElementById('pkAuthors').textContent= d.authors||'';
+  document.getElementById('pkSection').textContent= d.section||'';
+  document.getElementById('pkSub').textContent    = d.subsection||'';
+  document.getElementById('pkConf').textContent   = `${conf}% confidence`;
+  document.getElementById('pkConf').style.color   = color;
+  document.getElementById('pkDot').style.background = color;
+  document.getElementById('pkDot').style.boxShadow  = `0 0 5px ${color}`;
+  document.getElementById('pkJump').onclick = ()=>litPDF(d.paraId||'');
+
+  pkBody.innerHTML = '';
+  if(d.contextBefore){
+    const el=document.createElement('div'); el.className='peek-ctx';
+    el.textContent=d.contextBefore; pkBody.appendChild(el);
+  }
+  const lbl=document.createElement('div'); lbl.className='peek-cited-label';
+  lbl.innerHTML=`<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold);margin-right:5px"></span>CITED PASSAGE · §${d.subsection||''} · p.${d.page||''}`;
+  pkBody.appendChild(lbl);
+  const main=document.createElement('div'); main.className='peek-main';
+  const raw=d.para||'';
+  const chatWords=(sent.innerText||'').replace(/[¹²³⁴⁵⁶⁷⁸⁹]/g,'').trim().split(' ').slice(0,6).join(' ');
+  const esc=chatWords.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  main.innerHTML=raw.replace(new RegExp(`(${esc.split(' ').slice(0,4).join('.{0,8}')})`, 'i'),'<span class="peek-hl">$1</span>')||raw;
+  pkBody.appendChild(main);
+  if(d.contextAfter){
+    const el=document.createElement('div'); el.className='peek-ctx';
+    el.textContent=d.contextAfter; pkBody.appendChild(el);
+  }
+
+  // Position
+  const vw=window.innerWidth, vh=window.innerHeight, pw=430;
+  const ph=Math.min(520,peekPane.offsetHeight||400);
+  const rect=sent.getBoundingClientRect();
+  let left=e.clientX+16; if(left+pw>vw-12) left=e.clientX-pw-12;
+  left=clamp(left,8,vw-pw-8);
+  let top=rect.bottom+8; if(top+ph>vh-12) top=rect.top-ph-8;
+  top=clamp(top,8,vh-ph-8);
+  peekPane.style.left=left+'px'; peekPane.style.top=top+'px';
+  peekPane.classList.add('visible');
+}
+
+function hidePeek(now){
+  peekTimer=setTimeout(()=>{
+    peekPane.classList.remove('visible');
+    if(activeSent){ activeSent.classList.remove('peek-active'); activeSent=null; }
+  }, now?0:200);
+}
+
+document.querySelectorAll('.cs').forEach(s=>{
+  s.addEventListener('mouseenter', e=>showPeek(s,e));
+  s.addEventListener('mousemove',  e=>{
+    if(!peekPane.classList.contains('visible')) return;
+    const vw=window.innerWidth, pw=430;
+    let l=e.clientX+16; if(l+pw>vw-12) l=e.clientX-pw-12;
+    peekPane.style.left=clamp(l,8,vw-pw-8)+'px';
+  });
+  s.addEventListener('mouseleave', ()=>hidePeek(false));
+});
+peekPane.addEventListener('mouseenter', ()=>clearTimeout(peekTimer));
+peekPane.addEventListener('mouseleave', ()=>hidePeek(true));
+
+// ── Small citation tooltip ─────────────────────
+const tooltip=document.getElementById('tooltip');
+document.querySelectorAll('.cit').forEach(c=>{
+  c.addEventListener('click', e=>{
+    e.stopPropagation();
+    const s=c.closest('.cs'); if(!s) return;
+    litPDF(s.dataset.paraId||'');
+  });
+  c.addEventListener('mouseenter', function(e){
+    e.stopPropagation();
+    const s=c.closest('.cs'); if(!s) return;
+    document.getElementById('ttP').textContent  = `${c.textContent} ${s.dataset.paper||''} · §${s.dataset.subsection||''} · p.${s.dataset.page||''}`;
+    document.getElementById('ttPrev').textContent= '"'+(s.dataset.para||'').slice(0,55)+'…"';
+    document.getElementById('ttC').textContent  = `Confidence: ${s.dataset.conf||''}% (${parseInt(s.dataset.conf||0)>=85?'high':'medium'})`;
+    tooltip.classList.add('show');
+    const r=c.getBoundingClientRect();
+    tooltip.style.left=r.left+'px'; tooltip.style.top=(r.bottom+7)+'px';
+  });
+  c.addEventListener('mouseleave',()=>tooltip.classList.remove('show'));
+});
+
+// ── Auto-scroll ────────────────────────────────
+const msgs=document.getElementById('messages');
+if(msgs) msgs.scrollTop=msgs.scrollHeight;
+
+// ── Textarea auto-grow ─────────────────────────
+document.querySelectorAll('textarea').forEach(ta=>{
+  ta.addEventListener('input',function(){
+    this.style.height='auto';
+    this.style.height=Math.min(this.scrollHeight,90)+'px';
+  });
+});
+</script>
+</body>
+</html>

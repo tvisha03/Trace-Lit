@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* TraceLit — Dark Academic Design System */
+:root {
+  /* Backgrounds */
+  --bg:       #080808;
+  --s1:       #0f0f0f;
+  --s2:       #141414;
+  --s3:       #1a1a1a;
+  --s4:       #212121;
+  --s5:       #2a2a2a;
+
+  /* Borders */
+  --b1:       #222222;
+  --b2:       #2e2e2e;
+  --b3:       #3a3a3a;
+
+  /* Text */
+  --t1:       #ececec;
+  --t2:       #aaaaaa;
+  --t3:       #666666;
+  --t4:       #444444;
+
+  /* Gold accent — citations, active states */
+  --gold:         #c9a96e;
+  --gold-dim:     rgba(201,169,110,0.12);
+  --gold-glow:    rgba(201,169,110,0.06);
+
+  /* Confidence colours */
+  --hi:       #34d399;   /* HIGH  ≥85% */
+  --hi-dim:   rgba(52,211,153,0.12);
+  --med:      #fbbf24;   /* MEDIUM 65-84% */
+  --low:      #f87171;   /* LOW  <65% */
+  --info:     #60a5fa;
+
+  font-family: 'DM Sans', system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--t1);
+  background-color: var(--bg);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--bg);
+  color: var(--t1);
+}
+
+/* Custom scrollbars to match dark theme */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: var(--s1); }
+::-webkit-scrollbar-thumb  { background: var(--s5); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--b3); }
+
+/* Gold citation links */
+.citation-link {
+  color: var(--gold);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.8em;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 1px solid var(--gold);
+  transition: background 0.15s;
+}
+.citation-link:hover { background: var(--gold-dim); }
+
+/* Confidence underlines */
+.conf-high   { border-bottom: 2px solid var(--hi); }
+.conf-medium { border-bottom: 2px dashed var(--med); }
+.conf-low    { border-bottom: 2px dotted var(--low); }
+
+/* Status dot breathe animation */
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.45; transform: scale(0.75); }
+}
+.breathe { animation: breathe 3s ease-in-out infinite; }
+
+/* Sentence highlight pulse animation */
+@keyframes sentencePulse {
+  0%   { background: rgba(201,169,110,0.35); }
+  60%  { background: rgba(201,169,110,0.18); }
+  100% { background: transparent; }
+}
+.sentence-highlight { animation: sentencePulse 3s ease-out forwards; }

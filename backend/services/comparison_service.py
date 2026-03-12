@@ -131,7 +131,13 @@ def _build_comparison_rows(
     paper_ids: list[str],
     titles: list[str],
 ) -> list[dict]:
-    for block in build_export_blocks(comparison_text):
+    # Replace <br> variants with a plain space BEFORE calling build_export_blocks.
+    # _normalize_source_text converts <br> to \n, which splits a single pipe-table
+    # row (whose cells use <br> for inline line breaks) into multiple fragment lines
+    # that the table parser cannot reassemble, causing misaligned or missing columns.
+    import re as _re
+    safe_text = _re.sub(r'<br\s*/?>', ' ', comparison_text, flags=_re.IGNORECASE)
+    for block in build_export_blocks(safe_text):
         if block.kind != "table" or not block.rows:
             continue
 
@@ -163,7 +169,7 @@ def _build_comparison_rows(
         if rows:
             return rows
 
-    parsed_rows = _parse_delimited_rows(comparison_text, expected_columns=len(paper_ids) + 2)
+    parsed_rows = _parse_delimited_rows(safe_text, expected_columns=len(paper_ids) + 2)
     if parsed_rows:
         header, *data_rows = parsed_rows
         rows: list[dict] = []

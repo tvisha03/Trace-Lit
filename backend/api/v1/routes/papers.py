@@ -1,5 +1,7 @@
 
 from fastapi import APIRouter, Depends, UploadFile, File, Request
+from fastapi.responses import FileResponse
+from pathlib import Path
 from typing import Annotated
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +26,26 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+
+def _split_authors_str(authors_str: str | None) -> list[str] | None:
+    """Split a stored authors string into a list for the API response.
+
+    The DB stores authors as a single string (e.g. "Smith, J; Doe, A" or
+    "Smith J and Doe A"). Split on ';' first, then ' and ', so the frontend
+    always receives a proper list rather than a bare string.
+    """
+    if not authors_str:
+        return None
+    import re as _re
+    if ";" in authors_str:
+        parts = [p.strip() for p in authors_str.split(";")]
+    elif _re.search(r"\sand\s", authors_str, _re.IGNORECASE):
+        parts = _re.split(r"\s+and\s+", authors_str, flags=_re.IGNORECASE)
+        parts = [p.strip() for p in parts]
+    else:
+        parts = [authors_str.strip()]
+    return [p for p in parts if p] or None
 
 _upload_limiter = SlidingWindowRateLimiter(
     max_calls=5, window_seconds=60.0, resource_name="upload requests",
@@ -239,6 +261,10 @@ async def upload_papers(
     if not session_lock.locked():
         _session_upload_locks.pop(session_id, None)
 
+    # Commit before enqueuing — the worker may fetch the paper from DB
+    # almost immediately, so it must be visible to other sessions first.
+    await db.commit()
+
     paper_queue = request.app.state.paper_queue
     for pid in paper_ids:
         await paper_queue.enqueue(pid, session_id)
@@ -266,7 +292,7 @@ async def list_papers(
             session_id=str(p.session_id),
             filename=p.filename,
             title=p.title,
-            authors=p.authors,
+            authors=_split_authors_str(p.authors),
             year=p.year,
             abstract=p.abstract,
             status=p.status.value if hasattr(p.status, "value") else p.status,
@@ -299,7 +325,7 @@ async def get_paper(
         session_id=str(paper.session_id),
         filename=paper.filename,
         title=paper.title,
-        authors=paper.authors,
+        authors=_split_authors_str(paper.authors),
         year=paper.year,
         abstract=paper.abstract,
         status=paper.status.value if hasattr(paper.status, "value") else paper.status,
@@ -310,6 +336,31 @@ async def get_paper(
         error_message=paper.error_message,
         created_at=paper.created_at.isoformat(),
     )
+
+@router.get("/{paper_id}/pdf")
+async def serve_paper_pdf(
+    session_id: str,
+    paper_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream the original uploaded PDF back to the browser."""
+    paper = await db_get_paper(db, paper_id)
+    if not paper:
+        raise NotFoundError("Paper", paper_id)
+    if str(paper.session_id) != session_id:
+        raise ForbiddenError("Paper", paper_id)
+
+    file_path = Path(paper.file_path)
+    if not file_path.exists():
+        raise NotFoundError("PDF file for paper", paper_id)
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/pdf",
+        filename=paper.filename,
+        headers={"Content-Disposition": f'inline; filename="{paper.filename}"'},
+    )
+
 
 def _get_paper_status(paper) -> str:
     return paper.status.value if hasattr(paper.status, "value") else paper.status

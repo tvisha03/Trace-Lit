@@ -10,6 +10,7 @@ from shared.constants import (
     FIGURE_DESCRIPTION_MAX_TOKENS,
     FIGURE_ANALYSIS_TIMEOUT,
 )
+from shared.enums import LLMProvider
 from app.config import get_settings
 from domain.extraction.pdf_processor import ExtractedFigure
 from domain.generation.prompts import FIGURE_ANALYSIS_PROMPT
@@ -20,6 +21,11 @@ _vision_semaphore: asyncio.Semaphore | None = None
 # Abort the whole batch run after this many figures fail in a row.
 # Protects against wasting time when every cloud provider is rate-limited.
 _MAX_CONSECUTIVE_FAILURES = 3
+
+# Gemini free-tier ceiling used to calculate the correct inter-batch sleep.
+# Formula: sleep = (60s * batch_size) / RPM_limit
+# e.g. batch_size=2, RPM=10 → 12s between batches to stay under 10 RPM.
+_GEMINI_VISION_RPM = 10
 
 
 def _get_vision_semaphore() -> asyncio.Semaphore:
@@ -202,11 +208,21 @@ async def analyze_figures(
         del tasks, results
         gc.collect()
 
-        # Sleep long enough for the Gemini 20-RPM window to recover.
-        # 3.5 s > the 3 s minimum between requests at 20 RPM.
         remaining = len(figures) - (batch_start + len(batch))
         if remaining > 0:
-            await asyncio.sleep(3.5)
+            # Only throttle when Gemini is available and its rate limit applies.
+            # When Gemini is in cooldown we fall back to local Ollama, which has
+            # no API rate limit — adding a delay here only wastes time.
+            gemini_cooldown = (
+                llm_chain.rate_monitor.cooldown_remaining(LLMProvider.GEMINI)
+                if hasattr(llm_chain, "rate_monitor")
+                else 0.0
+            )
+            if gemini_cooldown <= 0:
+                # sleep = (60s × batch_size) / RPM_limit
+                # e.g. batch_size=2, RPM=10 → 12 s between batches
+                inter_batch_sleep = (60.0 * batch_size) / _GEMINI_VISION_RPM
+                await asyncio.sleep(inter_batch_sleep)
 
     logger.info(f"Analyzed {len(analyzed)}/{len(figures)} figures successfully")
     return analyzed

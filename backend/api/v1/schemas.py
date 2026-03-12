@@ -56,7 +56,7 @@ class PaperResponse(BaseModel):
     session_id: str
     filename: str
     title: Optional[str] = None
-    authors: Optional[str] = None
+    authors: Optional[list[str]] = None
     year: Optional[int] = None
     abstract: Optional[str] = None
     doi: Optional[str] = None

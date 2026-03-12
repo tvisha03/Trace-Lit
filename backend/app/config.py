@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     MAX_SESSIONS: int = 50
     MAX_PARALLEL_PAPERS: int = Field(default_factory=_detect_max_parallel_papers)
     ADAPTIVE_FIGURE_CONCURRENCY: int = Field(default_factory=_detect_figure_concurrency)
+    # Set FIGURE_ANALYSIS_ENABLED=false to skip vision LLM calls during paper processing.
+    # Useful when papers have many figures (>30) and fast ingestion matters more than
+    # enriching figure chunks — figures that fall back to local Ollama moondream
+    # typically return 'unknown' anyway, adding little RAG value.
+    FIGURE_ANALYSIS_ENABLED: bool = True
+    # Hard cap (seconds) for the entire figure-analysis phase per paper.
+    # Raised from 180 s to 300 s to accommodate Gemini 60-s rate-limit cooldowns.
+    FIGURE_VISION_TIMEOUT_SECONDS: int = 300
     MAX_EXPORT_FILE_SIZE_MB: int = 100
     MIN_DISK_SPACE_MB: int = 500
     MEMORY_PRESSURE_THRESHOLD: float = 0.80

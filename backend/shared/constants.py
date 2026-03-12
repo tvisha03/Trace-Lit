@@ -23,7 +23,7 @@ FAISS_MAX_VECTORS: int = 200_000
 # larger context window and produce richer cross-paper analysis.
 COMPARISON_TOKEN_BUDGET_PER_PAPER: int = 3_000
 
-MAX_WS_CONNECTIONS_PER_SESSION: int = 10
+MAX_WS_CONNECTIONS_PER_SESSION: int = 4
 
 WS_PAPER_PROGRESS: str = "paper_progress"
 WS_PAPER_COMPLETE: str = "paper_complete"

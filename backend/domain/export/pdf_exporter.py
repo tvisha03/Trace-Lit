@@ -18,7 +18,28 @@ _ACCENT_RGB = (47, 79, 111)
 _ACCENT_LIGHT_RGB = (232, 238, 244)
 _USER_RGB = (95, 95, 95)
 _ASSISTANT_RGB = (32, 76, 165)
+# Font candidates ordered by platform preference.
+# macOS paths first (most likely deployment target), then Linux, then Windows.
+# Paths prefixed with "~" are expanded at runtime to the current user's home dir.
 _PDF_FONT_CANDIDATES = [
+    # macOS — Arial via Microsoft Office (/Library/Fonts is system-wide)
+    ("TraceLitUnicode", "/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
+    # macOS — Arial in system supplemental directory (Catalina+)
+    ("TraceLitUnicode", "/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    # macOS — Liberation Sans system-wide (via LibreOffice installer)
+    ("TraceLitUnicode", "/Library/Fonts/LiberationSans-Regular.ttf", "/Library/Fonts/LiberationSans-Bold.ttf"),
+    # macOS — Liberation Sans per-user (via Homebrew: brew install --cask font-liberation)
+    ("TraceLitUnicode", "~/Library/Fonts/LiberationSans-Regular.ttf", "~/Library/Fonts/LiberationSans-Bold.ttf"),
+    # macOS — Arial per-user (via Homebrew or manual install)
+    ("TraceLitUnicode", "~/Library/Fonts/Arial.ttf", "~/Library/Fonts/Arial Bold.ttf"),
+    # Linux — Liberation Sans (ubuntu/debian: apt install fonts-liberation)
+    ("TraceLitUnicode", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+    # Linux — Liberation Sans (fedora/rhel/arch path)
+    ("TraceLitUnicode", "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf", "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf"),
+    # Linux — DejaVu Sans (nearly universally available on any Linux distro)
+    ("TraceLitUnicode", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ("TraceLitUnicode", "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf"),
+    # Windows — Arial, Calibri, Segoe UI
     ("TraceLitUnicode", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
     ("TraceLitUnicode", "C:/Windows/Fonts/calibri.ttf", "C:/Windows/Fonts/calibrib.ttf"),
     ("TraceLitUnicode", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"),
@@ -42,16 +63,27 @@ def _break_long_words(text: str, max_word: int = 80) -> str:
 
 def _configure_pdf_fonts(pdf) -> str:
     for family, regular, bold in _PDF_FONT_CANDIDATES:
-        regular_path = Path(regular)
+        # Expand ~ so per-user font directories (e.g. ~/Library/Fonts on macOS) resolve correctly.
+        regular_path = Path(regular).expanduser()
+        bold_path = Path(bold).expanduser()
         if not regular_path.exists():
             continue
         try:
             pdf.add_font(family, "", fname=str(regular_path))
-            if Path(bold).exists():
-                pdf.add_font(family, "B", fname=bold)
+            if bold_path.exists():
+                pdf.add_font(family, "B", fname=str(bold_path))
+            logger.debug(f"PDF export: using font '{family}' from {regular_path}")
             return family
-        except Exception:
+        except Exception as exc:
+            logger.debug(f"PDF export: skipping font {regular_path} — {exc}")
             continue
+    logger.warning(
+        "PDF export: no suitable Unicode font found on this system. "
+        "Falling back to built-in Helvetica, which may not render non-ASCII characters correctly. "
+        "To fix, install Liberation Sans: "
+        "macOS → `brew install --cask font-liberation`; "
+        "Linux → `apt install fonts-liberation` or `dnf install liberation-fonts`."
+    )
     return "Helvetica"
 
 

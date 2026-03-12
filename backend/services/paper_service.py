@@ -81,18 +81,29 @@ async def _extract_and_parse_paper(paper_id: str, db: AsyncSession, paper):
     return extracted, sections, metadata
 
 async def _analyze_paper_figures(extracted, llm_chain: FallbackChain | None):
+    from app.config import get_settings as _get_settings
+    settings = _get_settings()
+
     if not extracted.figures or llm_chain is None:
         return []
 
+    if not settings.FIGURE_ANALYSIS_ENABLED:
+        logger.info(
+            f"Figure analysis disabled (FIGURE_ANALYSIS_ENABLED=false) — "
+            f"skipping {len(extracted.figures)} figures"
+        )
+        return []
+
+    timeout = settings.FIGURE_VISION_TIMEOUT_SECONDS
     try:
         analyzed = await asyncio.wait_for(
             analyze_figures(extracted.figures, llm_chain),
-            timeout=180.0,  # 3 min hard cap for all figures
+            timeout=float(timeout),
         )
         return analyzed
     except asyncio.TimeoutError:
         logger.warning(
-            f"Figure analysis phase timed out after 180s "
+            f"Figure analysis phase timed out after {timeout}s "
             f"({len(extracted.figures)} figures) — continuing without figures"
         )
         return []

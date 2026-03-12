@@ -274,6 +274,7 @@ def export_comparison_to_excel(
     cited_assets: list[dict] | None = None,
 ) -> Path:
     output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
     wb = Workbook()
 
@@ -329,6 +330,7 @@ def export_citations_to_excel(
     cited_assets: list[dict] | None = None,
 ) -> Path:
     output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
     wb = Workbook()
 
