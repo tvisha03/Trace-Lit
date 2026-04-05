@@ -15,8 +15,11 @@ from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_i
 
 logger = get_logger(__name__)
 
+
 async def validate_response_has_citations(
-    response: str, context: list[dict], retrieved_paragraph_ids: list[str] | None = None,
+    response: str,
+    context: list[dict],
+    retrieved_paragraph_ids: list[str] | None = None,
 ) -> tuple[str, bool]:
     citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]"
     citations_found = re.findall(citation_pattern, response)
@@ -24,8 +27,10 @@ async def validate_response_has_citations(
 
     if not citations_found:
         if not context:
-            return ("I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers.",
-                    True)
+            return (
+                "I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers.",
+                True,
+            )
         # LLM produced an answer but without traceable citations — surface the
         # answer rather than hiding it behind an opaque apology.  The disclaimer
         # lets the user know they should verify the content themselves.
@@ -61,6 +66,7 @@ async def validate_response_has_citations(
 
     return response, citations_stripped
 
+
 async def _format_havf_data(response: ChatResponse) -> list[dict]:
     return [
         {
@@ -71,21 +77,23 @@ async def _format_havf_data(response: ChatResponse) -> list[dict]:
             "paragraph_id": r.paragraph_id,
             "paper_id": r.paper_id,
             "sentence_key": r.sentence_key,
-            "verification_method": r.verification_method.value if r.verification_method else None,
+            "verification_method": r.verification_method.value
+            if r.verification_method
+            else None,
             "chunk_type": r.chunk_type,
             "citation_ref": r.citation_ref,
+            "page_number": r.page_number,
         }
         for r in response.havf_results
     ]
+
 
 async def _validate_and_update_response_content(
     response: ChatResponse,
     paper_ids: list[str],
 ) -> None:
     retrieved_para_ids = [
-        str(r.paragraph_id)
-        for r in (response.retrieved_chunks or [])
-        if r.paragraph_id
+        str(r.paragraph_id) for r in (response.retrieved_chunks or []) if r.paragraph_id
     ]
     validated_content, citations_stripped = await validate_response_has_citations(
         response.content,
@@ -97,7 +105,10 @@ async def _validate_and_update_response_content(
         # This fires when either (a) no citations were found and a disclaimer was
         # appended, or (b) some citations referenced non-existent paragraphs and
         # were stripped.  Both cases degrade attribution quality.
-        logger.info("Citation validation: response modified — citations absent or referencing unknown paragraphs")
+        logger.info(
+            "Citation validation: response modified — citations absent or referencing unknown paragraphs"
+        )
+
 
 async def _process_and_save_response(
     response: ChatResponse,
@@ -119,6 +130,7 @@ async def _process_and_save_response(
         token_count=response.token_count,
         latency_ms=response.latency_ms,
     )
+
 
 async def _prepare_chat_context(
     session_id: str, db: AsyncSession
@@ -144,6 +156,7 @@ async def _prepare_chat_context(
     paper_ids = [str(p.id) for p in papers]
     history = await get_recent_messages(db, session_id, max_turns=4)
     return paper_ids, history
+
 
 async def chat(
     session_id: str,
@@ -172,6 +185,7 @@ async def chat(
     )
     await _process_and_save_response(response, session_id, paper_ids, db)
     return response
+
 
 async def chat_stream(
     session_id: str,
@@ -205,4 +219,3 @@ async def chat_stream(
     except Exception as exc:
         logger.error(f"Error during chat stream setup: {exc}")
         raise
-

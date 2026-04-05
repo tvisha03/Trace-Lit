@@ -30,6 +30,7 @@ _TABLE_DESC_LINE_RE = re.compile(
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _MAX_DISPLAY_CHARS = 300
 
+
 def _clean_table_source(stripped: str, caption: str | None) -> str:
     stripped = _TABLE_DESC_LINE_RE.sub("", stripped).strip()
     if caption:
@@ -49,8 +50,7 @@ def _clean_figure_source(stripped: str, caption: str | None) -> str:
 def _clean_formula_source(stripped: str) -> str:
     lines = stripped.split("\n")
     meaningful = [
-        ln.strip() for ln in lines
-        if ln.strip() and not ln.strip().startswith("##")
+        ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("##")
     ]
     return " ".join(meaningful[:2])
 
@@ -110,7 +110,8 @@ def _postprocess_display_sources(
             confidence=r.confidence,
             score=r.score,
             source_sentence=_clean_source_for_display(
-                r.source_sentence, r.chunk_type,
+                r.source_sentence,
+                r.chunk_type,
             ),
             paragraph_id=r.paragraph_id,
             paper_id=r.paper_id,
@@ -118,16 +119,23 @@ def _postprocess_display_sources(
             verification_method=r.verification_method,
             chunk_type=r.chunk_type,
             citation_ref=r.citation_ref,
+            page_number=r.page_number,
         )
         for r in results
     ]
 
 
+_NON_TEXT_PREFIXES = frozenset({"F", "T", "E"})
+
 def _is_non_text_paragraph(paragraph_id: str | None) -> bool:
     if not paragraph_id:
         return False
-    suffix = paragraph_id.split("_")[-1]
-    return suffix[:1] in _NON_TEXT_PREFIXES
+    # Check for IDs like paperid_P1, paperid_F3, etc.
+    if "_" in paragraph_id:
+        suffix = paragraph_id.split("_")[-1]
+        return suffix[:1] in _NON_TEXT_PREFIXES
+    return paragraph_id[:1] in _NON_TEXT_PREFIXES
+
 
 def _strip_markdown_for_claims(text: str) -> str:
     text = _MD_BOLD_RE.sub(r"\1", text)
@@ -136,6 +144,7 @@ def _strip_markdown_for_claims(text: str) -> str:
     text = _MD_NUM_LIST_RE.sub("", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
 
 def _split_into_verifiable_claims(text: str) -> list[str]:
     cleaned = _strip_markdown_for_claims(text)
@@ -154,6 +163,7 @@ def _extract_cited_para_id(claim: str) -> str | None:
     match = _CITATION_ID_RE.search(claim)
     return match.group(1) if match else None
 
+
 def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
     index: dict[str, dict] = {}
     for src in source_sentences:
@@ -161,6 +171,7 @@ def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
         if pid and pid not in index:
             index[pid] = src
     return index
+
 
 def _apply_citation_correction(
     results: list["VerificationResult"],
@@ -192,9 +203,11 @@ def _apply_citation_correction(
                 verification_method=result.verification_method,
                 chunk_type=chunk_type,
                 citation_ref=new_pid.split("_")[-1] if new_pid else None,
+                page_number=src.get("page_number"),
             )
         corrected.append(result)
     return corrected
+
 
 @dataclass
 class VerificationResult:
@@ -208,14 +221,23 @@ class VerificationResult:
     verification_method: "VerificationMethod | None" = None
     chunk_type: str | None = None
     citation_ref: str | None = None
+    page_number: int | None = None
+
 
 _PARAGRAPH_TYPE_MAP: dict[str, str] = {"F": "figure", "T": "table", "E": "formula"}
+
 
 def _chunk_type_from_paragraph_id(paragraph_id: str | None) -> str:
     if not paragraph_id:
         return "text"
-    suffix = paragraph_id.split("_")[-1]
-    return _PARAGRAPH_TYPE_MAP.get(suffix[:1], "text")
+    # Logic to map 'P'->text, 'F'->figure, 'T'->table, 'E'->formula
+    prefix = paragraph_id
+    if "_" in paragraph_id:
+        prefix = paragraph_id.split("_")[-1]
+    
+    indicator = prefix[:1]
+    return _PARAGRAPH_TYPE_MAP.get(indicator, "text")
+
 
 def _select_best_chunk_text(chunk) -> str:
     full_text = getattr(chunk, "text", "") or ""
@@ -226,10 +248,14 @@ def _select_best_chunk_text(chunk) -> str:
 
 
 def _should_add_source(cleaned: str, existing_texts: set[str]) -> bool:
-    return bool(cleaned and cleaned not in existing_texts and not is_noise_source(cleaned))
+    return bool(
+        cleaned and cleaned not in existing_texts and not is_noise_source(cleaned)
+    )
 
 
-def _add_non_text_source(sources: list[dict], chunk, para_id: str | None, paper_id: str | None) -> None:
+def _add_non_text_source(
+    sources: list[dict], chunk, para_id: str | None, paper_id: str | None
+) -> None:
     if not _is_non_text_paragraph(para_id):
         return
     best_text = _select_best_chunk_text(chunk)
@@ -238,12 +264,16 @@ def _add_non_text_source(sources: list[dict], chunk, para_id: str | None, paper_
     cleaned = clean_source_text(best_text)
     existing_texts = {s["text"] for s in sources}
     if _should_add_source(cleaned, existing_texts):
-        sources.append({
-            "text": cleaned,
-            "paragraph_id": para_id,
-            "paper_id": paper_id,
-            "sentence_key": f"{para_id}_FULL" if para_id else None,
-        })
+        sources.append(
+            {
+                "text": cleaned,
+                "paragraph_id": para_id,
+                "paper_id": paper_id,
+                "sentence_key": f"{para_id}_FULL" if para_id else None,
+                "page_number": getattr(chunk, "page_number", None),
+            }
+        )
+
 
 def _extract_chunk_sources(chunk) -> list[dict]:
     s_map = getattr(chunk, "sentence_map", {})
@@ -256,20 +286,25 @@ def _extract_chunk_sources(chunk) -> list[dict]:
     for s_key, info in s_map.items():
         text = clean_source_text(info["text"])
         if not is_noise_source(text):
-            sources.append({
-                "text": text,
-                "paragraph_id": para_id,
-                "paper_id": paper_id,
-                "sentence_key": s_key,
-            })
+            sources.append(
+                {
+                    "text": text,
+                    "paragraph_id": para_id,
+                    "paper_id": paper_id,
+                    "sentence_key": s_key,
+                    "page_number": getattr(chunk, "page_number", None),
+                }
+            )
     _add_non_text_source(sources, chunk, para_id, paper_id)
     return sources
+
 
 def build_source_sentences(chunks: list) -> list[dict]:
     sources = []
     for chunk in chunks:
         sources.extend(_extract_chunk_sources(chunk))
     return sources
+
 
 def _initialize_havf_thresholds(
     high_threshold: float | None,
@@ -285,6 +320,7 @@ def _initialize_havf_thresholds(
         short_sentence_words or settings.HAVF_SHORT_SENTENCE_WORDS,
     )
 
+
 async def verify_response(
     generated_text: str,
     retrieved_chunks: list,
@@ -296,7 +332,10 @@ async def verify_response(
 ) -> list[VerificationResult]:
     with timer("HAVF verification"):
         h_thresh, m_thresh, ce_thresh, short_words = _initialize_havf_thresholds(
-            high_threshold, medium_threshold, cross_encoder_threshold, short_sentence_words
+            high_threshold,
+            medium_threshold,
+            cross_encoder_threshold,
+            short_sentence_words,
         )
         claims = _split_into_verifiable_claims(generated_text)
         source_sentences = build_source_sentences(retrieved_chunks)
@@ -307,7 +346,9 @@ async def verify_response(
         if not valid_claims:
             return short_results
         level1_results = await asyncio.to_thread(
-            verify_claims_embedding, valid_claims, source_sentences,
+            verify_claims_embedding,
+            valid_claims,
+            source_sentences,
             high_threshold=h_thresh,
             medium_threshold=m_thresh,
         )
@@ -321,7 +362,10 @@ async def verify_response(
         _log_verification_summary(all_results)
         return all_results
 
-def _filter_short_claims(claims: list[str], short_sentence_threshold: int) -> tuple[list[str], list[str]]:
+
+def _filter_short_claims(
+    claims: list[str], short_sentence_threshold: int
+) -> tuple[list[str], list[str]]:
     short_claims = []
     valid_claims = []
 
@@ -340,6 +384,7 @@ def _filter_short_claims(claims: list[str], short_sentence_threshold: int) -> tu
 
     return short_claims, valid_claims
 
+
 def _create_skipped_results(claims: list[str]) -> list[VerificationResult]:
     return [
         VerificationResult(
@@ -354,6 +399,7 @@ def _create_skipped_results(claims: list[str]) -> list[VerificationResult]:
         )
         for c in claims
     ]
+
 
 def _handle_missing_sources(claims: list[str]) -> list[VerificationResult]:
     if not claims:
@@ -378,18 +424,20 @@ def _handle_missing_sources(claims: list[str]) -> list[VerificationResult]:
         for c in claims
     ]
 
+
 async def _process_verification_results(
     level1_results: list,
     claims: list[str],
     source_sentences: list[dict],
-    cross_encoder_threshold: float
+    cross_encoder_threshold: float,
 ) -> list[VerificationResult]:
     uncertain = [r for r in level1_results if r.get("needs_reranking")]
     resolved = [r for r in level1_results if not r.get("needs_reranking")]
 
     if uncertain:
         reranked = await asyncio.to_thread(
-            rerank_claims, uncertain,
+            rerank_claims,
+            uncertain,
             source_sentences=source_sentences,
             cross_encoder_threshold=cross_encoder_threshold,
         )
@@ -397,10 +445,9 @@ async def _process_verification_results(
 
     return _build_final_results(claims, resolved, uncertain)
 
+
 def _build_final_results(
-    claims: list[str],
-    resolved: list,
-    uncertain: list
+    claims: list[str], resolved: list, uncertain: list
 ) -> list[VerificationResult]:
     result_map = {r["claim"]: r for r in resolved}
     uncertain_claims = {r["claim"] for r in uncertain}
@@ -410,24 +457,26 @@ def _build_final_results(
         r = result_map.get(claim, {})
         method = _determine_verification_method(claim, r, uncertain_claims)
         p_id = r.get("paragraph_id")
-        final.append(VerificationResult(
-            claim=claim,
-            confidence=r.get("confidence", ConfidenceLevel.LOW),
-            score=r.get("best_score", 0.0),
-            source_sentence=r.get("source_sentence"),
-            paragraph_id=p_id,
-            paper_id=r.get("paper_id"),
-            sentence_key=r.get("sentence_key"),
-            verification_method=method,
-            chunk_type=_chunk_type_from_paragraph_id(p_id),
-            citation_ref=p_id.split("_")[-1] if p_id else None,
-        ))
+        final.append(
+            VerificationResult(
+                claim=claim,
+                confidence=r.get("confidence", ConfidenceLevel.LOW),
+                score=min(1.0, max(0.0, float(r.get("best_score", 0.0)))),
+                source_sentence=r.get("source_sentence"),
+                paragraph_id=p_id,
+                paper_id=r.get("paper_id"),
+                sentence_key=r.get("sentence_key"),
+                verification_method=method,
+                chunk_type=_chunk_type_from_paragraph_id(p_id),
+                citation_ref=p_id.split("_")[-1] if p_id else None,
+                page_number=r.get("page_number"),
+            )
+        )
     return final
 
+
 def _determine_verification_method(
-    claim: str,
-    result: dict,
-    uncertain_claims: set
+    claim: str, result: dict, uncertain_claims: set
 ) -> VerificationMethod:
     if claim in uncertain_claims:
         return VerificationMethod.CROSS_ENCODER_RERANK
@@ -435,6 +484,7 @@ def _determine_verification_method(
         return VerificationMethod.EMBEDDING_SIMILARITY
     else:
         return VerificationMethod.SKIPPED
+
 
 def _log_verification_summary(results: list[VerificationResult]) -> None:
     counts = {level: 0 for level in ConfidenceLevel}
@@ -449,4 +499,3 @@ def _log_verification_summary(results: list[VerificationResult]) -> None:
         f"LOW={counts[ConfidenceLevel.LOW]}, "
         f"avg_score={avg_score:.3f}"
     )
-

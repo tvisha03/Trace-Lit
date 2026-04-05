@@ -1,17 +1,22 @@
-
 import re
 import uuid as _uuid
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 _INJECT_PATTERNS: list[re.Pattern] = [
-    re.compile(r"ignore\s+(previous|prior|all)\s+(instructions?|prompts?)", re.IGNORECASE),
+    re.compile(
+        r"ignore\s+(previous|prior|all)\s+(instructions?|prompts?)", re.IGNORECASE
+    ),
     re.compile(r"you\s+are\s+now\s+a", re.IGNORECASE),
     re.compile(r"forget\s+(everything|all|your)\s+instructions?", re.IGNORECASE),
     re.compile(r"new\s+system\s+prompt", re.IGNORECASE),
-    re.compile(r"disregard\s+(all|previous|prior)\s+(instructions?|prompts?)", re.IGNORECASE),
+    re.compile(
+        r"disregard\s+(all|previous|prior)\s+(instructions?|prompts?)", re.IGNORECASE
+    ),
     re.compile(r"\[INST\]|\[\/INST\]|<\|system\|>|<\|user\|>", re.IGNORECASE),
-    re.compile(r"override\s+your\s+(instructions?|programming|guidelines)", re.IGNORECASE),
+    re.compile(
+        r"override\s+your\s+(instructions?|programming|guidelines)", re.IGNORECASE
+    ),
     re.compile(r"do\s+not\s+(follow|obey|listen\s+to)", re.IGNORECASE),
     re.compile(r"jailbreak", re.IGNORECASE),
     re.compile(r"prompt\s+injection", re.IGNORECASE),
@@ -19,6 +24,7 @@ _INJECT_PATTERNS: list[re.Pattern] = [
     re.compile(r"pretend\s+to\s+be", re.IGNORECASE),
     re.compile(r"access\s+developer\s+mode", re.IGNORECASE),
 ]
+
 
 def _sanitize_user_text(value: str) -> str:
     value = value.strip()
@@ -30,12 +36,15 @@ def _sanitize_user_text(value: str) -> str:
             raise ValueError("Input contains disallowed content.")
     return value
 
+
 class SessionCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
 
+
 class SessionRename(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
+
 
 class SessionResponse(BaseModel):
     id: str
@@ -44,12 +53,15 @@ class SessionResponse(BaseModel):
     created_at: str
     updated_at: Optional[str] = None
 
+
 class SessionListResponse(BaseModel):
     sessions: list[SessionResponse]
+
 
 class WebSocketURLResponse(BaseModel):
     websocket_url: str
     session_id: str
+
 
 class PaperResponse(BaseModel):
     id: str
@@ -68,12 +80,15 @@ class PaperResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: str
 
+
 class PaperListResponse(BaseModel):
     papers: list[PaperResponse]
+
 
 class PaperUploadResponse(BaseModel):
     paper_ids: list[str]
     message: str
+
 
 class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=5000)
@@ -82,13 +97,14 @@ class ChatRequest(BaseModel):
         None,
         max_length=10,
         description="Optional keyword filter — when provided, retrieved context "
-                    "is limited to chunks containing at least one of these terms.",
+        "is limited to chunks containing at least one of these terms.",
     )
 
     @field_validator("query")
     @classmethod
     def sanitize_query(cls, v: str) -> str:
         return _sanitize_user_text(v)
+
 
 class VerificationItem(BaseModel):
     claim: str
@@ -101,6 +117,8 @@ class VerificationItem(BaseModel):
     verification_method: Optional[str] = None
     chunk_type: Optional[str] = None
     citation_ref: Optional[str] = None
+    page_number: Optional[int] = None
+
 
 class ChatResponse(BaseModel):
     content: str
@@ -108,6 +126,7 @@ class ChatResponse(BaseModel):
     havf_results: list[VerificationItem]
     token_count: int
     latency_ms: float
+
 
 class MessageResponse(BaseModel):
     id: str
@@ -119,11 +138,13 @@ class MessageResponse(BaseModel):
     latency_ms: Optional[float] = None
     created_at: str
 
+
 class MessageListResponse(BaseModel):
     messages: list[MessageResponse]
     total: Optional[int] = None
     limit: Optional[int] = None
     offset: Optional[int] = None
+
 
 class CompareRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)
@@ -140,15 +161,18 @@ class CompareRequest(BaseModel):
             raise ValueError("Duplicate paper_ids are not allowed")
         return v
 
+
 class ComparisonCell(BaseModel):
     paper_id: str
     paper_title: str
     content: str
 
+
 class ComparisonRow(BaseModel):
     dimension: str
     cells: list[ComparisonCell]
     synthesis: str = ""
+
 
 class ComparisonResponse(BaseModel):
     comparison: str
@@ -157,13 +181,16 @@ class ComparisonResponse(BaseModel):
     paper_titles: list[str]
     provider: str
 
+
 class ContributionResponse(BaseModel):
     paper_id: str
     title: str
     contributions: dict
 
+
 class ExportRequest(BaseModel):
     format: str = Field(..., pattern="^(pdf|excel|bibtex|docx|latex)$")
+
 
 class ComparisonExportRequest(BaseModel):
     paper_ids: list[str] = Field(..., min_length=2, max_length=7)
@@ -181,26 +208,32 @@ class ComparisonExportRequest(BaseModel):
             raise ValueError("Duplicate paper_ids are not allowed")
         return v
 
+
 class ExportResponse(BaseModel):
     download_url: str
     filename: str
     format: str
+
 
 class ExportListItem(BaseModel):
     filename: str
     download_url: str
     size_bytes: int
 
+
 class ExportListResponse(BaseModel):
     exports: list[ExportListItem]
+
 
 class KeywordItem(BaseModel):
     keyword: str
     score: float
 
+
 class KeywordResponse(BaseModel):
     paper_id: str
     keywords: list[KeywordItem]
+
 
 class ThemeItem(BaseModel):
     label: str
@@ -208,22 +241,26 @@ class ThemeItem(BaseModel):
     papers_covering: Optional[list[str]] = None
     coverage_ratio: float
 
+
 class GapAnalysisResponse(BaseModel):
     themes: list[ThemeItem]
     underexplored: list[ThemeItem]
     narrative: Optional[str] = None
     provider: Optional[str] = None
 
+
 class ReviewResponse(BaseModel):
     review: str
     paper_count: int
     provider: str
+
 
 class SummaryResponse(BaseModel):
     paper_id: str
     title: Optional[str] = None
     summary: str
     provider: str
+
 
 class VerifyRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000)
@@ -246,8 +283,10 @@ class VerifyRequest(BaseModel):
             raise ValueError("Duplicate paper_ids are not allowed")
         return v
 
+
 class VerifyResponse(BaseModel):
     results: list[VerificationItem]
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -260,23 +299,30 @@ class HealthResponse(BaseModel):
     faiss_stats: Optional[dict] = None
     cross_encoder: bool = False
 
+
 class SSEQueryTypeEvent(BaseModel):
     type: str
+
 
 class SSESourceItem(BaseModel):
     paragraph_id: str
     paper_id: str
     score: float
+    page_number: Optional[int] = None
+
 
 class SSETokenEvent(BaseModel):
     token: str
 
+
 class SSEHavfEvent(BaseModel):
     results: list[VerificationItem]
+
 
 class SSEDoneEvent(BaseModel):
     provider: str
     full_text: str
+
 
 class SSEErrorEvent(BaseModel):
     detail: str

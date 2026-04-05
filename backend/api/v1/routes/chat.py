@@ -65,6 +65,7 @@ async def send_message(
                 verification_method=r.verification_method.value if r.verification_method else None,
                 chunk_type=r.chunk_type,
                 citation_ref=r.citation_ref,
+                page_number=r.page_number,
             )
             for r in response.havf_results
         ],

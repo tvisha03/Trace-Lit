@@ -35,10 +35,15 @@ function bestScore(havfItems) {
 /**
  * Build a human-readable label for a single citation ref.
  * Groups HAVF items by paper so we can show "P1, P2" clearly.
+ * Normalize all citation tags to P## (e.g. E287 -> P287)
  */
 function refLabel(ref) {
-  // "[P1]" → "P1"
-  return ref.replace(/^\[|\]$/g, '');
+  // "[P1]" → "P1", "[E287]" -> "P287"
+  let r = ref.replace(/^\[|\]$/g, '');
+  if (/^[A-Za-z]\d+$/.test(r)) {
+    r = 'P' + r.substring(1);
+  }
+  return r;
 }
 
 export default function CitedSentence({ text, havfItems = [], onCitationClick, isContested }) {
@@ -100,18 +105,18 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
           <span key={ref} className="relative inline-flex items-start">
             <sup
               onClick={(e) => handleClick(ref, e)}
-              onMouseEnter={() => setHoveredItem(item ?? null)}
+              onMouseEnter={() => setHoveredItem(ref)}
               onMouseLeave={() => setHoveredItem(null)}
               className={`ml-px text-[9px] font-semibold cursor-pointer select-none
                           transition-opacity hover:opacity-70
                           ${SUP_COLOR[itemLevel] ?? 'text-tl-gold'}`}
-              title={`${ref} — click to view source`}
+              title={`${refLabel(ref)} — click to view source`}
             >
               [{refLabel(ref)}]
             </sup>
             {/* Tooltip — only show when this ref is hovered */}
-            {hoveredItem === item && item && (
-              <CitationTooltip havfItem={item} />
+            {hoveredItem === ref && (
+              <CitationTooltip havfItem={item} refLabel={refLabel(ref)} />
             )}
           </span>
         );

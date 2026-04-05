@@ -4,7 +4,8 @@
  * Format a confidence score as a percentage string.
  */
 export function formatConfidence(score) {
-  return `${(score * 100).toFixed(0)}%`;
+  const clamped = Math.max(0, Math.min(1, score));
+  return `${(clamped * 100).toFixed(0)}%`;
 }
 
 /**

@@ -16,6 +16,7 @@
  *   onPaperChange     (paperId) => void
  *   highlightedHavfItem HavfResult | null
  *   onUpload          () => void        ← opens a hidden file input
+ *   width             number            ← width of the right panel
  */
 import { useRef } from 'react';
 import usePaperStore from '../../stores/paperStore';
@@ -71,14 +72,20 @@ const STATIC_STATUS_LABEL = {
   INDEXING:   'Indexing',
 };
 
+function formatStage(stage) {
+  if (!stage) return '';
+  return stage.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 function paperStatusLabel(paper, liveProgress) {
   if (isCompleted(paper)) return 'Indexed';
   if (isFailed(paper))    return 'Failed';
-  if (liveProgress?.stage) {
+  if (liveProgress?.stage || liveProgress?.stage_label) {
+    const stageName = liveProgress.stage_label || formatStage(liveProgress.stage);
     const pct = liveProgress.progress != null
       ? `${Math.round(liveProgress.progress * 100)}%`
       : '';
-    return `${liveProgress.stage}… ${pct}`;
+    return `${stageName}… ${pct}`;
   }
   return STATIC_STATUS_LABEL[paper.status?.toUpperCase()] ?? paper.status?.toLowerCase() ?? 'Queued';
 }
@@ -267,6 +274,7 @@ export default function RightPanel({
   activePaperId,
   onPaperChange,
   highlightedHavfItem,
+  width = 274,
 }) {
   const fileInputRef = useRef(null);
   const { uploadPapers } = usePaperStore();
@@ -290,7 +298,7 @@ export default function RightPanel({
   return (
     <aside
       className="flex-shrink-0 bg-tl-s1 border-l border-tl-b1 flex flex-col overflow-hidden"
-      style={{ width: 274 }}
+      style={{ width }}
     >
       {/* Hidden file input for uploads */}
       <input

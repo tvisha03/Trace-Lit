@@ -18,9 +18,7 @@ _CHAPTER_HEADING = re.compile(
     r"(?:\s*[:.–—]\s*|\s+)([A-Z][A-Za-z\s:,\-–—]+)$",
     re.MULTILINE,
 )
-_ALLCAPS_HEADING = re.compile(
-    r"^([A-Z][A-Z\s]{2,50})$", re.MULTILINE
-)
+_ALLCAPS_HEADING = re.compile(r"^([A-Z][A-Z\s]{2,50})$", re.MULTILINE)
 _BOLD_NUMBERED_SPLIT = re.compile(
     r"^\*{2}(\d+(?:\.\d+)*|[IVXLC]+|[A-Z])[.\)\s]*\*{2}\s*\*{2}([^*\n]+)\*{2}\s*$",
     re.MULTILINE,
@@ -35,22 +33,65 @@ _BOLD_NAMED_SECTION = re.compile(
 )
 
 _KNOWN_SECTIONS = {
-    "abstract", "introduction", "background", "related work", "related works",
-    "methodology", "methods", "method", "approach", "proposed method",
-    "experimental setup", "experiments", "experiment", "evaluation",
-    "results", "result", "discussion", "analysis",
-    "conclusion", "conclusions", "summary", "future work",
-    "references", "bibliography", "acknowledgments", "acknowledgements",
-    "appendix", "appendices", "supplementary material",
-    "literature review", "theoretical framework", "data collection",
-    "findings", "implications", "limitations", "recommendations",
-    "case study", "case studies", "implementation", "design",
-    "overview", "problem statement", "research questions",
-    "materials and methods", "procedures", "ethical considerations",
-    "table of contents", "list of figures", "list of tables",
-    "dedication", "preface", "glossary", "abbreviations",
-    "executive summary", "scope", "objectives", "contributions",
+    "abstract",
+    "introduction",
+    "background",
+    "related work",
+    "related works",
+    "methodology",
+    "methods",
+    "method",
+    "approach",
+    "proposed method",
+    "experimental setup",
+    "experiments",
+    "experiment",
+    "evaluation",
+    "results",
+    "result",
+    "discussion",
+    "analysis",
+    "conclusion",
+    "conclusions",
+    "summary",
+    "future work",
+    "references",
+    "bibliography",
+    "acknowledgments",
+    "acknowledgements",
+    "appendix",
+    "appendices",
+    "supplementary material",
+    "literature review",
+    "theoretical framework",
+    "data collection",
+    "findings",
+    "implications",
+    "limitations",
+    "recommendations",
+    "case study",
+    "case studies",
+    "implementation",
+    "design",
+    "overview",
+    "problem statement",
+    "research questions",
+    "materials and methods",
+    "procedures",
+    "ethical considerations",
+    "table of contents",
+    "list of figures",
+    "list of tables",
+    "dedication",
+    "preface",
+    "glossary",
+    "abbreviations",
+    "executive summary",
+    "scope",
+    "objectives",
+    "contributions",
 }
+
 
 @dataclass
 class Section:
@@ -60,12 +101,14 @@ class Section:
     page_start: int | None = None
     order: int = 0
 
+
 def _is_title_case_heading(text: str) -> bool:
     words = text.split()
     if len(words) > 8:
         return False
     long_words = [w for w in words if len(w) > 3]
     return len(long_words) >= 1 and all(w[0].isupper() for w in long_words)
+
 
 def _is_plausible_section_name(text: str) -> bool:
     cleaned = text.strip()
@@ -74,6 +117,7 @@ def _is_plausible_section_name(text: str) -> bool:
     if cleaned.isupper():
         return len(cleaned) <= 60
     return _is_title_case_heading(cleaned)
+
 
 def _find_bold_headings(markdown_text: str) -> list[Match]:
     headings = list(_BOLD_NUMBERED_SPLIT.finditer(markdown_text))
@@ -85,12 +129,15 @@ def _find_bold_headings(markdown_text: str) -> list[Match]:
     all_named = list(_BOLD_NAMED_SECTION.finditer(markdown_text))
     return [h for h in all_named if _is_plausible_section_name(h.group(1).strip())]
 
+
 def _filter_allcaps_headings(matches: list[Match]) -> list[Match]:
     return [
-        m for m in matches
+        m
+        for m in matches
         if _is_plausible_section_name(m.group(1).strip())
         and not _is_likely_person_name(m.group(1).strip().title())
     ]
+
 
 def _find_headings(markdown_text: str) -> list[Match]:
     headings = list(_MD_HEADING.finditer(markdown_text))
@@ -119,12 +166,14 @@ def _find_headings(markdown_text: str) -> list[Match]:
 
     return []
 
+
 def _extract_box_heading_text(text: str, start: int, stop: int) -> str:
     raw = text[start:stop].strip()
     raw = re.sub(r"^#+\s*", "", raw)
     raw = raw.strip("*").strip()
     raw = re.sub(r"^\d+(\.\d+)*[.\)\s]+", "", raw).strip()
     return raw
+
 
 _SECTION_NUM_PREFIX = re.compile(
     r"^(?:\d+(?:\.\d+)*|[IVXLC]+|[A-Z])[\s.)]+",
@@ -133,6 +182,7 @@ _SECTION_NUM_PREFIX = re.compile(
 _PERSON_NAME_PATTERN = re.compile(
     r"^(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})$",
 )
+
 
 def _is_likely_person_name(text: str) -> bool:
     cleaned = text.strip()
@@ -143,6 +193,7 @@ def _is_likely_person_name(text: str) -> bool:
     if len(cleaned.split()) > 5:
         return False
     return bool(_PERSON_NAME_PATTERN.match(cleaned))
+
 
 def _parse_single_box(box: dict, page_text: str, page_num: int) -> dict | None:
     if not isinstance(box, dict):
@@ -160,6 +211,7 @@ def _parse_single_box(box: dict, page_text: str, page_num: int) -> dict | None:
         return None
     return {"text": heading_text, "class": cls, "page": page_num, "pos_start": pos[0]}
 
+
 def _collect_header_boxes(pages: list) -> list[dict]:
     boxes: list[dict] = []
     for page in pages:
@@ -171,6 +223,7 @@ def _collect_header_boxes(pages: list) -> list[dict]:
             if parsed:
                 boxes.append(parsed)
     return boxes
+
 
 def _resolve_box_offsets(
     markdown_text: str,
@@ -188,6 +241,7 @@ def _resolve_box_offsets(
     offsets.sort(key=lambda x: x[0])
     return offsets
 
+
 def _build_sections_from_offsets(
     markdown_text: str,
     offsets: list[tuple[int, str]],
@@ -201,6 +255,7 @@ def _build_sections_from_offsets(
             sections.append(Section(title=title, content=content, level=1, order=i))
     return sections
 
+
 def _sections_from_boxes(
     markdown_text: str,
     header_boxes: list[dict],
@@ -212,7 +267,10 @@ def _sections_from_boxes(
         return []
     return _build_sections_from_offsets(markdown_text, offsets)
 
-def _build_section(match: Match, idx: int, headings: list[Match], markdown_text: str) -> Section | None:
+
+def _build_section(
+    match: Match, idx: int, headings: list[Match], markdown_text: str
+) -> Section | None:
     title = (
         match.group(2).strip()
         if match.lastindex and match.lastindex >= 2
@@ -226,7 +284,12 @@ def _build_section(match: Match, idx: int, headings: list[Match], markdown_text:
     end = headings[idx + 1].start() if idx + 1 < len(headings) else len(markdown_text)
     content = markdown_text[start:end].strip()
 
-    return Section(title=title, content=content, level=level, order=idx) if content else None
+    return (
+        Section(title=title, content=content, level=level, order=idx)
+        if content
+        else None
+    )
+
 
 def _create_sections_from_headings(
     markdown_text: str, headings: list[Match]
@@ -238,8 +301,10 @@ def _create_sections_from_headings(
             sections.append(section)
     return sections
 
+
 def _create_default_section(markdown_text: str) -> list[Section]:
     return [Section(title="Full Document", content=markdown_text.strip(), order=0)]
+
 
 def parse_sections(markdown_text: str, pages: list | None = None) -> list[Section]:
     if pages:
@@ -250,6 +315,7 @@ def parse_sections(markdown_text: str, pages: list | None = None) -> list[Sectio
                 logger.info(
                     f"Parsed {len(box_sections)} sections via layout page_boxes"
                 )
+                _assign_page_numbers(box_sections, pages)
                 return box_sections
 
     headings = _find_headings(markdown_text)
@@ -259,6 +325,80 @@ def parse_sections(markdown_text: str, pages: list | None = None) -> list[Sectio
         else _create_sections_from_headings(markdown_text, headings)
     )
 
+    # Populate page_start from page text offsets
+    if pages and sections:
+        _assign_page_numbers(sections, pages)
+
     logger.info(f"Parsed {len(sections)} sections via regex fallback")
     return sections
 
+
+def _assign_page_numbers(sections: list[Section], pages: list) -> None:
+    """Map each section's content offset to a page number.
+
+    Walks through the concatenated page texts to find which page
+    each section's content starts on, then sets section.page_start.
+    """
+    # Build offset -> page_number mapping from the raw page texts
+    offset_to_page: list[tuple[int, int]] = []
+    cumulative = 0
+    separator_len = 2  # '\n\n' used in pdf_processor.py
+    
+    for i, page in enumerate(pages):
+        page_text = getattr(page, "text", "") or ""
+        page_num = getattr(page, "page_number", None)
+        if page_num is not None:
+            offset_to_page.append((cumulative, page_num))
+        
+        cumulative += len(page_text)
+        if i < len(pages) - 1:
+            cumulative += separator_len
+
+    if not offset_to_page:
+        return
+
+    def offset_to_page_number(offset: int) -> int | None:
+        """Binary search for the page containing a character offset."""
+        lo, hi = 0, len(offset_to_page) - 1
+        result = offset_to_page[0][1]
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if offset_to_page[mid][0] <= offset:
+                result = offset_to_page[mid][1]
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return result
+
+    # Build a combined text from all pages to search against — must match
+    # how md_text was built in pdf_processor.py to ensure offsets line up.
+    combined = "\n\n".join(getattr(p, "text", "") or "" for p in pages)
+
+    for section in sections:
+        # Save the full combined text on each section temporarily for chunker's use
+        # (It will be used to resolve paragraph-level page numbers)
+        setattr(section, "_combined_full_text", combined)
+        setattr(section, "_offset_to_page_map", offset_to_page)
+
+        if not section.content:
+            continue
+
+        # Try exact match first
+        content_start = combined.find(section.content)
+        if content_start >= 0:
+            section.page_start = offset_to_page_number(content_start)
+            continue
+
+        # Fallback: try matching the first 200 chars of content
+        snippet = section.content[:200].strip()
+        if len(snippet) > 50:
+            content_start = combined.find(snippet)
+            if content_start >= 0:
+                section.page_start = offset_to_page_number(content_start)
+                continue
+
+        # Last resort: try matching the section title in the combined text
+        if section.title and section.title != "Full Document":
+            title_pos = combined.find(section.title)
+            if title_pos >= 0:
+                section.page_start = offset_to_page_number(title_pos)

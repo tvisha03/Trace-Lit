@@ -1,4 +1,3 @@
-
 import hashlib
 
 import numpy as np
@@ -40,6 +39,7 @@ def _get_source_embeddings(source_texts: list[str]) -> np.ndarray:
     logger.debug(f"Source embedding cache MISS — encoded {len(source_texts)} texts")
     return vecs
 
+
 def _determine_confidence(
     best_score: float,
     high_threshold: float | None = None,
@@ -55,6 +55,7 @@ def _determine_confidence(
         return ConfidenceLevel.MEDIUM, True
     else:
         return ConfidenceLevel.LOW, False
+
 
 def _build_result(
     i: int,
@@ -78,8 +79,10 @@ def _build_result(
         "paragraph_id": best_source["paragraph_id"],
         "paper_id": best_source.get("paper_id"),
         "sentence_key": best_source.get("sentence_key"),
+        "page_number": best_source.get("page_number"),
         "needs_reranking": needs_reranking,
     }
+
 
 def _process_claims(
     claims: list[str],
@@ -90,11 +93,16 @@ def _process_claims(
 ) -> list[dict]:
     return [
         _build_result(
-            i, claim, similarity_matrix[i], source_sentences,
-            high_threshold, medium_threshold,
+            i,
+            claim,
+            similarity_matrix[i],
+            source_sentences,
+            high_threshold,
+            medium_threshold,
         )
         for i, claim in enumerate(claims)
     ]
+
 
 def verify_claims_embedding(
     claims: list[str],
@@ -124,8 +132,11 @@ def verify_claims_embedding(
     similarity_matrix = claim_vecs @ source_vecs.T
 
     results = _process_claims(
-        claims, similarity_matrix, source_sentences,
-        high_threshold, medium_threshold,
+        claims,
+        similarity_matrix,
+        source_sentences,
+        high_threshold,
+        medium_threshold,
     )
 
     high_count = sum(1 for r in results if r["confidence"] == ConfidenceLevel.HIGH)
@@ -134,4 +145,3 @@ def verify_claims_embedding(
         f"{sum(1 for r in results if r['needs_reranking'])} need reranking"
     )
     return results
-

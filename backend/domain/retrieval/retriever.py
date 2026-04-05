@@ -30,6 +30,7 @@ class RetrievedChunk:
     score: float
     sentence_map: dict
     chunk_type: str | None = None
+    page_number: int | None = None
 
 def _resolve_chunk_type(chunk) -> str | None:
     ct = getattr(chunk, "chunk_type", None)
@@ -50,6 +51,7 @@ def _chunk_to_retrieved(chunk, score: float = _NON_TEXT_MIN_SCORE) -> RetrievedC
         score=score,
         sentence_map=chunk.sentence_map or {},
         chunk_type=_resolve_chunk_type(chunk),
+        page_number=chunk.page_number if hasattr(chunk, "page_number") else None,
     )
 
 def _should_use_balanced_budget(classification: QueryClassification) -> bool:
@@ -99,6 +101,7 @@ async def _build_chunks(
                 score=score,
                 sentence_map=chunk.sentence_map or {},
                 chunk_type=_resolve_chunk_type(chunk),
+                page_number=chunk.page_number if hasattr(chunk, "page_number") else None,
             ))
     return retrieved
 

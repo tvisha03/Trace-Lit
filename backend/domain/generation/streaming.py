@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import json
@@ -24,6 +23,7 @@ logger = get_logger(__name__)
 
 import re as _re
 from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_ids
+
 
 def _validate_and_strip_citations(
     full_text: str,
@@ -55,9 +55,11 @@ def _validate_and_strip_citations(
         )
     return full_text, has_citations
 
+
 async def _emit_havf_results(full_text: str, chunks: list):
     from domain.verification.havf import verify_response
     from app.config import get_settings
+
     settings = get_settings()
     havf_results = await verify_response(
         full_text,
@@ -75,19 +77,23 @@ async def _emit_havf_results(full_text: str, chunks: list):
             "paragraph_id": r.paragraph_id,
             "paper_id": r.paper_id,
             "sentence_key": r.sentence_key,
-            "verification_method": r.verification_method.value if r.verification_method else None,
+            "verification_method": r.verification_method.value
+            if r.verification_method
+            else None,
             "chunk_type": r.chunk_type,
             "citation_ref": r.citation_ref,
+            "page_number": r.page_number,
         }
         for r in havf_results
     ]
+
 
 def _strip_duplicate_prefix(accumulated: str, new_chunk: str) -> str:
     if not accumulated or not new_chunk:
         return new_chunk
 
     if new_chunk.startswith(accumulated):
-        stripped = new_chunk[len(accumulated):]
+        stripped = new_chunk[len(accumulated) :]
         if stripped:
             logger.info(
                 f"Duplicate token detection: stripped {len(accumulated)} chars "
@@ -107,7 +113,10 @@ def _strip_duplicate_prefix(accumulated: str, new_chunk: str) -> str:
 
     return new_chunk
 
-async def _stream_tokens(llm: FallbackChain, user_prompt: str) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
+
+async def _stream_tokens(
+    llm: FallbackChain, user_prompt: str
+) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
     full_text = ""
     current_provider: LLMProvider | None = None
 
@@ -127,6 +136,7 @@ async def _stream_tokens(llm: FallbackChain, user_prompt: str) -> AsyncGenerator
         current_provider = provider_obj
         full_text += token
         yield (token, provider_obj)
+
 
 async def _classify_and_validate_query(
     query: str,
@@ -175,6 +185,7 @@ async def _retrieve_and_filter_chunks(
 
     return _apply_keyword_filter(chunks, keywords)
 
+
 async def _persist_response(
     session_id: str,
     full_text: str,
@@ -185,6 +196,7 @@ async def _persist_response(
     try:
         from infrastructure.db.crud.message_crud import create_message
         from shared.enums import MessageRole
+
         await create_message(
             db_session,
             session_id=session_id,
@@ -195,7 +207,10 @@ async def _persist_response(
         )
         await db_session.commit()
     except Exception as exc:
-        logger.error(f"Failed to persist streaming assistant message for session {session_id}: {exc}")
+        logger.error(
+            f"Failed to persist streaming assistant message for session {session_id}: {exc}"
+        )
+
 
 def _build_streaming_prompt(
     classification,
@@ -223,6 +238,7 @@ def _build_streaming_prompt(
         question=query,
     )
 
+
 async def stream_chat_response(
     query: str,
     paper_ids: list[str],
@@ -234,16 +250,30 @@ async def stream_chat_response(
     keywords: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     try:
-        classification = await _classify_and_validate_query(query, len(paper_ids), history)
-        yield sse_event("query_type", json.dumps({"type": classification.query_type.value}))
+        classification = await _classify_and_validate_query(
+            query, len(paper_ids), history
+        )
+        yield sse_event(
+            "query_type", json.dumps({"type": classification.query_type.value})
+        )
 
         chunks = await _retrieve_and_filter_chunks(
             query, paper_ids, faiss_store, db_session, classification, keywords
         )
-        yield sse_event("sources", json.dumps([
-            {"paragraph_id": c.paragraph_id, "paper_id": c.paper_id, "score": c.score}
-            for c in chunks
-        ]))
+        yield sse_event(
+            "sources",
+            json.dumps(
+                [
+                    {
+                        "paragraph_id": c.paragraph_id,
+                        "paper_id": c.paper_id,
+                        "score": c.score,
+                        "page_number": c.page_number,
+                    }
+                    for c in chunks
+                ]
+            ),
+        )
 
         user_prompt = _build_streaming_prompt(classification, query, chunks, history)
 
@@ -255,7 +285,9 @@ async def stream_chat_response(
             yield sse_event("token", {"token": token})
 
         resolved_provider = provider or "unknown"
-        full_text, has_citations = _validate_and_strip_citations(full_text, chunks, session_id)
+        full_text, has_citations = _validate_and_strip_citations(
+            full_text, chunks, session_id
+        )
 
         if not has_citations:
             # Keep the LLM's actual answer — appending a disclaimer is far more
@@ -266,18 +298,28 @@ async def stream_chat_response(
                 "sections of the uploaded papers. Please verify the information independently._"
             )
             full_text = full_text.strip() + disclaimer
-            yield sse_event("warning", json.dumps(
-                {"detail": "Citations absent or invalid — answer shown with unverified disclaimer."}
-            ))
+            yield sse_event(
+                "warning",
+                json.dumps(
+                    {
+                        "detail": "Citations absent or invalid — answer shown with unverified disclaimer."
+                    }
+                ),
+            )
 
         havf_data = await _emit_havf_results(full_text, chunks)
         yield sse_event("havf", json.dumps(havf_data))
-        yield sse_event("done", json.dumps({"provider": resolved_provider, "full_text": full_text}))
+        yield sse_event(
+            "done", json.dumps({"provider": resolved_provider, "full_text": full_text})
+        )
 
-        await _persist_response(session_id, full_text, resolved_provider, havf_data, db_session)
+        await _persist_response(
+            session_id, full_text, resolved_provider, havf_data, db_session
+        )
 
     except Exception as exc:
         logger.error(f"Streaming error: {exc}")
         yield sse_event("error", str(exc))
-        yield sse_event("done", json.dumps({"provider": "", "full_text": "", "error": True}))
-
+        yield sse_event(
+            "done", json.dumps({"provider": "", "full_text": "", "error": True})
+        )

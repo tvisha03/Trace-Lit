@@ -7,6 +7,9 @@ const useChatStore = create((set, get) => ({
   loading: false,
   historyLoaded: false, // tracks whether history was fetched for current session
   error: null,
+  highlightedHavfItem: null,
+
+  setHighlightedHavfItem: (item) => set({ highlightedHavfItem: item }),
 
   /**
    * Load conversation history from backend.

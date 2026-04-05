@@ -8,6 +8,7 @@ class PaperStatus(str, Enum):
     CHUNKING = "chunking"
     EMBEDDING = "embedding"
     COMPLETED = "completed"
+    SENTENCE_COMPLETE = "sentence_complete"
     FAILED = "failed"
 
 class LLMProvider(str, Enum):

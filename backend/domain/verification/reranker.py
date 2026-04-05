@@ -3,10 +3,12 @@ from shared.enums import ConfidenceLevel
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
 import torch
+import math
 
 logger = get_logger(__name__)
 
 _cross_encoder = None
+
 
 def _get_cross_encoder():
     global _cross_encoder
@@ -15,9 +17,12 @@ def _get_cross_encoder():
             model_name = get_settings().CROSS_ENCODER_MODEL
             with timer("Load cross-encoder"):
                 from sentence_transformers import CrossEncoder
+
                 if torch.cuda.is_available():
                     device = "cuda"
-                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                elif (
+                    hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                ):
                     device = "mps"
                 else:
                     device = "cpu"
@@ -27,6 +32,7 @@ def _get_cross_encoder():
             logger.error(f"Cross-encoder unavailable: {exc}")
             return None
     return _cross_encoder
+
 
 def _build_candidate_pairs(
     uncertain_results: list[dict],
@@ -41,9 +47,14 @@ def _build_candidate_pairs(
         claim = result["claim"]
         current_sources = source_sentences or []
         if not current_sources and result.get("source_sentence"):
-            current_sources = [{"text": result["source_sentence"], "paragraph_id": result.get("paragraph_id")}]
+            current_sources = [
+                {
+                    "text": result["source_sentence"],
+                    "paragraph_id": result.get("paragraph_id"),
+                }
+            ]
 
-        candidates = current_sources[:top_k_sources * 3]
+        candidates = current_sources[: top_k_sources * 3]
         for src in candidates:
             all_candidates.append((claim, src["text"]))
             claim_map.append((result, src))
@@ -67,6 +78,28 @@ def _find_best_matches(all_scores: list[float], claim_map: list[tuple]) -> dict:
     return results_to_update
 
 
+def _normalize_cross_encoder_score(raw_score: float) -> float:
+    """Convert raw cross-encoder logit to 0-1 cosine-similarity scale.
+
+    Cross-encoder models output raw logits (typically -5 to +10).
+    We apply sigmoid to map to (0, 1), then scale to match the
+    embedding similarity range so confidence thresholds stay consistent.
+    """
+    return float(1.0 / (1.0 + math.exp(-raw_score)))
+
+
+def _normalize_cross_encoder_score(raw_score: float) -> float:
+    """Convert raw cross-encoder logit to 0-1 range via sigmoid.
+
+    Cross-encoder models output raw logits (typically -5 to +10).
+    Sigmoid maps these to (0, 1) so they're comparable to embedding
+    cosine similarity scores used for confidence thresholds.
+    """
+    # Clamp to avoid overflow in exp()
+    clamped = max(-500.0, min(500.0, raw_score))
+    return float(1.0 / (1.0 + math.exp(-clamped)))
+
+
 def _apply_rerank_results(
     result: dict,
     best_score: float,
@@ -75,12 +108,19 @@ def _apply_rerank_results(
 ) -> None:
     """Update result with reranking outcome."""
     if best_source:
-        result["confidence"] = ConfidenceLevel.MEDIUM if best_score >= cross_encoder_threshold else ConfidenceLevel.LOW
-        result["best_score"] = best_score
+        # Normalize raw cross-encoder logit to 0-1 range
+        normalized_score = _normalize_cross_encoder_score(best_score)
+        result["confidence"] = (
+            ConfidenceLevel.MEDIUM
+            if best_score >= cross_encoder_threshold
+            else ConfidenceLevel.LOW
+        )
+        result["best_score"] = normalized_score
         result["source_sentence"] = best_source["text"]
         result["paragraph_id"] = best_source.get("paragraph_id")
         result["paper_id"] = best_source.get("paper_id")
         result["sentence_key"] = best_source.get("sentence_key")
+        result["page_number"] = best_source.get("page_number")
     result["needs_reranking"] = False
 
 
@@ -101,7 +141,9 @@ def rerank_claims(
     if cross_encoder_threshold is None:
         cross_encoder_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
 
-    all_candidates, claim_map = _build_candidate_pairs(uncertain_results, top_k_sources, source_sentences)
+    all_candidates, claim_map = _build_candidate_pairs(
+        uncertain_results, top_k_sources, source_sentences
+    )
     if not all_candidates:
         return uncertain_results
 
@@ -114,7 +156,11 @@ def rerank_claims(
         best_source = update_data["source"]
         _apply_rerank_results(result, best_score, best_source, cross_encoder_threshold)
 
-    medium_count = sum(1 for r in uncertain_results if r["confidence"] == ConfidenceLevel.MEDIUM)
-    logger.info(f"Level 2 reranking: promoted {medium_count}/{len(uncertain_results)} to MEDIUM")
+    medium_count = sum(
+        1 for r in uncertain_results if r["confidence"] == ConfidenceLevel.MEDIUM
+    )
+    logger.info(
+        f"Level 2 reranking: promoted {medium_count}/{len(uncertain_results)} to MEDIUM"
+    )
 
     return uncertain_results
