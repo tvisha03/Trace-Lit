@@ -1,0 +1,12 @@
+version: "1.0"
+
+context:
+  last_sync: 2026-04-03T09:36:14.207Z
+  auto_updated: true
+
+nodes:
+  - id: sync.last
+    type: sync
+    timestamp: 2026-04-03T09:36:14.207Z
+
+edges: []

@@ -1,0 +1,25 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/tvishakhanna/Developer/Trace-Lit/logs/.a53d4542f5b677b44633b2f1f6c85260acf83e53-audit.json",
+    "files": [
+        {
+            "date": 1776698643531,
+            "name": "/Users/tvishakhanna/Developer/Trace-Lit/logs/mcp-puppeteer-2026-04-20.log",
+            "hash": "8378a071254bd1c97395695732878d08598c2fcc6574b862ee50a63ca6787709"
+        },
+        {
+            "date": 1776837209762,
+            "name": "/Users/tvishakhanna/Developer/Trace-Lit/logs/mcp-puppeteer-2026-04-22.log",
+            "hash": "f432f08dae022b41d9769fb5b7992924e45ca8ed0d6a9b60f493b53fc4188425"
+        },
+        {
+            "date": 1776925907326,
+            "name": "/Users/tvishakhanna/Developer/Trace-Lit/logs/mcp-puppeteer-2026-04-23.log",
+            "hash": "b711a660d50cddd1e61cc8af43a63d807fe19f793dd445055046a6b9380ab43d"
+        }
+    ],
+    "hashType": "sha256"
+}
