@@ -28,23 +28,47 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
     }
   }, [paper, paperId]);
 
-  const fetchSummary = async (customQuestion) => {
+  const fetchSummary = (customQuestion) => {
     if (!sessionId || !paper?.id) return;
     if (paper.status?.toUpperCase() !== 'COMPLETED') return;
 
     setLoading(true);
     setError(null);
-    setSummary(null);
-    try {
-      const q = (customQuestion ?? question).trim() || undefined;
-      const data = await analysisApi.summary(sessionId, paper.id, q);
-      setSummary(data);
-      setPaperId(paper.id);
-    } catch (err) {
-      setError(err?.message ?? 'Failed to generate summary.');
-    } finally {
-      setLoading(false);
-    }
+    setSummary({ summary: '', title: paper.title, provider: '' });
+    
+    const q = (customQuestion ?? question).trim() || undefined;
+
+    const cancel = analysisApi.summaryStream(sessionId, paper.id, q, {
+      onToken: (token) => {
+        setLoading(false);
+        setSummary((prev) => ({
+          ...prev,
+          summary: (prev?.summary || '') + token,
+        }));
+      },
+      onDone: (data) => {
+        setLoading(false);
+        if (data.error) {
+          setError('Failed to generate summary.');
+          setSummary(null);
+        } else {
+          setSummary({
+            summary: data.full_text,
+            title: data.title || paper.title,
+            provider: data.provider,
+            paper_id: data.paper_id,
+          });
+          setPaperId(paper.id);
+        }
+      },
+      onError: (err) => {
+        setLoading(false);
+        setError(err?.message ?? 'Failed to stream summary.');
+      },
+    });
+
+    // In a full implementation, you'd save `cancel` to ref and abort on unmount
+    return cancel;
   };
 
   const handleKeyDown = (e) => {

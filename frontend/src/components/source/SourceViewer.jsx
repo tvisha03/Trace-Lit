@@ -16,7 +16,7 @@ import { useRef, useEffect, useState } from "react";
 import usePaperStore from "../../stores/paperStore";
 import useChatStore from "../../stores/chatStore";
 import { papersApi } from "../../api/client";
-import PdfViewer from "./PdfViewer";
+import HighlighterPdfViewer from "./HighlighterPdfViewer";
 
 const STATUS_LABEL = {
   QUEUED: "Queued",
@@ -253,7 +253,7 @@ export default function SourceViewer({
             {/* ── VIEWER AREA ── */}
             <div className="flex-1 min-h-0 relative">
               {showPdf && highlightedHavfItem ? (
-                <PdfViewer
+                <HighlighterPdfViewer
                   key={`pdf-${highlightedHavfItem.sentence_key || active.id}`}
                   url={papersApi.getPdfUrl(sessionId, active.id)}
                   targetPage={highlightedHavfItem.page_number ?? undefined}

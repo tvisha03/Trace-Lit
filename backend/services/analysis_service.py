@@ -254,3 +254,58 @@ async def generate_paper_summary(
         "provider": provider.value,
     }
 
+async def stream_paper_summary(
+    paper_id: str,
+    db: AsyncSession,
+    llm: FallbackChain,
+    user_question: str = "Provide a structured summary of this paper.",
+) -> AsyncGenerator[str, None]:
+    import json
+    from shared.utils.streaming_utils import sse_event
+
+    full_text = ""
+    provider = ""
+
+    try:
+        paper = await get_paper(db, paper_id)
+        if not paper:
+            raise NotFoundError("Paper", paper_id)
+
+        chunks = await get_chunks_by_paper(db, paper_id)
+        if not chunks:
+            raise InsufficientDataError(
+                f"Paper '{paper_id}' has no indexed chunks yet. "
+                "Please wait for processing to complete before requesting a summary."
+            )
+
+        selected = _select_summary_chunks(chunks)
+        context = build_context_block(selected)
+        user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
+            context=context, question=user_question
+        )
+
+        async for token, provider_obj in llm.generate_streaming(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            max_tokens=4096,
+        ):
+            full_text += token
+            provider = provider_obj.value
+            yield sse_event("token", {"token": token})
+
+        resolved_provider = provider or "unknown"
+        yield sse_event("done", json.dumps({
+            "provider": resolved_provider,
+            "full_text": full_text,
+            "title": paper.title,
+            "paper_id": paper_id,
+        }))
+
+    except Exception as exc:
+        logger.error(f"Streaming paper summary error for paper {paper_id}: {exc}")
+        yield sse_event("error", str(exc))
+        yield sse_event("done", json.dumps({
+            "provider": provider or "unknown",
+            "full_text": full_text,
+            "error": True,
+        }))

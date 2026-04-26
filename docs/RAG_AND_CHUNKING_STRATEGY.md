@@ -37,6 +37,7 @@ import pymupdf4llm
 ### Section Parsing
 
 After extraction, detect section headings by:
+
 1. Markdown heading patterns (`## Section Title`)
 2. Font size changes (if metadata available)
 3. Numbering patterns (`1. Introduction`, `2.1 Related Work`)
@@ -117,6 +118,7 @@ Step 3 — Return the complete list of chunks after all paragraphs have been pro
 Academic text has special patterns that break naive splitting.
 
 **Known edge cases**:
+
 - "et al." should NOT split
 - "Fig. 3" should NOT split
 - "e.g." and "i.e." should NOT split
@@ -144,13 +146,15 @@ Enriched:  "[Paper: BERT] [Section: 5. Experiments] The model achieved 93.2% acc
 
 ### Model: `all-MiniLM-L6-v2`
 
-| Property | Value |
-|----------|-------|
-| Size | 23MB |
-| Dimensions | 384 |
-| Speed | ~0.3s per 100 paragraphs (MPS) |
-| RAM | ~200MB |
-| Quality | Good (sufficient for academic text) |
+| Property   | Value                               |
+| ---------- | ----------------------------------- |
+| Size       | 23MB                                |
+| Dimensions | 384                                 |
+| Speed      | ~0.3s per 100 paragraphs (MPS)      |
+| RAM        | ~200MB                              |
+| Quality    | Good (sufficient for academic text) |
+
+**Note**: This model was chosen over `mixedbread-ai/mxbai-embed-large-v1` due to hardware constraints (M3 MacBook 8GB RAM). The smaller model provides adequate quality while fitting within memory limits.
 
 **Why this model**: Best speed/size/quality tradeoff for M3's 8GB budget. `all-mpnet-base-v2` is better but 420MB and too slow. `instructor-xl` won't fit in memory.
 
@@ -180,7 +184,6 @@ import faiss
 import numpy as np
 ```
 
-
 ### Retrieval
 
 **Retrieval strategy**: Top-k per paper (not global top-k) to ensure every active paper is represented in context.
@@ -189,14 +192,14 @@ import numpy as np
 
 ## 7. Citation-in-Prompting
 
-The retrieved chunks are assembled into a prompt that instructs the LLM to cite every sentence.
----
+## The retrieved chunks are assembled into a prompt that instructs the LLM to cite every sentence.
 
 ## 8. Post-Retrieval: HAVF Verification
 
 After the LLM generates a response, HAVF verifies each sentence. See `HAVF_VERIFICATION_PIPELINE.md` for full details.
 
 **Flow**:
+
 1. Parse LLM response into individual sentences with their `[P#]` citations
 2. For each sentence, run HAVF Level 1 (embedding similarity) against the cited paragraph's sentences
 3. If uncertain, run HAVF Level 2 (cross-encoder reranking)
@@ -206,14 +209,14 @@ After the LLM generates a response, HAVF verifies each sentence. See `HAVF_VERIF
 
 ## 9. Key Design Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Chunk granularity | Paragraph | Sentence-level chunks lose context; paragraph preserves it |
-| Embedding target | Enriched text (with paper+section prefix) | 15–20% retrieval improvement |
-| Retrieval scope | Top-k **per paper** | Ensures all active papers contribute to context |
-| Sentence splitting | Regex-based | Lightweight, handles academic abbreviations |
-| Vector store | FAISS with IndexFlatIP (cosine) | No external service, MPS-compatible, fits M3 budget |
-| Embedding model | all-MiniLM-L6-v2 | 23MB, fast on MPS, 200MB RAM |
+| Decision           | Choice                                    | Rationale                                                  |
+| ------------------ | ----------------------------------------- | ---------------------------------------------------------- |
+| Chunk granularity  | Paragraph                                 | Sentence-level chunks lose context; paragraph preserves it |
+| Embedding target   | Enriched text (with paper+section prefix) | 15–20% retrieval improvement                               |
+| Retrieval scope    | Top-k **per paper**                       | Ensures all active papers contribute to context            |
+| Sentence splitting | Regex-based                               | Lightweight, handles academic abbreviations                |
+| Vector store       | FAISS with IndexFlatIP (cosine)           | No external service, MPS-compatible, fits M3 budget        |
+| Embedding model    | all-MiniLM-L6-v2                          | 23MB, fast on MPS, 200MB RAM                               |
 
 ---
 
@@ -263,16 +266,16 @@ No single free-tier LLM provider is reliable enough for a demo. Gemini has the h
 
 ### Performance Comparison
 
-| Property | Gemini 2.0 Flash | Groq Llama 3.1 70B | Ollama Llama 3.2 3B |
-|----------|-----------------|--------------------|--------------------|
-| **Tokens/min** | 250,000 | 30,000 | Unlimited |
-| **Requests/min** | ~15 | ~30 | ~5–10 (throughput) |
-| **Latency (first token)** | ~800ms | ~300ms | ~1.5s |
-| **Latency (full response)** | ~1.2s | ~0.8s | ~3s |
-| **Citation compliance** | 95%+ | 90%+ | 70%+ |
-| **Quality (academic)** | Excellent | Very Good | Acceptable |
-| **RAM usage** | 0 (cloud) | 0 (cloud) | ~2GB |
-| **Availability** | 99.5%+ | 99%+ | 100% (local) |
+| Property                    | Gemini 2.0 Flash | Groq Llama 3.1 70B | Ollama Llama 3.2 3B |
+| --------------------------- | ---------------- | ------------------ | ------------------- |
+| **Tokens/min**              | 250,000          | 30,000             | Unlimited           |
+| **Requests/min**            | ~15              | ~30                | ~5–10 (throughput)  |
+| **Latency (first token)**   | ~800ms           | ~300ms             | ~1.5s               |
+| **Latency (full response)** | ~1.2s            | ~0.8s              | ~3s                 |
+| **Citation compliance**     | 95%+             | 90%+               | 70%+                |
+| **Quality (academic)**      | Excellent        | Very Good          | Acceptable          |
+| **RAM usage**               | 0 (cloud)        | 0 (cloud)          | ~2GB                |
+| **Availability**            | 99.5%+           | 99%+               | 100% (local)        |
 
 ### Configuration
 
@@ -308,6 +311,7 @@ session_manager.add_message(
     metadata=metadata
 )
 ```
+
 ---
 
 ## 12. API Rate Limit Management
@@ -318,11 +322,11 @@ Free-tier APIs have strict token and request budgets. Without proactive monitori
 
 ### Token Budget Reality
 
-| Provider | Tokens/Min (TPM) | Requests/Min (RPM) | Requests/Day (RPD) |
-|----------|------------------|--------------------|--------------------|
-| **Gemini** | 250,000 | ~15 | ~1,000 |
-| **Groq** | 30,000 | ~30 | 14,400 |
-| **Ollama** | Unlimited | ~5–10 (CPU bound) | Unlimited |
+| Provider   | Tokens/Min (TPM) | Requests/Min (RPM) | Requests/Day (RPD) |
+| ---------- | ---------------- | ------------------ | ------------------ |
+| **Gemini** | 250,000          | ~15                | ~1,000             |
+| **Groq**   | 30,000           | ~30                | 14,400             |
+| **Ollama** | Unlimited        | ~5–10 (CPU bound)  | Unlimited          |
 
 ### Per-Query Token Breakdown
 
@@ -350,13 +354,12 @@ Groq capacity:     30,000 / 8,500 ≈  3 queries/min  ← Tight (fallback only)
 
 ### Strategies for Staying Within Limits
 
-| Strategy | How It Works | Token Savings |
-|----------|-------------|---------------|
-| **Context truncation** | Limit retrieved paragraphs to token budget (see Section 13) | 30–50% |
-| **Conversation windowing** | Keep only last 5 turns in prompt (see Section 14) | 20–40% |
-| **Provider pre-check** | Skip provider if budget insufficient → no wasted retries | Prevents 429 errors |
-| **Query batching** | If user queries rapidly, queue and merge context | 10–20% |
-
+| Strategy                   | How It Works                                                | Token Savings       |
+| -------------------------- | ----------------------------------------------------------- | ------------------- |
+| **Context truncation**     | Limit retrieved paragraphs to token budget (see Section 13) | 30–50%              |
+| **Conversation windowing** | Keep only last 5 turns in prompt (see Section 14)           | 20–40%              |
+| **Provider pre-check**     | Skip provider if budget insufficient → no wasted retries    | Prevents 429 errors |
+| **Query batching**         | If user queries rapidly, queue and merge context            | 10–20%              |
 
 ## 13. Context Token Budget Management
 
@@ -369,23 +372,23 @@ The Budget Problem:
   5 papers × 4 paragraphs/paper × 500 tokens/paragraph = 10,000 tokens
   + system prompt (500) + history (2,000) + query (50)   = 12,550 tokens
   + response (~1,000)                                    = 13,550 total
-  
+
   Gemini: 13,550 is fine (250K budget)  ✅
   Groq:   13,550 is 45% of budget per query — only 2 queries/min  ⚠️
-  
+
   Solution: Budget-aware paragraph selection — choose BEST paragraphs
             across ALL papers until budget is filled.
 ```
 
 ### Configuration Rationale
 
-| Parameter | Default | Why |
-|-----------|---------|-----|
-| `max_context_tokens` | 6,000 | Fits 12 paragraphs (~500 tokens each). Leaves room for history + prompt |
-| `min_per_paper` | 1 | Every active paper must contribute at least one paragraph |
-| `history_budget` | 2,000 | ~5 conversation turns (400 tokens each) |
-| `system_prompt_budget` | 500 | Citation prompt is ~400 tokens |
-| `response_budget` | 1,000 | Reserve for LLM output generation |
+| Parameter              | Default | Why                                                                     |
+| ---------------------- | ------- | ----------------------------------------------------------------------- |
+| `max_context_tokens`   | 6,000   | Fits 12 paragraphs (~500 tokens each). Leaves room for history + prompt |
+| `min_per_paper`        | 1       | Every active paper must contribute at least one paragraph               |
+| `history_budget`       | 2,000   | ~5 conversation turns (400 tokens each)                                 |
+| `system_prompt_budget` | 500     | Citation prompt is ~400 tokens                                          |
+| `response_budget`      | 1,000   | Reserve for LLM output generation                                       |
 
 ### Example Walkthrough
 
@@ -425,11 +428,11 @@ Final: 11 paragraphs / 5,455 tokens — within 6,000 budget  ✅
 
 ### Performance Impact
 
-| Approach | Token Usage | Quality | Latency |
-|----------|------------|---------|---------|
-| Naive (all 20 paragraphs) | ~10,000 tokens | Good (but wasteful) | ~1.5s |
-| Budget-aware (11 paragraphs) | ~5,500 tokens | Good (best paragraphs only) | ~1.0s |
-| Aggressive (5 paragraphs) | ~2,500 tokens | Lower (may miss context) | ~0.7s |
+| Approach                     | Token Usage    | Quality                     | Latency |
+| ---------------------------- | -------------- | --------------------------- | ------- |
+| Naive (all 20 paragraphs)    | ~10,000 tokens | Good (but wasteful)         | ~1.5s   |
+| Budget-aware (11 paragraphs) | ~5,500 tokens  | Good (best paragraphs only) | ~1.0s   |
+| Aggressive (5 paragraphs)    | ~2,500 tokens  | Lower (may miss context)    | ~0.7s   |
 
 **DO NOT** set `max_context_tokens` below 3,000 — retrieval quality drops sharply with fewer than 6 paragraphs.
 
@@ -455,10 +458,11 @@ Provider switch to Groq — user doesn't notice:
     msg2: Assistant: "BERT is a... [P3][P7]"
     msg3: User: "How does it compare to GPT?"
     msg4: Assistant: "Compared to GPT... [P12][P15]"
-  
+
   Groq receives full history → generates Turn 3 response
   User sees seamless conversation (no context loss)
 ```
+
 ---
 
 ## 15. Error Handling & Fallback Strategies
@@ -517,14 +521,15 @@ Request arrives
 
 ### User-Facing Error Messages
 
-| Error | User Message | UI Treatment |
-|-------|-------------|--------------|
-| Rate limit | "Processing your request with an alternative AI model..." | Subtle info banner |
-| Timeout | "Response is taking longer than usual. Retrying..." | Loading spinner persists |
-| All providers failed | "Our AI is temporarily unavailable. Please try in 60s." | Red error card with timer |
-| No citations | "Citations were automatically attributed. Verify carefully." | Yellow warning banner |
-| Invalid paper IDs | *(silently corrected — no user message)* | None |
-| Empty response | *(silently retry — no user message)* | Loading spinner persists |
+| Error                | User Message                                                 | UI Treatment              |
+| -------------------- | ------------------------------------------------------------ | ------------------------- |
+| Rate limit           | "Processing your request with an alternative AI model..."    | Subtle info banner        |
+| Timeout              | "Response is taking longer than usual. Retrying..."          | Loading spinner persists  |
+| All providers failed | "Our AI is temporarily unavailable. Please try in 60s."      | Red error card with timer |
+| No citations         | "Citations were automatically attributed. Verify carefully." | Yellow warning banner     |
+| Invalid paper IDs    | _(silently corrected — no user message)_                     | None                      |
+| Empty response       | _(silently retry — no user message)_                         | Loading spinner persists  |
+
 ---
 
 ## 16. Query Type Routing
@@ -535,35 +540,35 @@ Not all queries are equal. "What is BERT?" needs standard retrieval. "Compare BE
 
 ### Query Types
 
-| Type | Example | Retrieval Strategy | Token Profile |
-|------|---------|-------------------|---------------|
-| **Simple Q&A** | "What is masked language modeling?" | Standard top-k per paper | ~5,000 tokens |
-| **Comparison** | "Compare BERT and GPT-2 architectures" | Balanced: equal paragraphs per paper | ~6,000 tokens |
-| **Summary** | "Summarize the methodology of paper 3" | Full paper sections (no RAG) | ~4,000 tokens |
-| **Multi-hop** | "What datasets improved models in papers 1 and 3?" | Iterative: first retrieve topics, then details | ~7,000 tokens |
-| **Follow-up** | "Tell me more about that" | Use previous query's context + expand | ~5,500 tokens |
-| **Metadata** | "Who wrote paper 2?" | Paper metadata lookup (no RAG) | ~200 tokens |
+| Type           | Example                                            | Retrieval Strategy                             | Token Profile |
+| -------------- | -------------------------------------------------- | ---------------------------------------------- | ------------- |
+| **Simple Q&A** | "What is masked language modeling?"                | Standard top-k per paper                       | ~5,000 tokens |
+| **Comparison** | "Compare BERT and GPT-2 architectures"             | Balanced: equal paragraphs per paper           | ~6,000 tokens |
+| **Summary**    | "Summarize the methodology of paper 3"             | Full paper sections (no RAG)                   | ~4,000 tokens |
+| **Multi-hop**  | "What datasets improved models in papers 1 and 3?" | Iterative: first retrieve topics, then details | ~7,000 tokens |
+| **Follow-up**  | "Tell me more about that"                          | Use previous query's context + expand          | ~5,500 tokens |
+| **Metadata**   | "Who wrote paper 2?"                               | Paper metadata lookup (no RAG)                 | ~200 tokens   |
 
 ### Decision Table
 
-| Query | Classification | Strategy | Why |
-|-------|---------------|----------|-----|
-| "What is attention?" | Simple Q&A | Standard top-4/paper | Straightforward factual query |
-| "Compare transformers in papers 1 and 3" | Comparison | Balanced 3/paper | Must have equal representation |
-| "Summarize paper 2" | Summary | Full paper (15 paragraphs) | Need broad coverage, not relevance-ranked |
-| "Which papers discuss pre-training?" | Multi-hop | 2-stage iterative | Need to find topic across papers |
-| "Tell me more about that" | Follow-up | Expand previous | Requires previous conversation context |
-| "Who wrote paper 1?" | Metadata | No RAG | Answer is in paper metadata |
+| Query                                    | Classification | Strategy                   | Why                                       |
+| ---------------------------------------- | -------------- | -------------------------- | ----------------------------------------- |
+| "What is attention?"                     | Simple Q&A     | Standard top-4/paper       | Straightforward factual query             |
+| "Compare transformers in papers 1 and 3" | Comparison     | Balanced 3/paper           | Must have equal representation            |
+| "Summarize paper 2"                      | Summary        | Full paper (15 paragraphs) | Need broad coverage, not relevance-ranked |
+| "Which papers discuss pre-training?"     | Multi-hop      | 2-stage iterative          | Need to find topic across papers          |
+| "Tell me more about that"                | Follow-up      | Expand previous            | Requires previous conversation context    |
+| "Who wrote paper 1?"                     | Metadata       | No RAG                     | Answer is in paper metadata               |
 
 ### Performance Impact
 
-| Strategy | Retrieval Latency | Token Usage | Quality |
-|----------|------------------|-------------|---------|
-| Standard | <100ms | ~5,000 | Good for focused queries |
-| Balanced | <150ms (N queries) | ~6,000 | Best for comparisons |
-| Full paper | <50ms (no similarity search) | ~4,000 | Best for summaries |
-| Multi-hop | <200ms (2 stages) | ~7,000 | Best for complex queries |
-| Metadata | <5ms | ~200 | Perfect for factual lookups |
+| Strategy   | Retrieval Latency            | Token Usage | Quality                     |
+| ---------- | ---------------------------- | ----------- | --------------------------- |
+| Standard   | <100ms                       | ~5,000      | Good for focused queries    |
+| Balanced   | <150ms (N queries)           | ~6,000      | Best for comparisons        |
+| Full paper | <50ms (no similarity search) | ~4,000      | Best for summaries          |
+| Multi-hop  | <200ms (2 stages)            | ~7,000      | Best for complex queries    |
+| Metadata   | <5ms                         | ~200        | Perfect for factual lookups |
 
 ---
 
@@ -582,7 +587,7 @@ Timeline with streaming:
   t=1200ms  Full response received (streaming complete)
   t=1400ms  HAVF verification starts (background)
   t=1600ms  Confidence scores appear under each sentence
-  
+
 Timeline WITHOUT streaming:
   t=0ms     User sends query
   t=0-1200ms  ... blank screen ... ← user thinks it's broken
@@ -633,13 +638,13 @@ if full_response and chunk.startswith(full_response):
 
 ### Performance Impact
 
-| Metric | Without Streaming | With Streaming |
-|--------|------------------|---------------|
-| Time to first token | ~1.2s | ~200ms |
-| Perceived latency | 1.2s (feels slow) | 200ms (feels instant) |
-| Total generation time | ~1.2s | ~1.2s (unchanged) |
-| HAVF verification | Sequential | Parallel (after stream) |
-| Total user wait | ~1.6s | ~1.4s for full confidence |
+| Metric                | Without Streaming | With Streaming            |
+| --------------------- | ----------------- | ------------------------- |
+| Time to first token   | ~1.2s             | ~200ms                    |
+| Perceived latency     | 1.2s (feels slow) | 200ms (feels instant)     |
+| Total generation time | ~1.2s             | ~1.2s (unchanged)         |
+| HAVF verification     | Sequential        | Parallel (after stream)   |
+| Total user wait       | ~1.6s             | ~1.4s for full confidence |
 
 **DO NOT** run HAVF verification per-token — it requires the complete response to parse sentences and match citations. Always buffer and verify after generation completes.
 
@@ -677,11 +682,11 @@ Compare: Sequential processing would take 5 × 40s = 200s (~3.3 min)
 
 ### Configuration
 
-| Parameter | Default | Rationale |
-|-----------|---------|-----------|
-| `max_parallel` | 3 | Uses 3 of 4 performance cores; leaves 1 for queries |
-| Embedding `batch_size` | 64 | Balances MPS throughput vs memory |
-| Max papers/session | 7 | Memory budget cap (from CONSTRAINTS doc) |
+| Parameter              | Default | Rationale                                           |
+| ---------------------- | ------- | --------------------------------------------------- |
+| `max_parallel`         | 3       | Uses 3 of 4 performance cores; leaves 1 for queries |
+| Embedding `batch_size` | 64      | Balances MPS throughput vs memory                   |
+| Max papers/session     | 7       | Memory budget cap (from CONSTRAINTS doc)            |
 
 **DO NOT** set `max_parallel` above 3 on M3 8GB — memory pressure causes kernel swapping and thermal throttling.
 
@@ -695,16 +700,16 @@ Without metrics, you can't prove the system meets targets, identify bottlenecks,
 
 ### Latency Targets
 
-| Stage | Target | Hard Limit | How to Measure |
-|-------|--------|-----------|---------------|
-| PDF extraction | <15s/paper | <30s | Timer around extractor |
-| Embedding generation | <30s/paper | <60s | Timer around encode_batch |
-| FAISS indexing | <2s/paper | <5s | Timer around vector_store.add_paragraphs |
-| Query embedding | <10ms | <50ms | Timer around single encode |
-| Vector retrieval | <100ms | <200ms | Timer around collection.query |
-| LLM generation | <2s | <5s | Timer from request to last token |
-| HAVF verification | <200ms | <500ms | Timer around verify_response |
-| **Total query latency** | **<3s** | **<5s** | End-to-end from user click |
+| Stage                   | Target     | Hard Limit | How to Measure                           |
+| ----------------------- | ---------- | ---------- | ---------------------------------------- |
+| PDF extraction          | <15s/paper | <30s       | Timer around extractor                   |
+| Embedding generation    | <30s/paper | <60s       | Timer around encode_batch                |
+| FAISS indexing          | <2s/paper  | <5s        | Timer around vector_store.add_paragraphs |
+| Query embedding         | <10ms      | <50ms      | Timer around single encode               |
+| Vector retrieval        | <100ms     | <200ms     | Timer around collection.query            |
+| LLM generation          | <2s        | <5s        | Timer from request to last token         |
+| HAVF verification       | <200ms     | <500ms     | Timer around verify_response             |
+| **Total query latency** | **<3s**    | **<5s**    | End-to-end from user click               |
 
 ### Example Metrics Log
 
@@ -717,13 +722,13 @@ Without metrics, you can't prove the system meets targets, identify bottlenecks,
 
 ### Bottleneck Identification Guide
 
-| Symptom | Likely Cause | Fix |
-|---------|-------------|-----|
-| `total_query` > 5s | LLM latency | Switch provider or reduce context |
-| `vector_retrieval` > 200ms | FAISS index not pre-loaded | Warm with dummy query on startup |
-| `havf_verification` > 500ms | Cross-encoder loading | Pre-load or use Level 1 only |
-| `embedding_generation` > 60s | MPS not active | Check `torch.backends.mps.is_available()` |
-| `pdf_extraction` > 30s | Docling on simple PDF | Force PyMuPDF for non-table PDFs |
+| Symptom                      | Likely Cause               | Fix                                       |
+| ---------------------------- | -------------------------- | ----------------------------------------- |
+| `total_query` > 5s           | LLM latency                | Switch provider or reduce context         |
+| `vector_retrieval` > 200ms   | FAISS index not pre-loaded | Warm with dummy query on startup          |
+| `havf_verification` > 500ms  | Cross-encoder loading      | Pre-load or use Level 1 only              |
+| `embedding_generation` > 60s | MPS not active             | Check `torch.backends.mps.is_available()` |
+| `pdf_extraction` > 30s       | Docling on simple PDF      | Force PyMuPDF for non-table PDFs          |
 
 ---
 
@@ -764,8 +769,7 @@ The M3 MacBook Pro has 8GB **unified** memory shared between CPU, GPU, macOS, an
 
 **DO NOT** load the cross-encoder at startup — 89% of sentences resolve at HAVF Level 1 (embedding similarity only). The cross-encoder's ~90MB is wasted most of the time.
 
-**DO NOT** set `faiss.omp_set_num_threads` > 1 when MPS is active — OMP threads accessing MPS-backed memory cause SIGSEGV on Apple Silicon.
----
+## **DO NOT** set `faiss.omp_set_num_threads` > 1 when MPS is active — OMP threads accessing MPS-backed memory cause SIGSEGV on Apple Silicon.
 
 ## 21. Complete System Integration Example
 
@@ -829,6 +833,7 @@ Active papers: [paper_1 (BERT), paper_2 (GPT-2), paper_3 (T5)]
 │  → Total: 1445ms  ✅ under 3s target                         │
 └──────────────────────────────────────────────────────────────┘
 ```
+
 ---
 
 ## 22. Operational Pitfalls to Avoid
@@ -850,13 +855,13 @@ Active papers: [paper_1 (BERT), paper_2 (GPT-2), paper_3 (T5)]
 
 ## 23. Implementation Priority & Timeline
 
-| Week | Components | Depends On |
-|------|-----------|-----------|
-| **Week 1** | LazyModelLoader, MemoryMonitor, PerformanceMonitor | None |
-| **Week 2** | MultiProviderLLM, RateLimitMonitor, Exception classes | Week 1 |
-| **Week 3** | SessionStateManager, ContextBudgetManager | Week 2 |
-| **Week 4** | QueryRouter, RobustMultiProviderLLM (error handling) | Weeks 2-3 |
-| **Week 5** | StreamingResponseManager, SmartPaperQueue | Weeks 2-4 |
-| **Week 6** | Integration (Section 21), end-to-end testing | All above |
+| Week       | Components                                            | Depends On |
+| ---------- | ----------------------------------------------------- | ---------- |
+| **Week 1** | LazyModelLoader, MemoryMonitor, PerformanceMonitor    | None       |
+| **Week 2** | MultiProviderLLM, RateLimitMonitor, Exception classes | Week 1     |
+| **Week 3** | SessionStateManager, ContextBudgetManager             | Week 2     |
+| **Week 4** | QueryRouter, RobustMultiProviderLLM (error handling)  | Weeks 2-3  |
+| **Week 5** | StreamingResponseManager, SmartPaperQueue             | Weeks 2-4  |
+| **Week 6** | Integration (Section 21), end-to-end testing          | All above  |
 
 **CRITICAL**: Start with memory management (Week 1). Every other component depends on models loading correctly without crashing. Build outward from the core infrastructure.

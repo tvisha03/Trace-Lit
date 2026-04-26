@@ -156,9 +156,16 @@ export default function LiteratureReviewPanel({ sessionId, papers }) {
           </div>
         )}
 
+        {streaming && !reviewText && (
+          <div className="flex flex-col items-center justify-center h-40 text-center space-y-3">
+            <span className="inline-block w-5 h-5 border-2 border-tl-t4 border-t-tl-gold rounded-full animate-spin" />
+            <p className="text-xs text-tl-gold font-mono animate-pulse">Reading contexts & preparing synthesis...</p>
+          </div>
+        )}
+
         {reviewText && renderReview(reviewText)}
 
-        {streaming && (
+        {streaming && reviewText && (
           <span className="inline-block w-0.5 h-4 bg-tl-gold animate-pulse align-middle ml-0.5" />
         )}
       </div>

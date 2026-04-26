@@ -12,7 +12,8 @@ from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
 
-_CITATION_ID_RE = re.compile(r"\[([a-f0-9]{8}_[PTFE]\d+)\]")
+# Standardized pattern: accepts 1-8 hex chars to match all valid citation formats
+_CITATION_ID_RE = re.compile(r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]")
 _MD_BOLD_RE = re.compile(r"\*{1,3}(.+?)\*{1,3}")
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 _MD_LIST_RE = re.compile(r"^[\s]*[-*+]\s+", re.MULTILINE)
@@ -125,8 +126,6 @@ def _postprocess_display_sources(
     ]
 
 
-_NON_TEXT_PREFIXES = frozenset({"F", "T", "E"})
-
 def _is_non_text_paragraph(paragraph_id: str | None) -> bool:
     if not paragraph_id:
         return False
@@ -176,7 +175,11 @@ def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
 def _apply_citation_correction(
     results: list["VerificationResult"],
     para_source_index: dict[str, dict],
+    ce_threshold: float | None = None,
 ) -> list["VerificationResult"]:
+    # Use settings value if not provided
+    if ce_threshold is None:
+        ce_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
     corrected = []
     for result in results:
         cited_pid = _extract_cited_para_id(result.claim)
@@ -190,7 +193,9 @@ def _apply_citation_correction(
             if chunk_type != "text" and _is_non_text_paragraph(new_pid):
                 if confidence == ConfidenceLevel.LOW:
                     confidence = ConfidenceLevel.MEDIUM
-                score = max(score, 0.70)
+                # Use the cross-encoder threshold as minimum for non-text chunks
+                # to ensure consistency with Level 2 verification
+                score = max(score, ce_threshold)
 
             result = VerificationResult(
                 claim=result.claim,
@@ -234,7 +239,7 @@ def _chunk_type_from_paragraph_id(paragraph_id: str | None) -> str:
     prefix = paragraph_id
     if "_" in paragraph_id:
         prefix = paragraph_id.split("_")[-1]
-    
+
     indicator = prefix[:1]
     return _PARAGRAPH_TYPE_MAP.get(indicator, "text")
 
@@ -357,7 +362,7 @@ async def verify_response(
         )
         all_results = short_results + results
         para_index = _build_para_source_index(source_sentences)
-        all_results = _apply_citation_correction(all_results, para_index)
+        all_results = _apply_citation_correction(all_results, para_index, ce_thresh)
         all_results = _postprocess_display_sources(all_results)
         _log_verification_summary(all_results)
         return all_results

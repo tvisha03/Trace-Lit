@@ -79,16 +79,6 @@ def _find_best_matches(all_scores: list[float], claim_map: list[tuple]) -> dict:
 
 
 def _normalize_cross_encoder_score(raw_score: float) -> float:
-    """Convert raw cross-encoder logit to 0-1 cosine-similarity scale.
-
-    Cross-encoder models output raw logits (typically -5 to +10).
-    We apply sigmoid to map to (0, 1), then scale to match the
-    embedding similarity range so confidence thresholds stay consistent.
-    """
-    return float(1.0 / (1.0 + math.exp(-raw_score)))
-
-
-def _normalize_cross_encoder_score(raw_score: float) -> float:
     """Convert raw cross-encoder logit to 0-1 range via sigmoid.
 
     Cross-encoder models output raw logits (typically -5 to +10).
@@ -108,11 +98,12 @@ def _apply_rerank_results(
 ) -> None:
     """Update result with reranking outcome."""
     if best_source:
-        # Normalize raw cross-encoder logit to 0-1 range
+        # Normalize raw cross-encoder logit to 0-1 range for comparison
         normalized_score = _normalize_cross_encoder_score(best_score)
+        # Compare normalized score against threshold for consistency with Level 1
         result["confidence"] = (
             ConfidenceLevel.MEDIUM
-            if best_score >= cross_encoder_threshold
+            if normalized_score >= cross_encoder_threshold
             else ConfidenceLevel.LOW
         )
         result["best_score"] = normalized_score
@@ -151,7 +142,11 @@ def rerank_claims(
     results_to_update = _find_best_matches(all_scores, claim_map)
 
     for result in uncertain_results:
-        update_data = results_to_update.get(id(result), {"score": -1.0, "source": None})
+        # Use `or` to provide default when key not found (was: tuple bug with comma)
+        update_data = results_to_update.get(id(result)) or {
+            "score": -1.0,
+            "source": None,
+        }
         best_score = float(update_data["score"])
         best_source = update_data["source"]
         _apply_rerank_results(result, best_score, best_source, cross_encoder_threshold)

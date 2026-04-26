@@ -5,10 +5,11 @@ import psutil
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
+
 def _detect_max_parallel_papers() -> int:
     """Set parallelism based on available system RAM."""
     try:
-        total_gb = psutil.virtual_memory().total / (1024 ** 3)
+        total_gb = psutil.virtual_memory().total / (1024**3)
     except Exception:
         return 2
     if total_gb <= 8:
@@ -21,12 +22,13 @@ def _detect_max_parallel_papers() -> int:
 def _detect_figure_concurrency() -> int:
     """Reduce figure analysis concurrency on low-RAM systems."""
     try:
-        total_gb = psutil.virtual_memory().total / (1024 ** 3)
+        total_gb = psutil.virtual_memory().total / (1024**3)
     except Exception:
         return 3
     if total_gb <= 8:
         return 2
     return 3
+
 
 class Settings(BaseSettings):
     APP_NAME: str = "TraceLit"
@@ -57,6 +59,7 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_ollama_url(cls, v: str) -> str:  # noqa: N805
         import ipaddress
+
         parsed = urlparse(v)
         if parsed.scheme not in ("http", "https"):
             raise ValueError(
@@ -66,7 +69,7 @@ class Settings(BaseSettings):
             raise ValueError(f"OLLAMA_BASE_URL must include a hostname, got: {v}")
         try:
             hostname = parsed.hostname
-            if hostname.startswith('[') and hostname.endswith(']'):
+            if hostname.startswith("[") and hostname.endswith("]"):
                 hostname = hostname[1:-1]
             ipaddress.ip_address(hostname)
         except ValueError:
@@ -110,8 +113,8 @@ class Settings(BaseSettings):
     PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600
     COMPARISON_TIMEOUT_SECONDS: int = 600
 
-    EMBEDDING_MODEL: str = "mixedbread-ai/mxbai-embed-large-v1"
-    EMBEDDING_DIMENSIONS: int = 1024
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_DIMENSIONS: int = 384
     KEYBERT_MODEL: str = "all-mpnet-base-v2"
 
     HAVF_HIGH_THRESHOLD: float = 0.85
@@ -148,7 +151,7 @@ class Settings(BaseSettings):
             or self.USE_LOCAL_LLM
         )
 
+
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
-

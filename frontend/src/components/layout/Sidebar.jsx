@@ -178,8 +178,16 @@ export default function Sidebar({
     if (!sessionId) return;
     retriesRef.current = 0;
     cleanup();
-    connectWs(sessionId);
-    return cleanup;
+    
+    // Defer connection slightly to bypass React StrictMode double-mount warnings
+    const t = setTimeout(() => {
+      connectWs(sessionId);
+    }, 50);
+
+    return () => {
+      clearTimeout(t);
+      cleanup();
+    };
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

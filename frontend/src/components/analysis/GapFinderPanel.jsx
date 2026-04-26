@@ -62,6 +62,13 @@ export default function GapFinderPanel({ sessionId }) {
         </p>
       )}
 
+      {loading && !gaps && (
+        <div className="flex flex-col items-center justify-center py-12 space-y-3">
+          <span className="inline-block w-5 h-5 border-2 border-tl-t4 border-t-tl-gold rounded-full animate-spin" />
+          <p className="text-xs text-tl-gold font-mono animate-pulse">Extracting topics & comparing contexts...</p>
+        </div>
+      )}
+
       {gaps?.narrative && (
         <p className="text-xs text-tl-t2 font-mono mb-4 leading-relaxed">{stripParaIds(gaps.narrative)}</p>
       )}

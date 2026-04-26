@@ -21,6 +21,7 @@ from services.analysis_service import (
     generate_literature_review,
     generate_paper_summary,
     stream_literature_review,
+    stream_paper_summary,
 )
 from shared.enums import PaperStatus
 from shared.errors import ForbiddenError, InsufficientDataError, NotFoundError
@@ -172,3 +173,41 @@ async def paper_summary(
     result = await generate_paper_summary(paper_id, db, llm, user_question=question)
     return SummaryResponse(**result)
 
+
+@router.get("/summary/{paper_id}/stream", response_class=StreamingResponse)
+async def paper_summary_stream(
+    session_id: str,
+    paper_id: str,
+    request: Request,
+    question: str = Query(
+        default="Provide a structured summary of this paper.",
+        max_length=500,
+        description="Optional focus question for the summary (e.g. 'What methodology is used?').",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    paper = await get_paper(db, paper_id)
+    if not paper:
+        raise NotFoundError("Paper", paper_id)
+
+    if str(paper.session_id) != session_id:
+        raise ForbiddenError("Paper", paper_id)
+
+    if paper.status != PaperStatus.COMPLETED:
+        raise InsufficientDataError(
+            f"Paper '{paper_id}' is not yet fully processed (status: {paper.status.value}). "
+            "Please wait for processing to complete before requesting a summary."
+        )
+
+    _analysis_limiter.enforce(request)
+    llm = _get_llm(request)
+    generator = stream_paper_summary(paper_id, db, llm, user_question=question)
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -1,5 +1,5 @@
-EMBEDDING_MODEL_NAME: str = "mixedbread-ai/mxbai-embed-large-v1"
-EMBEDDING_DIMENSIONS: int = 1024
+EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
+EMBEDDING_DIMENSIONS: int = 384
 EMBEDDING_BATCH_SIZE: int = 64
 
 # Context budget — sized for Ollama Cloud's 8192 num_ctx.
@@ -45,4 +45,9 @@ FORMULA_MIN_LENGTH: int = 3
 FORMULA_MAX_INLINE_LENGTH: int = 500
 
 VISION_TABLE_KEYWORDS: tuple = ("table", "tabular", "spreadsheet", "grid")
-VISION_FORMULA_KEYWORDS: tuple = ("equation", "formula", "mathematical", "math expression")
+VISION_FORMULA_KEYWORDS: tuple = (
+    "equation",
+    "formula",
+    "mathematical",
+    "math expression",
+)

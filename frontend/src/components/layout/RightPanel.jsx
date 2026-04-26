@@ -4,7 +4,7 @@
  * Three tabs:
  *   Papers  — paper cards with SVG ring progress + "+ Upload paper" button
  *   Source  — SourceViewer embedded in the panel
- *   Web     — placeholder search UI
+ *   Summary — Paper Summary generation and viewing
  *
  * Props:
  *   rightTab          {'papers'|'source'|'web'}

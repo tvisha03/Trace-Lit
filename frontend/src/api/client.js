@@ -230,6 +230,29 @@ export const analysisApi = {
 
     return () => ctrl.abort();
   },
+
+  /** Stream paper summary. Events: token → {token}, done → {provider, full_text, title, paper_id} */
+  summaryStream: (sessionId, paperId, question, handlers = {}) => {
+    const ctrl = new AbortController();
+    const { onToken, onDone, onError } = handlers;
+    const qs = question ? `?question=${encodeURIComponent(question)}` : '';
+
+    fetch(`${API_BASE}${sp(sessionId, `/analysis/summary/${paperId}/stream${qs}`)}`, {
+      method: 'GET',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) { onError?.(new Error(`HTTP ${res.status}`)); return; }
+        await consumeSseStream(res, {
+          token: (d) => onToken?.(typeof d === 'string' ? d : d.token ?? ''),
+          done: (d) => onDone?.(d),
+          error: (d) => onError?.(new Error(typeof d === 'string' ? d : JSON.stringify(d))),
+        });
+      })
+      .catch((err) => { if (err.name !== 'AbortError') onError?.(err); });
+
+    return () => ctrl.abort();
+  },
 };
 
 // ─── Export ───────────────────────────────────────────────────────────────────
