@@ -40,30 +40,40 @@ export default function HighlighterPdfViewer({ url, targetPage, highlightText, o
   const makeTextRenderer = (searchTerm) => (textItem) => {
     if (!searchTerm || !textItem.str) return textItem.str;
 
-    // Normalize text for comparison
-    const itemStr = textItem.str.toLowerCase();
-    const cleanSearch = searchTerm.toLowerCase().trim();
-    
-    // 1. Try exact match (best)
-    if (itemStr.includes(cleanSearch)) {
+    const rawItem = textItem.str;
+    const cleanSearch = searchTerm.toLowerCase().replace(/[\n\r]+/g, ' ').trim();
+    const cleanItem = rawItem.toLowerCase().trim();
+
+    if (!cleanItem) return rawItem;
+
+    // 1. Target is fully contained within this text item
+    if (cleanItem.includes(cleanSearch)) {
       const regex = new RegExp(`(${cleanSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-      const parts = textItem.str.split(regex);
+      const parts = rawItem.split(regex);
       return parts.map((part, i) => 
         regex.test(part) ? <mark key={i} className="bg-tl-gold/40 rounded-sm text-inherit px-0.5">{part}</mark> : part
       );
     }
 
-    // 2. Try matching the first 4 words (robust against line-breaks if the chunk is small)
-    const firstFewWords = cleanSearch.split(/\s+/).slice(0, 4).join(' ');
-    if (firstFewWords && firstFewWords.length > 5 && itemStr.includes(firstFewWords)) {
-       const regex = new RegExp(`(${firstFewWords.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-       const parts = textItem.str.split(regex);
-       return parts.map((part, i) => 
-         regex.test(part) ? <mark key={i} className="bg-tl-gold/30 rounded-sm text-inherit px-0.5">{part}</mark> : part
-       );
+    // 2. Text item is a substring of the search term (Handles multi-line splits)
+    // Strip trailing hyphens in case of hyphenated line breaks
+    const noHyphenItem = cleanItem.endsWith('-') ? cleanItem.slice(0, -1).trim() : cleanItem;
+    
+    // Require at least 5 chars to avoid highlighting isolated short words (like "the")
+    if (noHyphenItem.length > 5 && cleanSearch.includes(noHyphenItem)) {
+      return <mark className="bg-tl-gold/40 rounded-sm text-inherit px-0.5">{rawItem}</mark>;
     }
 
-    return textItem.str;
+    // 3. Fallback: Triplet word matching for noisy text layers
+    const itemWords = noHyphenItem.split(/\s+/).filter(w => w.length > 2);
+    if (itemWords.length >= 3) {
+      const triplet = itemWords.slice(0, 3).join(' ');
+      if (cleanSearch.includes(triplet)) {
+        return <mark className="bg-tl-gold/30 rounded-sm text-inherit px-0.5">{rawItem}</mark>;
+      }
+    }
+
+    return rawItem;
   };
 
   return (
