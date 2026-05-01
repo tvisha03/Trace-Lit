@@ -59,6 +59,8 @@ docker-compose.override.yml
 .DS_Store
 Thumbs.db
 data/
+*.log
+.gemini/
 
 # Test papers (copyrighted PDFs)
 test_papers/
