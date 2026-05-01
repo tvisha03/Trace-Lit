@@ -1,21 +1,25 @@
-"""TraceLit — API v1 Top-Level Router."""
 
 from fastapi import APIRouter
 
-from api.v1.papers.router import router as papers_router
-from api.v1.sessions.router import router as sessions_router
-from api.v1.chat.router import router as chat_router
-from api.v1.comparison.router import router as comparison_router
-from api.v1.export.router import router as export_router
-from api.v1.analysis.router import router as analysis_router
-from api.v1.settings.router import router as settings_router
+from api.v1.routes.sessions import router as sessions_router
+from api.v1.routes.papers import router as papers_router
+from api.v1.routes.chat import router as chat_router
+from api.v1.routes.comparison import router as comparison_router
+from api.v1.routes.export import router as export_router
+from api.v1.routes.analysis import router as analysis_router
+from api.v1.routes.verification import router as verification_router
+from api.v1.routes.health import router as health_router
+from api.v1.routes.settings import router as settings_router
 
-router = APIRouter()
+api_v1_router = APIRouter()
 
-router.include_router(papers_router, tags=["papers"])
-router.include_router(sessions_router, tags=["sessions"])
-router.include_router(chat_router, tags=["chat"])
-router.include_router(comparison_router, tags=["comparison"])
-router.include_router(export_router, tags=["export"])
-router.include_router(analysis_router, tags=["analysis"])
-router.include_router(settings_router, tags=["settings"])
+api_v1_router.include_router(sessions_router, prefix="/sessions", tags=["Sessions"])
+api_v1_router.include_router(papers_router, prefix="/sessions/{session_id}/papers", tags=["Papers"])
+api_v1_router.include_router(chat_router, prefix="/sessions/{session_id}/chat", tags=["Chat"])
+api_v1_router.include_router(comparison_router, prefix="/sessions/{session_id}/compare", tags=["Comparison"])
+api_v1_router.include_router(export_router, prefix="/sessions/{session_id}/export", tags=["Export"])
+api_v1_router.include_router(analysis_router, prefix="/sessions/{session_id}/analysis", tags=["Analysis"])
+api_v1_router.include_router(verification_router, prefix="/verify", tags=["Verification"])
+api_v1_router.include_router(health_router, prefix="/health", tags=["Health"])
+api_v1_router.include_router(settings_router, prefix="/settings", tags=["Settings"])
+

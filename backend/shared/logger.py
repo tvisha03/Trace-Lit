@@ -1,41 +1,35 @@
-"""TraceLit — Centralised Logging Configuration.
-
-Call configure_logging() once at application startup.
-All modules use `from loguru import logger` directly after this.
-"""
-
+import logging
 import sys
-from pathlib import Path
+from typing import Any
 
-from loguru import logger
+LOG_FORMAT = (
+    "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+)
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+def setup_logging(level: str = "INFO") -> None:
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
 
-def configure_logging(log_level: str = "INFO", log_file: str = "./data/logs/tracelit.log") -> None:
-    """Set up loguru with console + rotating file handlers.
+    if not root.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT))
+        root.addHandler(handler)
 
-    Args:
-        log_level: Minimum log level for console output.
-        log_file: Path to the rotating log file.
-    """
-    logger.remove()
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
 
-    logger.add(
-        sys.stdout,
-        level=log_level,
-        format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-            "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-            "<level>{message}</level>"
-        ),
-    )
+def log_performance(
+    logger: logging.Logger,
+    operation: str,
+    duration_ms: float,
+    target_ms: float,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    status = "✅" if duration_ms <= target_ms else "⚠️"
+    parts = f"[PERF] {operation}: {duration_ms:.1f}ms {status} (target: {target_ms:.0f}ms)"
+    if extra:
+        detail = " | ".join(f"{k}={v}" for k, v in extra.items())
+        parts += f" | {{{detail}}}"
+    logger.info(parts)
 
-    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-    logger.add(
-        log_file,
-        level="DEBUG",
-        rotation="10 MB",
-        retention="5 days",
-        compression="zip",
-        format="{time} | {level} | {name}:{function}:{line} | {message}",
-    )

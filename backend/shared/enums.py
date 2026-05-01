@@ -1,35 +1,55 @@
-"""TraceLit — Shared Enumerations."""
-
 from enum import Enum
 
-
 class PaperStatus(str, Enum):
-    PROCESSING = "processing"
-    READY = "ready"
+    REGISTERED = "registered"
+    QUEUED = "queued"
+    EXTRACTING = "extracting"
+    ANALYZING_FIGURES = "analyzing_figures"
+    CHUNKING = "chunking"
+    EMBEDDING = "embedding"
+    COMPLETED = "completed"
+    SENTENCE_COMPLETE = "sentence_complete"
     FAILED = "failed"
 
-
-class MessageRole(str, Enum):
-    USER = "user"
-    ASSISTANT = "assistant"
-
+class LLMProvider(str, Enum):
+    GEMINI = "gemini"
+    GROQ = "groq"
+    OLLAMA = "ollama"
+    OLLAMA_CLOUD = "ollama_cloud"
 
 class ConfidenceLevel(str, Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
 
+class VerificationMethod(str, Enum):
+    EMBEDDING_SIMILARITY = "embedding_similarity"
+    CROSS_ENCODER_RERANK = "cross_encoder_rerank"
+    SKIPPED = "skipped"
 
 class QueryType(str, Enum):
-    FACTUAL = "factual"
+    SIMPLE_QA = "simple_qa"
     COMPARISON = "comparison"
     SUMMARY = "summary"
-    METHODOLOGY = "methodology"
+    MULTI_HOP = "multi_hop"
     FOLLOW_UP = "follow_up"
-    EXPLORATORY = "exploratory"
+    METADATA = "metadata"
 
+class ExportFormat(str, Enum):
+    PDF = "pdf"
+    EXCEL = "excel"
+    BIBTEX = "bibtex"
+    DOCX = "docx"
+    LATEX = "latex"
 
-class ExtractionMode(str, Enum):
-    AUTO = "auto"
-    FAST = "fast"
-    QUALITY = "quality"
+class MessageRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+class ChunkType(str, Enum):
+    TEXT = "text"
+    FIGURE = "figure"
+    TABLE = "table"
+    FORMULA = "formula"
+

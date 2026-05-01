@@ -1,25 +1,28 @@
-"""TraceLit — Shared FastAPI Dependencies.
+from typing import AsyncGenerator
 
-Centralises database session injection and other cross-cutting dependencies
-so every router imports from one place.
-"""
+from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy.orm import Session
+from infrastructure.db.database import async_session_factory
+from infrastructure.vector_store.faiss_store import FAISSStore
+from infrastructure.llm.fallback_chain import FallbackChain
+from workers.paper_queue import SmartPaperQueue
 
-from infrastructure.db.database import SessionLocal
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with async_session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
+def get_faiss_store(request: Request) -> FAISSStore:
+    return request.app.state.faiss_store
 
-def get_db() -> Session:
-    """Yield a database session; auto-closes on request completion.
+def get_llm(request: Request) -> FallbackChain:
+    return request.app.state.llm
 
-    Usage::
+def get_paper_queue(request: Request) -> SmartPaperQueue:
+    return request.app.state.paper_queue
 
-        @router.get("/items")
-        def read_items(db: Session = Depends(get_db)):
-            ...
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()

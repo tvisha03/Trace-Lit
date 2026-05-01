@@ -1,0 +1,16 @@
+version: "1.0"
+
+context:
+  project: Trace-Lit
+  updated: 2026-04-03T09:36:14.206Z
+  auto_updated: true
+
+nodes:
+  - id: project.info
+    type: entity
+    name: Project Info
+    files: 0
+    tests: 0
+    tech: 
+
+edges: []

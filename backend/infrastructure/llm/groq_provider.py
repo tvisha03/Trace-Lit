@@ -1,93 +1,108 @@
-"""TraceLit — Groq Llama 3.1 70B provider."""
+
+from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator, Optional
+from typing import AsyncGenerator
 
-from loguru import logger
+from groq import AsyncGroq
 
-from app.config import settings
 from infrastructure.llm.base import BaseLLMProvider
-from shared.errors import ProviderError, RateLimitError
+from shared.enums import LLMProvider
+from shared.errors import RateLimitError, ProviderTimeoutError, EmptyResponseError
+from shared.logger import get_logger
+from app.config import get_settings
 
+logger = get_logger(__name__)
 
-class GroqClient(BaseLLMProvider):
-    """Groq-hosted Llama 3.1 70B via groq SDK."""
+class GroqProvider(BaseLLMProvider):
+    provider = LLMProvider.GROQ
 
-    name = "groq"
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._api_key = settings.GROQ_API_KEY
+        self._model = settings.GROQ_MODEL
+        self._timeout = settings.LLM_TIMEOUT
+        self._client: AsyncGroq | None = None
 
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.groq_api_key
-        self.model = settings.groq_model
-        self._client = None
-
-    def _ensure_client(self) -> None:
+    def _get_client(self) -> AsyncGroq:
         if self._client is None:
-            try:
-                from groq import Groq
-                self._client = Groq(api_key=self.api_key)
-                logger.info(f"Groq client initialised (model={self.model})")
-            except Exception as e:
-                raise ProviderError(message=f"Failed to initialise Groq: {e}", code="PROVIDER_INIT_ERROR", details={"provider": self.name})
+            self._client = AsyncGroq(api_key=self._api_key)
+        return self._client
 
     async def generate(
         self,
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
-        max_tokens: int = 4000,
+        max_tokens: int = 2048,
     ) -> str:
-        self._ensure_client()
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        client = self._get_client()
         try:
             response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self._client.chat.completions.create,
-                    model=self.model, messages=messages,
-                    temperature=temperature, max_tokens=max_tokens,
+                client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                 ),
-                timeout=settings.llm_timeout,
+                timeout=self._timeout,
             )
-            text = response.choices[0].message.content
-            if not text:
-                raise ProviderError(message="Groq returned empty response", code="EMPTY_RESPONSE", details={"provider": self.name})
-            return text
         except asyncio.TimeoutError:
-            raise ProviderError(message=f"Groq timeout after {settings.llm_timeout}s", code="TIMEOUT", details={"provider": self.name})
-        except Exception as e:
-            err = str(e).lower()
-            if "429" in err or "rate" in err:
-                raise RateLimitError(provider=self.name, retry_after=60)
-            if "api key" in err or "authentication" in err:
-                raise ProviderError(message=f"Groq auth error: {e}", code="AUTH_ERROR", details={"provider": self.name})
-            raise ProviderError(message=f"Groq error: {e}", code="PROVIDER_ERROR", details={"provider": self.name})
+            raise ProviderTimeoutError("groq", self._timeout)
+        except Exception as exc:
+            if "429" in str(exc) or "rate_limit" in str(exc).lower():
+                raise RateLimitError("groq")
+            raise
 
-    async def stream(
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            raise EmptyResponseError("groq")
+        return text
+
+    async def generate_streaming(
         self,
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
-        max_tokens: int = 4000,
-    ) -> AsyncIterator[str]:
-        self._ensure_client()
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[str, None]:
+        client = self._get_client()
         try:
-            response = await asyncio.to_thread(
-                self._client.chat.completions.create,
-                model=self.model, messages=messages,
-                temperature=temperature, max_tokens=max_tokens, stream=True,
+            stream = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=True,
+                ),
+                timeout=self._timeout,
             )
-            for chunk in response:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    yield delta.content
-        except Exception as e:
-            err = str(e).lower()
-            if "429" in err or "rate" in err:
-                raise RateLimitError(provider=self.name, retry_after=60)
-            raise ProviderError(message=f"Groq stream error: {e}", code="STREAM_ERROR", details={"provider": self.name})
+        except asyncio.TimeoutError:
+            raise ProviderTimeoutError("groq", self._timeout)
+        except Exception as exc:
+            if "429" in str(exc) or "rate_limit" in str(exc).lower():
+                raise RateLimitError("groq")
+            raise
+
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+    async def health_check(self) -> bool:
+        if not self._api_key:
+            return False
+        try:
+            client = self._get_client()
+            await asyncio.wait_for(client.models.list(), timeout=5.0)
+            return True
+        except Exception:
+            return False
+

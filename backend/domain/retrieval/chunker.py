@@ -1,203 +1,456 @@
-"""TraceLit — Sentence-Aware Chunker. 🚨 CRITICAL COMPONENT
-
-Chunks at paragraph level with sentence-level boundary tracking.
-Every chunk contains a sentences[] array with unique sentence IDs (P#_S#).
-
-Rules from RAG_AND_CHUNKING_STRATEGY.md:
-  - DO NOT chunk at sentence level — paragraph is the unit
-  - DO embed the enriched_text (paper/section prefix)
-  - DO store original text for display, enriched for embedding
-  - Every sentence gets a unique ID: P{para_idx}_S{sent_idx}
-"""
-
 import re
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
 
-from loguru import logger
+from shared.logger import get_logger
+from shared.utils.text_utils import split_into_sentences, estimate_tokens
+from shared.constants import CHUNK_TARGET_TOKENS, CHUNK_MAX_TOKENS
+from shared.enums import ChunkType
 
+logger = get_logger(__name__)
 
-_ABBREVS = {
-    "et al", "fig", "figs", "eq", "eqs", "ref", "refs",
-    "sec", "sect", "vol", "no", "pp", "vs", "approx",
-    "dept", "univ", "prof", "dr", "mr", "mrs", "ms",
-    "e.g", "i.e", "cf", "etc", "al",
-    "jan", "feb", "mar", "apr", "jun", "jul", "aug",
-    "sep", "oct", "nov", "dec",
-}
-
-_SENTENCE_SPLIT_RE = re.compile(
-    r"""
-    (?<!\w\.\w)
-    (?<![A-Z][a-z]\.)
-    (?<![A-Z]\.)
-    (?<=\.|\?|!)
-    \s+
-    (?=[A-Z"'\(\[])
-    """,
-    re.VERBOSE,
-)
-
-_DECIMAL_RE = re.compile(r"\d+\.\d+")
-_CITATION_RE = re.compile(r"\[\d+(?:,\s*\d+)*\]")
-_ABBREV_RE = re.compile(
-    r"\b(?:" + "|".join(re.escape(a) for a in _ABBREVS) + r")\.\s",
-    re.IGNORECASE,
-)
+_IMG_MD_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
 
-class SentenceAwareChunker:
-    """Chunks text into paragraphs with sentence-level tracking."""
+def _strip_image_markdown(text: str) -> str:
+    return _IMG_MD_RE.sub("", text).strip()
 
-    def __init__(
-        self,
-        min_paragraph_length: int = 30,
-        max_paragraph_tokens: int = 512,
-    ) -> None:
-        self.min_paragraph_length = min_paragraph_length
-        self.max_paragraph_tokens = max_paragraph_tokens
 
-    def chunk_paper(
-        self,
-        sections: List[Dict[str, Any]],
-        paper_metadata: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Chunk all sections of a paper into paragraph-level chunks."""
-        paper_id = paper_metadata.get("paper_id", "unknown")
-        paper_title = paper_metadata.get("title", "Unknown Paper")
+@dataclass
+class Chunk:
+    paragraph_id: str
+    text: str
+    enriched_text: str
+    section_title: str
+    page_number: int | None
+    token_count: int
+    sentence_map: dict = field(default_factory=dict)
+    chunk_type: ChunkType = ChunkType.TEXT
+    image_path: str | None = None
+    bbox: dict | None = None
 
-        all_chunks: List[Dict[str, Any]] = []
-        global_para_idx = 0
 
-        for section in sections:
-            section_title = section.get("title", "Unknown Section")
-            section_page = section.get("page_start", 0)
-            content = section.get("content", "")
-            is_table = section.get("is_table", False)
+def create_chunks(
+    sections: list,
+    paper_title: str | None = None,
+    paper_id: str | None = None,
+) -> list[Chunk]:
+    if not sections:
+        logger.warning(
+            f"No sections provided to create_chunks for paper {paper_id or 'unknown'}. "
+            "The PDF may be empty or extraction yielded no usable text."
+        )
+        return []
 
-            if not content.strip():
+    chunks: list[Chunk] = []
+    paragraph_idx = 0
+
+    for section in sections:
+        paragraphs = _split_paragraphs(section.content)
+        # These are stored temporarily by section_parser to help with page disambiguation
+        combined_text = getattr(section, "_combined_full_text", "")
+        offset_map = getattr(section, "_offset_to_page_map", [])
+        base_page = getattr(section, "page_start", None)
+
+        for para_text in paragraphs:
+            para_text = para_text.strip()
+            if not para_text or len(para_text) < 20:
                 continue
 
-            # Tables are kept as single chunks — never split into paragraphs
-            if is_table:
-                sentences = self._split_sentences(content)
-                sentence_map = self._build_sentence_map(sentences, content, global_para_idx)
-                enriched_text = f"[Paper: {paper_title}] [Section: {section_title}] {content}"
+            # Resolve the best page number for this specific paragraph
+            page_number = base_page
+            if combined_text and offset_map:
+                # Find position of this paragraph inside the whole paper text, 
+                # starting from the section's known offset to avoid false positives.
+                search_start = getattr(section, "offset_start", 0) or 0
+                pos = combined_text.find(para_text, search_start)
+                if pos >= 0:
+                    current_page = base_page
+                    for offset, p_num in offset_map:
+                        if pos >= offset:
+                            current_page = p_num
+                        else:
+                            break
+                    page_number = current_page
 
-                all_chunks.append({
-                    "paragraph_id": f"P{global_para_idx}",
-                    "text": content,
-                    "enriched_text": enriched_text,
-                    "sentences": sentence_map,
-                    "section": section_title,
-                    "page": section_page,
-                    "paper_id": paper_id,
-                    "paper_title": paper_title,
-                    "token_count": self._estimate_tokens(content),
-                    "is_table": True,
-                })
-                global_para_idx += 1
-                continue
+            token_count = estimate_tokens(para_text)
 
-            for para_text in self._split_paragraphs(content):
-                if len(para_text.strip()) < self.min_paragraph_length:
-                    continue
-
-                for sub_para in self._enforce_token_limit(para_text):
-                    sentences = self._split_sentences(sub_para)
-                    sentence_map = self._build_sentence_map(sentences, sub_para, global_para_idx)
-                    enriched_text = f"[Paper: {paper_title}] [Section: {section_title}] {sub_para}"
-
-                    all_chunks.append({
-                        "paragraph_id": f"P{global_para_idx}",
-                        "text": sub_para,
-                        "enriched_text": enriched_text,
-                        "sentences": sentence_map,
-                        "section": section_title,
-                        "page": section_page,
-                        "paper_id": paper_id,
-                        "paper_title": paper_title,
-                        "token_count": self._estimate_tokens(sub_para),
-                    })
-                    global_para_idx += 1
-
-        logger.info("Chunked '{}' → {} paragraphs", paper_title[:50], len(all_chunks))
-        return all_chunks
-
-    # ------------------------------------------------------------------
-
-    def _split_paragraphs(self, text: str) -> List[str]:
-        text = text.replace("\r\n", "\n").replace("\r", "\n")
-        raw = re.split(r"\n\s*\n", text)
-        result = []
-        for para in raw:
-            cleaned = re.sub(r"\n(?!\n)", " ", para).strip()
-            cleaned = re.sub(r"  +", " ", cleaned)
-            if cleaned:
-                result.append(cleaned)
-        return result
-
-    def _enforce_token_limit(self, text: str) -> List[str]:
-        if self._estimate_tokens(text) <= self.max_paragraph_tokens:
-            return [text]
-        sentences = self._split_sentences(text)
-        sub_paras: List[str] = []
-        current: List[str] = []
-        current_tokens = 0
-        for sent in sentences:
-            sent_tokens = self._estimate_tokens(sent)
-            if current_tokens + sent_tokens > self.max_paragraph_tokens and current:
-                sub_paras.append(" ".join(current))
-                current = [sent]
-                current_tokens = sent_tokens
+            if token_count > CHUNK_MAX_TOKENS:
+                sub_chunks = _split_large_paragraph(
+                    para_text,
+                    section.title,
+                    paper_title,
+                    paragraph_idx,
+                    paper_id,
+                    page_number,
+                    combined_text,
+                    offset_map,
+                    section_offset_start=getattr(section, "offset_start", 0) or 0,
+                )
+                chunks.extend(sub_chunks)
+                paragraph_idx += len(sub_chunks)
             else:
-                current.append(sent)
-                current_tokens += sent_tokens
-        if current:
-            sub_paras.append(" ".join(current))
-        return sub_paras if sub_paras else [text]
+                chunk = _build_chunk(
+                    para_text,
+                    section.title,
+                    paper_title,
+                    paragraph_idx,
+                    paper_id,
+                    page_number,
+                )
+                chunks.append(chunk)
+                paragraph_idx += 1
 
-    def _split_sentences(self, text: str) -> List[str]:
-        protected = text
-        protected = _DECIMAL_RE.sub(lambda m: m.group().replace(".", "DECIMAL"), protected)
-        protected = _CITATION_RE.sub(lambda m: m.group().replace(",", "COMMA"), protected)
-        abbrev_positions = [(m.start(), m.end()) for m in _ABBREV_RE.finditer(protected)]
-        for start, end in reversed(abbrev_positions):
-            protected = protected[:start] + protected[start:end].replace(". ", "ABBREVDOT ") + protected[end:]
+    logger.info(f"Created {len(chunks)} chunks from {len(sections)} sections")
+    return chunks
 
-        raw_sentences = _SENTENCE_SPLIT_RE.split(protected)
-        sentences = []
-        for sent in raw_sentences:
-            restored = (sent
-                .replace("DECIMAL", ".")
-                .replace("COMMA", ",")
-                .replace("ABBREVDOT", ".")
-                .strip())
-            if restored:
-                sentences.append(restored)
-        return sentences
 
-    def _build_sentence_map(
-        self,
-        sentences: List[str],
-        para_text: str,
-        para_idx: int,
-    ) -> List[Dict[str, Any]]:
-        result = []
-        search_start = 0
-        for sent_idx, sent in enumerate(sentences):
-            start = para_text.find(sent, search_start)
-            if start == -1:
-                start = search_start
-            end = start + len(sent)
-            result.append({
-                "sentence_id": f"P{para_idx}_S{sent_idx}",
-                "text": sent,
-                "start_char": start,
-                "end_char": end,
-                "tokens": self._estimate_tokens(sent),
-            })
-            search_start = end
-        return result
+def _split_paragraphs(text: str) -> list[str]:
+    return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
 
-    def _estimate_tokens(self, text: str) -> int:
-        return len(text) // 4
+
+def _build_chunk(
+    text: str,
+    section_title: str,
+    paper_title: str | None,
+    paragraph_idx: int,
+    paper_id: str | None = None,
+    page_number: int | None = None,
+) -> Chunk:
+    if paper_id:
+        paragraph_id = f"{paper_id[:8]}_P{paragraph_idx}"
+    else:
+        paragraph_id = f"P{paragraph_idx}"
+    sentences = split_into_sentences(text)
+
+    if not sentences:
+        logger.warning(
+            f"Zero sentences extracted from chunk {paragraph_id} — "
+            "falling back to full text as a single sentence."
+        )
+        sentences = [text]
+
+    sentence_map = {}
+    offset = 0
+
+    for s_idx, sentence in enumerate(sentences):
+        s_key = f"{paragraph_id}_S{s_idx}"
+        start = text.find(sentence, offset)
+        if start == -1:
+            start = offset
+        end = start + len(sentence)
+        sentence_map[s_key] = {
+            "text": sentence,
+            "start": start,
+            "end": end,
+            "tokens": estimate_tokens(sentence),
+        }
+        offset = end
+
+    prefix_parts = []
+    if paper_title:
+        prefix_parts.append(f"[Paper: {paper_title}]")
+    if section_title:
+        prefix_parts.append(f"[Section: {section_title}]")
+    prefix = " ".join(prefix_parts)
+    enriched_text = f"{prefix} {text}" if prefix else text
+
+    return Chunk(
+        paragraph_id=paragraph_id,
+        text=text,
+        enriched_text=enriched_text,
+        section_title=section_title,
+        page_number=page_number,
+        token_count=estimate_tokens(text),
+        sentence_map=sentence_map,
+    )
+
+
+def _split_large_paragraph(
+    text: str,
+    section_title: str,
+    paper_title: str | None,
+    start_idx: int,
+    paper_id: str | None = None,
+    page_number: int | None = None,
+    combined_text: str = "",
+    offset_map: list = None,
+    section_offset_start: int = 0,
+) -> list[Chunk]:
+    sentences = split_into_sentences(text)
+    chunks: list[Chunk] = []
+    current_sentences: list[str] = []
+    current_tokens = 0
+    idx_offset = 0
+
+    for sentence in sentences:
+        s_tokens = estimate_tokens(sentence)
+
+        if current_tokens + s_tokens > CHUNK_TARGET_TOKENS and current_sentences:
+            combined = " ".join(current_sentences)
+            
+            # Recalculate page number for this sub-chunk if possible
+            chunk_page = page_number
+            if combined_text and offset_map:
+                pos = combined_text.find(combined, section_offset_start)
+                if pos >= 0:
+                    for offset, p_num in offset_map:
+                        if pos >= offset:
+                            chunk_page = p_num
+                        else:
+                            break
+
+            chunk = _build_chunk(
+                combined,
+                section_title,
+                paper_title,
+                start_idx + idx_offset,
+                paper_id,
+                chunk_page,
+            )
+            chunks.append(chunk)
+            idx_offset += 1
+            current_sentences = []
+            current_tokens = 0
+
+        current_sentences.append(sentence)
+        current_tokens += s_tokens
+
+    if current_sentences:
+        combined = " ".join(current_sentences)
+        
+        chunk_page = page_number
+        if combined_text and offset_map:
+            pos = combined_text.find(combined, section_offset_start)
+            if pos >= 0:
+                for offset, p_num in offset_map:
+                    if pos >= offset:
+                        chunk_page = p_num
+                    else:
+                        break
+
+        chunk = _build_chunk(
+            combined,
+            section_title,
+            paper_title,
+            start_idx + idx_offset,
+            paper_id,
+            chunk_page,
+        )
+        chunks.append(chunk)
+
+    return chunks
+
+
+def create_figure_chunks(
+    analyzed_figures: list,
+    paper_title: str | None = None,
+    paper_id: str | None = None,
+    start_idx: int = 0,
+) -> list[Chunk]:
+    chunks: list[Chunk] = []
+
+    for offset, fig in enumerate(analyzed_figures):
+        idx = start_idx + offset
+
+        if paper_id:
+            paragraph_id = f"{paper_id[:8]}_F{idx}"
+        else:
+            paragraph_id = f"F{idx}"
+
+        text = fig.description
+        fig_type = getattr(fig, "figure_type", "figure")
+        caption = getattr(fig, "caption", "") or ""
+
+        prefix_parts = []
+        if paper_title:
+            prefix_parts.append(f"[Paper: {paper_title}]")
+        prefix_parts.append(f"[Figure on page {fig.page_number}, type: {fig_type}]")
+        if caption:
+            prefix_parts.append(f"[Caption: {caption}]")
+        prefix = " ".join(prefix_parts)
+        enriched_text = f"{prefix} {text}"
+
+        display_text = f"{caption}\n{text}" if caption else text
+
+        sentence_map = {
+            f"{paragraph_id}_S0": {
+                "text": display_text,
+                "start": 0,
+                "end": len(display_text),
+                "tokens": estimate_tokens(display_text),
+            }
+        }
+
+        chunks.append(
+            Chunk(
+                paragraph_id=paragraph_id,
+                text=display_text,
+                enriched_text=enriched_text,
+                section_title=f"Figure (page {fig.page_number})",
+                page_number=fig.page_number,
+                token_count=estimate_tokens(display_text),
+                sentence_map=sentence_map,
+                chunk_type=ChunkType.FIGURE,
+                image_path=fig.image_path,
+                bbox=fig.bbox,
+            )
+        )
+
+    logger.info(f"Created {len(chunks)} figure chunks")
+    return chunks
+
+
+def _build_table_semantic_description(
+    paper_title: str | None,
+    caption: str,
+    rows: int,
+    cols: int,
+) -> str:
+
+    parts = []
+    if paper_title:
+        parts.append(f"This table is from the paper '{paper_title}'.")
+    if caption:
+        parts.append(f"It presents: {caption}.")
+    if rows or cols:
+        parts.append(f"The table contains {rows} data rows across {cols} columns.")
+    return " ".join(parts)
+
+
+def _build_table_text_variants(
+    paper_title: str | None,
+    caption: str,
+    rows: int,
+    cols: int,
+    page_number: int,
+    table_content: str,
+) -> tuple[str, str, str]:
+    prefix_parts = []
+    prefix_parts = []
+    if paper_title:
+        prefix_parts.append(f"[Paper: {paper_title}]")
+    prefix_parts.append(f"[TABLE, page {page_number}, {rows} rows × {cols} cols]")
+    if caption:
+        prefix_parts.append(f"[Caption: {caption}]")
+    prefix = " ".join(prefix_parts)
+
+    semantic_desc = _build_table_semantic_description(paper_title, caption, rows, cols)
+
+    display_text = f"{caption}\n{table_content}" if caption else table_content
+    enriched_text = (
+        f"{prefix}\n{semantic_desc}\n{table_content}"
+        if semantic_desc
+        else f"{prefix}\n{table_content}"
+    )
+    havf_text = caption if caption else f"Table on page {page_number}"
+
+    return display_text, enriched_text, havf_text
+
+
+def create_table_chunks(
+    tables: list,
+    paper_title: str | None = None,
+    paper_id: str | None = None,
+    start_idx: int = 0,
+) -> list[Chunk]:
+    chunks: list[Chunk] = []
+
+    for offset, table in enumerate(tables):
+        idx = start_idx + offset
+        paragraph_id = f"{paper_id[:8]}_T{idx}" if paper_id else f"T{idx}"
+
+        caption = getattr(table, "caption", "") or ""
+        rows = getattr(table, "row_count", 0)
+        cols = getattr(table, "col_count", 0)
+
+        display_text, enriched_text, havf_text = _build_table_text_variants(
+            paper_title, caption, rows, cols, table.page_number, table.content
+        )
+
+        sentence_map = {
+            f"{paragraph_id}_S0": {
+                "text": havf_text,
+                "start": 0,
+                "end": len(havf_text),
+                "tokens": estimate_tokens(havf_text),
+            }
+        }
+
+        chunks.append(
+            Chunk(
+                paragraph_id=paragraph_id,
+                text=display_text,
+                enriched_text=enriched_text,
+                section_title=f"Table (page {table.page_number})",
+                page_number=table.page_number,
+                token_count=estimate_tokens(display_text),
+                sentence_map=sentence_map,
+                chunk_type=ChunkType.TABLE,
+                bbox=table.bbox,
+            )
+        )
+
+    logger.info(f"Created {len(chunks)} table chunks")
+    return chunks
+
+
+def create_formula_chunks(
+    formulas: list,
+    paper_title: str | None = None,
+    paper_id: str | None = None,
+    start_idx: int = 0,
+) -> list[Chunk]:
+    chunks: list[Chunk] = []
+
+    for offset, formula in enumerate(formulas):
+        idx = start_idx + offset
+
+        if paper_id:
+            paragraph_id = f"{paper_id[:8]}_E{idx}"
+        else:
+            paragraph_id = f"E{idx}"
+
+        text = formula.content
+        formula_type = getattr(formula, "formula_type", "unknown")
+        eq_number = getattr(formula, "equation_number", None)
+        context = getattr(formula, "context", "") or ""
+
+        prefix_parts = []
+        if paper_title:
+            prefix_parts.append(f"[Paper: {paper_title}]")
+        prefix_parts.append(
+            f"[Equation on page {formula.page_number}, type: {formula_type}]"
+        )
+        if eq_number:
+            prefix_parts.append(f"[Eq. {eq_number}]")
+        prefix = " ".join(prefix_parts)
+
+        display_text = f"{context}\n{text}" if context else text
+        clean_text = _strip_image_markdown(display_text)
+        enriched_text = f"{prefix}\n{clean_text}"
+
+        sentence_map = {
+            f"{paragraph_id}_S0": {
+                "text": clean_text,
+                "start": 0,
+                "end": len(clean_text),
+                "tokens": estimate_tokens(clean_text),
+            }
+        }
+
+        chunks.append(
+            Chunk(
+                paragraph_id=paragraph_id,
+                text=clean_text,
+                enriched_text=enriched_text,
+                section_title=f"Equation (page {formula.page_number})",
+                page_number=formula.page_number,
+                token_count=estimate_tokens(clean_text),
+                sentence_map=sentence_map,
+                chunk_type=ChunkType.FORMULA,
+                bbox=getattr(formula, "bbox", None),
+            )
+        )
+
+    logger.info(f"Created {len(chunks)} formula/equation chunks")
+    return chunks

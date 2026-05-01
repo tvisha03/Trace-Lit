@@ -1,243 +1,250 @@
-"""TraceLit — FAISS Vector Store.
 
-Manages the FAISS index for paragraph-level retrieval:
-  - Store paper paragraphs with pre-computed MPS embeddings
-  - Retrieve top-k results per paper using cosine similarity
-  - Delete paper vectors on paper removal
-  - Persist index + metadata to disk
-
-Replaces ChromaDB to avoid pydantic v1 / Python 3.14 incompatibility.
-"""
-
-import json
-import pickle
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
-import faiss
-import numpy as np
-from loguru import logger
+if TYPE_CHECKING:
+    import numpy as np
+    import faiss
+else:
+    try:
+        import numpy as np
+        import faiss
+        faiss.omp_set_num_threads(1)
+    except ImportError:
+        np = None  # type: ignore
+        faiss = None  # type: ignore
 
-from app.config import settings
-from infrastructure.vector_store.embedder import get_embedder
+from app.config import get_settings
+from shared.constants import FAISS_TOP_K_PER_PAPER, FAISS_MAX_VECTORS
+from shared.logger import get_logger
 
-EMBEDDING_DIM = 384  # all-MiniLM-L6-v2
+logger = get_logger(__name__)
 
+class FAISSStore:
 
-class VectorStore:
-    """FAISS-backed vector store for paragraph retrieval.
-
-    Inner-product index on L2-normalised vectors ≡ cosine similarity.
-
-    Persistence:
-      - {persist_dir}/faiss.index  — FAISS IndexIDMap
-      - {persist_dir}/metadata.pkl — doc_id → metadata mapping
-    """
-
-    def __init__(self, persist_dir: Optional[str] = None) -> None:
-        self._persist_dir = Path(persist_dir or settings.faiss_index_dir)
-        self._index: Optional[faiss.IndexIDMap] = None
-        self._metadata: Dict[int, Dict[str, Any]] = {}
-        self._doc_id_map: Dict[str, int] = {}
-        self._next_id: int = 0
-        self._initialized: bool = False
+    def __init__(self, index_dir: str | None = None) -> None:
+        if index_dir is None:
+            index_dir = get_settings().FAISS_INDEX_DIR
+        self._index_dir = Path(index_dir)
+        self._index: Any | None = None
+        self._id_map: list[str] = []
         self._lock = threading.Lock()
 
-    @property
-    def _index_path(self) -> Path:
-        return self._persist_dir / "faiss.index"
-
-    @property
-    def _meta_path(self) -> Path:
-        return self._persist_dir / "metadata.pkl"
-
-    def _ensure_initialized(self) -> None:
-        if self._initialized:
+    def load_or_create(self) -> None:
+        if faiss is None or np is None:
+            logger.error("faiss or numpy not available")
             return
-        self._persist_dir.mkdir(parents=True, exist_ok=True)
 
-        if self._index_path.exists() and self._meta_path.exists():
-            try:
-                self._index = faiss.read_index(str(self._index_path))
-                with open(self._meta_path, "rb") as f:
-                    saved = pickle.load(f)
-                self._metadata = saved["metadata"]
-                self._doc_id_map = saved["doc_id_map"]
-                self._next_id = saved["next_id"]
-                logger.info("FAISS index loaded: {} vectors from {}", self._index.ntotal, self._persist_dir)
-            except Exception as e:
-                logger.warning("Failed to load FAISS index: {}, creating new", e)
-                self._create_empty_index()
+        index_path = self._index_dir / "index.faiss"
+        map_path = self._index_dir / "id_map.npy"
+
+        if index_path.exists() and map_path.exists():
+            self._index = faiss.read_index(str(index_path))
+            self._id_map = list(np.load(str(map_path), allow_pickle=True))
+            if self._index is not None:
+                logger.info(f"FAISS index loaded — {self._index.ntotal} vectors")
         else:
-            self._create_empty_index()
+            self._index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
+            self._id_map = []
+            logger.info("Created fresh FAISS index")
 
-        faiss.omp_set_num_threads(1)
-        self._initialized = True
+    def save(self) -> None:
+        if faiss is None or np is None or self._index is None:
+            logger.error("Cannot save: faiss/numpy not available or index not initialized")
+            return
 
-    def _create_empty_index(self) -> None:
-        flat = faiss.IndexFlatIP(EMBEDDING_DIM)
-        self._index = faiss.IndexIDMap(flat)
-        self._metadata = {}
-        self._doc_id_map = {}
-        self._next_id = 0
-        faiss.omp_set_num_threads(1)
-        logger.info("Created new FAISS index (dim={})", EMBEDDING_DIM)
+        self._index_dir.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            faiss.write_index(self._index, str(self._index_dir / "index.faiss"))
+            np.save(str(self._index_dir / "id_map.npy"), np.array(self._id_map, dtype=object))
+        logger.info(f"FAISS index saved — {self._index.ntotal} vectors")
 
-    def _save(self) -> None:
-        try:
-            self._persist_dir.mkdir(parents=True, exist_ok=True)
-            faiss.write_index(self._index, str(self._index_path))
-            with open(self._meta_path, "wb") as f:
-                pickle.dump(
-                    {"metadata": self._metadata, "doc_id_map": self._doc_id_map, "next_id": self._next_id},
-                    f,
-                )
-        except Exception as e:
-            logger.error("Failed to save FAISS index: {}", e)
+    def is_ready(self) -> bool:
+        return faiss is not None and np is not None and self._index is not None
 
-    # ----------------------------------------------------------
-    # Public API
-    # ----------------------------------------------------------
+    def add_vectors(
+        self,
+        vectors: Any,
+        ids: list[str],
+    ) -> None:
+        if np is None or self._index is None:
+            logger.error("Cannot add vectors: numpy not available or index not initialized")
+            return
 
-    def add_paragraphs(self, paper_id: str, chunks: List[Dict[str, Any]]) -> int:
-        """Store paragraph chunks with embeddings (thread-safe)."""
-        if not chunks:
-            return 0
+        if vectors.shape[0] != len(ids):
+            raise ValueError("vectors and ids must have the same length")
 
-        self._ensure_initialized()
-        embedder = get_embedder()
-        enriched_texts = [c["enriched_text"] for c in chunks]
-        # Compute embeddings outside the lock (CPU-intensive)
-        embeddings = embedder.encode(enriched_texts, batch_size=64)
+        current_total = self._index.ntotal if self._index else 0
+        if current_total + vectors.shape[0] > FAISS_MAX_VECTORS:
+            raise ValueError(
+                f"FAISS index would exceed maximum capacity ({FAISS_MAX_VECTORS} vectors). "
+                f"Current: {current_total}, adding: {vectors.shape[0]}. "
+                "Delete unused papers to free space."
+            )
 
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        norms = np.where(norms == 0, 1, norms)
-        embeddings_normed = np.ascontiguousarray(embeddings / norms, dtype=np.float32)
+        vecs = vectors.astype(np.float32)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms[norms == 0] = 1
+        vecs = vecs / norms
 
         with self._lock:
-            ids_to_add: List[int] = []
+            self._index.add(vecs)
+            self._id_map.extend(ids)
 
-            for i, chunk in enumerate(chunks):
-                doc_id = f"{paper_id}_{chunk['paragraph_id']}"
-
-                if doc_id in self._doc_id_map:
-                    old_int_id = self._doc_id_map[doc_id]
-                    self._index.remove_ids(np.array([old_int_id], dtype=np.int64))
-                    del self._metadata[old_int_id]
-
-                int_id = self._next_id
-                self._next_id += 1
-                self._doc_id_map[doc_id] = int_id
-                self._metadata[int_id] = {
-                    "doc_id": doc_id,
-                    "paper_id": paper_id,
-                    "paper_title": chunk.get("paper_title", ""),
-                    "paragraph_id": chunk["paragraph_id"],
-                    "section": chunk.get("section", ""),
-                    "page": chunk.get("page", 0),
-                    "original_text": chunk["text"],
-                    "sentences": json.dumps(chunk.get("sentences", [])),
-                    "token_count": chunk.get("token_count", 0),
-                }
-                ids_to_add.append(int_id)
-
-            id_array = np.array(ids_to_add, dtype=np.int64)
-            self._index.add_with_ids(embeddings_normed, id_array)
-            self._save()
-
-        logger.info("Stored {} paragraphs for paper {} in FAISS", len(chunks), paper_id)
-        return len(chunks)
-
-    def query(
+    def search(
         self,
-        query_text: str,
-        paper_ids: List[str],
-        top_k: int = 5,
-    ) -> List[Dict[str, Any]]:
-        """Retrieve top-k paragraphs most relevant to the query."""
-        self._ensure_initialized()
-
-        if self._index is None or self._index.ntotal == 0:
+        query_vector: Any,
+        paper_ids: list[str],
+        top_k_per_paper: int = FAISS_TOP_K_PER_PAPER,
+    ) -> list[dict]:
+        if np is None or self._index is None:
+            logger.error("Cannot search: numpy not available or index not initialized")
             return []
 
-        embedder = get_embedder()
-        q_embed = embedder.encode([query_text])[0]
-        norm = np.linalg.norm(q_embed)
-        if norm > 0:
-            q_embed /= norm
-        q_embed = np.ascontiguousarray(q_embed.reshape(1, -1), dtype=np.float32)
+        if self._index.ntotal == 0:
+            return []
 
-        search_k = min(top_k * len(paper_ids) * 3, self._index.ntotal)
-        distances, ids = self._index.search(q_embed, search_k)
+        if not paper_ids:
+            logger.warning("search called with empty paper_ids list - returning empty results")
+            return []
 
-        results: List[Dict] = []
-        paper_id_set = set(paper_ids)
-
-        for dist, int_id in zip(distances[0], ids[0]):
-            if int_id < 0:
-                continue
-            meta = self._metadata.get(int_id)
-            if meta is None or meta.get("paper_id") not in paper_id_set:
-                continue
-
-            sentences = []
-            if meta.get("sentences"):
-                try:
-                    sentences = json.loads(meta["sentences"])
-                except (json.JSONDecodeError, TypeError):
-                    sentences = []
-
-            results.append({
-                "paragraph_id": meta["paragraph_id"],
-                "text": meta["original_text"],
-                "paper_id": meta["paper_id"],
-                "paper_title": meta.get("paper_title", ""),
-                "section": meta.get("section", ""),
-                "page": meta.get("page", 0),
-                "sentences": sentences,
-                "score": float(dist),
-            })
-
-            if len(results) >= top_k:
-                break
-
-        return results
-
-    def delete_paper(self, paper_id: str) -> int:
-        """Remove all vectors for the given paper (thread-safe)."""
-        self._ensure_initialized()
+        total_k = min(self._index.ntotal, top_k_per_paper * len(paper_ids) * 2)
+        query = query_vector.reshape(1, -1).astype(np.float32)
 
         with self._lock:
-            ids_to_remove = [
-                int_id for doc_id, int_id in self._doc_id_map.items()
-                if doc_id.startswith(f"{paper_id}_")
-            ]
+            scores, indices = self._index.search(query, total_k)
+            id_map_snapshot = list(self._id_map)
 
-            if ids_to_remove:
-                self._index.remove_ids(np.array(ids_to_remove, dtype=np.int64))
-                for int_id in ids_to_remove:
-                    self._metadata.pop(int_id, None)
-                for doc_id in [d for d in list(self._doc_id_map) if d.startswith(f"{paper_id}_")]:
-                    del self._doc_id_map[doc_id]
-                self._save()
+        return self._filter_search_results(scores[0], indices[0], paper_ids, top_k_per_paper, id_map_snapshot)
 
-        logger.info("Deleted {} vectors for paper {}", len(ids_to_remove), paper_id)
-        return len(ids_to_remove)
+    def _filter_search_results(
+        self,
+        scores: Any,
+        indices: Any,
+        paper_ids: list[str],
+        top_k_per_paper: int,
+        id_map_snapshot: list[str],
+    ) -> list[dict]:
+        results_by_paper: dict[str, list[dict]] = {pid: [] for pid in paper_ids}
 
-    def count(self) -> int:
-        """Return total number of stored vectors."""
-        self._ensure_initialized()
+        for score, idx in zip(scores, indices):
+            if idx == -1:
+                continue
+            self._add_result_if_valid(results_by_paper, idx, score, top_k_per_paper, id_map_snapshot)
+
+        return self._flatten_and_sort_results(results_by_paper)
+
+    def _flatten_and_sort_results(self, results_by_paper: dict[str, list[dict]]) -> list[dict]:
+        flat: list[dict] = []
+        for hits in results_by_paper.values():
+            flat.extend(hits)
+        flat.sort(key=lambda x: x["score"], reverse=True)
+        return flat
+
+    def _add_result_if_valid(
+        self,
+        results_by_paper: dict[str, list[dict]],
+        idx: int,
+        score: float,
+        top_k_per_paper: int,
+        id_map_snapshot: list[str],
+    ) -> None:
+        if idx >= len(id_map_snapshot):
+            return
+        composite = id_map_snapshot[idx]
+        paper_id, paragraph_id = composite.split("::", 1)
+        if paper_id not in results_by_paper:
+            return
+        if len(results_by_paper[paper_id]) < top_k_per_paper:
+            results_by_paper[paper_id].append({
+                "paper_id": paper_id,
+                "paragraph_id": paragraph_id,
+                "score": score.item(),
+            })
+
+    def remove_paper(self, paper_id: str) -> None:
+        if not self._is_initialized():
+            return
+
+        with self._lock:
+            self._backup_index()
+            self._remove_paper_from_index(paper_id)
+
+    def _is_initialized(self) -> bool:
+        if faiss is None:
+            logger.error("Cannot remove paper: faiss not available")
+            return False
+        if np is None:
+            logger.error("Cannot remove paper: numpy not available")
+            return False
+        if self._index is None:
+            logger.error("Cannot remove paper: index not initialized")
+            return False
+        return True
+
+    def _remove_paper_from_index(self, paper_id: str) -> None:
+        keep_indices = self._get_indices_to_keep(paper_id)
+
+        if len(keep_indices) < len(self._id_map):
+            self._rebuild_index(keep_indices)
+
+    def _get_indices_to_keep(self, paper_id: str) -> list[int]:
+        return [
+            i for i, cid in enumerate(self._id_map) if not cid.startswith(f"{paper_id}::")
+        ]
+
+    def _rebuild_index(self, keep_indices: list[int]) -> None:
+        if self._index is None:
+            logger.error("Index is not initialized during rebuild")
+            return
+
+        if keep_indices:
+            reconstructed = []
+            for i in keep_indices:
+                try:
+                    reconstructed.append(self._index.reconstruct(i))
+                except Exception as exc:
+                    logger.warning(f"Skipping vector at index {i} during rebuild: {exc}")
+            if not reconstructed:
+                self._index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
+                self._id_map = []
+                return
+            all_vectors = np.array(reconstructed)
+            new_index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
+            new_index.add(all_vectors)
+            self._index = new_index
+            self._id_map = [self._id_map[i] for i in keep_indices]
+        else:
+            self._index = faiss.IndexFlatIP(get_settings().EMBEDDING_DIMENSIONS)
+            self._id_map = []
+
+    @property
+    def total_vectors(self) -> int:
         return self._index.ntotal if self._index else 0
 
+    def get_stats(self) -> dict:
+        total = self.total_vectors
+        dims = get_settings().EMBEDDING_DIMENSIONS
+        memory_bytes = total * dims * 4
+        return {
+            "total_vectors": total,
+            "max_vectors": FAISS_MAX_VECTORS,
+            "utilization_pct": round((total / FAISS_MAX_VECTORS) * 100, 2) if FAISS_MAX_VECTORS else 0.0,
+            "memory_mb": round(memory_bytes / (1024 * 1024), 2),
+        }
 
-# Module-level singleton
-_vector_store_instance: Optional[VectorStore] = None
+    def _backup_index(self) -> None:
+        try:
+            index_path = self._index_dir / "index.faiss"
+            map_path = self._index_dir / "id_map.npy"
+            if index_path.exists():
+                import shutil
+                shutil.copy2(index_path, self._index_dir / "index.faiss.bak")
+            if map_path.exists():
+                import shutil
+                shutil.copy2(map_path, self._index_dir / "id_map.npy.bak")
+            logger.info("FAISS backup created before rebuild")
+        except Exception as exc:
+            logger.warning(f"Could not create FAISS backup: {exc}")
 
-
-def get_vector_store() -> VectorStore:
-    """Get or create the global vector store instance."""
-    global _vector_store_instance
-    if _vector_store_instance is None:
-        _vector_store_instance = VectorStore()
-    return _vector_store_instance

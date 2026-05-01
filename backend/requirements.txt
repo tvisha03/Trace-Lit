@@ -1,45 +1,33 @@
-# Web Framework
-fastapi>=0.100.0
+fastapi
 uvicorn[standard]
+pydantic
 pydantic-settings
-python-multipart
-aiofiles
-httpx
-websockets
 
-# PDF Extraction
-pymupdf4llm>=0.0.5
-pymupdf-layout>=1.27.1
-pymupdf>=1.23.0
+sqlalchemy[asyncio]
+aiosqlite
 
-# ML / Embeddings
+pymupdf4llm[layout]
+pymupdf
+Pillow
+
+faiss-cpu
 sentence-transformers
-torch
 numpy
 
-# Vector Store
-faiss-cpu
+google-genai
+groq
+httpx
 
-# Database
-sqlalchemy
-alembic
-
-# LLM Providers
-google-genai>=1.0.0
-groq>=0.4.0
-ollama>=0.1.0
-
-# Export
-weasyprint
-openpyxl
-python-docx
-jinja2
-
-# Phase 2 — Analysis
 keybert
 scikit-learn
 
-# Utilities
+fpdf2
+jinja2
+openpyxl
+python-docx
+
+python-multipart
 python-dotenv
-loguru
+websockets
 psutil
+rapidocr-onnxruntime

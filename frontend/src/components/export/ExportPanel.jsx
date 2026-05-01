@@ -1,59 +1,88 @@
-/** TraceLit — Export Panel with download handlers */
+/** TraceLit — Export Panel */
 import { useState } from 'react';
 import { exportApi } from '../../api/client';
 
+const FORMATS = [
+  {
+    key: 'pdf',
+    label: 'PDF',
+    desc: 'Chat + citations + confidence scores',
+    cls: 'bg-tl-gold text-tl-bg hover:opacity-90',
+  },
+  {
+    key: 'excel',
+    label: 'Excel',
+    desc: 'Citations table + metadata sheet',
+    cls: 'bg-tl-s3 text-tl-t1 border border-tl-b2 hover:border-tl-gold hover:text-tl-gold',
+  },
+  {
+    key: 'docx',
+    label: 'Word (.docx)',
+    desc: 'Formatted document with citations',
+    cls: 'bg-tl-s3 text-tl-t1 border border-tl-b2 hover:border-tl-gold hover:text-tl-gold',
+  },
+  {
+    key: 'bibtex',
+    label: 'BibTeX',
+    desc: 'References for all uploaded papers',
+    cls: 'bg-tl-s3 text-tl-t1 border border-tl-b2 hover:border-tl-gold hover:text-tl-gold',
+  },
+];
+
 export default function ExportPanel({ sessionId }) {
-  const [loadingPdf, setLoadingPdf] = useState(false);
-  const [loadingExcel, setLoadingExcel] = useState(false);
+  const [loading, setLoading] = useState(null); // key of format currently exporting
   const [error, setError] = useState(null);
+  const [lastFile, setLastFile] = useState(null); // { filename, format }
 
-  const handleExportPdf = async () => {
-    if (!sessionId || loadingPdf) return;
+  const handleExport = async (fmt) => {
+    if (!sessionId || loading) return;
     setError(null);
-    setLoadingPdf(true);
+    setLastFile(null);
+    setLoading(fmt);
     try {
-      await exportApi.pdf(sessionId);
+      const meta = await exportApi.export(sessionId, fmt);
+      setLastFile({ filename: meta.filename, format: fmt });
     } catch (err) {
-      setError(err.message || 'PDF export failed');
+      setError(err.message || `${fmt.toUpperCase()} export failed`);
     } finally {
-      setLoadingPdf(false);
-    }
-  };
-
-  const handleExportExcel = async () => {
-    if (!sessionId || loadingExcel) return;
-    setError(null);
-    setLoadingExcel(true);
-    try {
-      await exportApi.excel(sessionId);
-    } catch (err) {
-      setError(err.message || 'Excel export failed');
-    } finally {
-      setLoadingExcel(false);
+      setLoading(null);
     }
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-3 p-4 bg-white rounded-lg border border-slate-200">
-        <button
-          onClick={handleExportPdf}
-          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          disabled={!sessionId || loadingPdf}
-        >
-          {loadingPdf ? 'Exporting…' : 'Export PDF'}
-        </button>
-        <button
-          onClick={handleExportExcel}
-          className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
-          disabled={!sessionId || loadingExcel}
-        >
-          {loadingExcel ? 'Exporting…' : 'Export Excel'}
-        </button>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2">
+        {FORMATS.map(({ key, label, desc, cls }) => (
+          <button
+            key={key}
+            onClick={() => handleExport(key)}
+            disabled={!sessionId || !!loading}
+            className={`px-3 py-2.5 text-xs font-mono rounded transition-colors disabled:opacity-40 text-left ${cls}`}
+          >
+            <span className="block font-semibold">
+              {loading === key ? 'Exporting…' : label}
+            </span>
+            <span className="block opacity-60 text-[10px] mt-0.5">{desc}</span>
+          </button>
+        ))}
       </div>
+
       {error && (
-        <p className="text-xs text-red-600 px-1">{error}</p>
+        <div className="bg-tl-low/10 border border-tl-low/30 rounded-md px-3 py-2">
+          <p className="text-xs text-tl-low font-mono">{error}</p>
+        </div>
+      )}
+
+      {lastFile && (
+        <div className="bg-tl-hi/8 border border-tl-hi/30 rounded-md px-3 py-2 flex items-center gap-2">
+          <span className="text-tl-hi text-sm">✓</span>
+          <div>
+            <p className="text-xs font-mono text-tl-hi">Download started</p>
+            <p className="text-[10px] font-mono text-tl-t3">{lastFile.filename}</p>
+          </div>
+        </div>
       )}
     </div>
   );
 }
+

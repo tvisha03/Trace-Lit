@@ -1,8 +1,9 @@
-"""Infrastructure DB Models — re-exports all ORM models for convenient import."""
-
-from infrastructure.db.models.paper import Paper, Section, Contribution
-from infrastructure.db.models.chunk import Paragraph
+from infrastructure.db.models.paper import Paper
+from infrastructure.db.models.chunk import Chunk
 from infrastructure.db.models.session import Session
 from infrastructure.db.models.message import Message
+from infrastructure.db.models.evaluation import EvaluationCache
 
-__all__ = ["Paper", "Section", "Contribution", "Paragraph", "Session", "Message"]
+__all__ = ["Paper", "Chunk", "Session", "Message", "EvaluationCache"]
+
+

@@ -1,175 +1,136 @@
-"""TraceLit — Google Gemini 2.0 Flash provider (google-genai SDK).
 
-Free-tier safe:
-  - system_instruction passed via GenerateContentConfig (not concatenated)
-  - INVALID_ARGUMENT treated as soft error, not AUTH_ERROR
-  - Safety / recitation blocks (empty response) treated as retryable PROVIDER_ERROR
-  - AUTH_ERROR only raised for confirmed invalid-key strings
-"""
+from __future__ import annotations
 
-import asyncio
-from typing import AsyncIterator, Optional
+from typing import AsyncGenerator
 
-from loguru import logger
+from google import genai
+from google.genai import types
 
-from app.config import settings
 from infrastructure.llm.base import BaseLLMProvider
-from shared.errors import ProviderError, RateLimitError
+from shared.enums import LLMProvider
+from shared.errors import RateLimitError, ProviderTimeoutError, EmptyResponseError
+from shared.logger import get_logger
+from app.config import get_settings
 
-# Strings that confirm the API key itself is rejected (not just a bad request)
-_AUTH_ERROR_SIGNALS = (
-    "api key not valid",
-    "api_key_invalid",
-    "invalid api key",
-    "api key is invalid",
-    "permission_denied",
-    "credentials",
-    "unauthenticated",
-    "401",
-)
+logger = get_logger(__name__)
 
+_MODEL = "gemini-2.5-flash"
 
-class GeminiClient(BaseLLMProvider):
-    """Google Gemini 2.0 Flash via the google-genai SDK."""
+class GeminiProvider(BaseLLMProvider):
+    provider = LLMProvider.GEMINI
 
-    name = "gemini"
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._api_key = settings.GEMINI_API_KEY
+        self._timeout = settings.LLM_TIMEOUT
+        self._client: genai.Client | None = None
 
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.gemini_api_key
-        self.model = settings.gemini_model
-        self._client = None
-
-    def _ensure_client(self) -> None:
+    def _get_client(self) -> genai.Client:
         if self._client is None:
-            try:
-                from google import genai  # google-genai >= 1.0
-                self._client = genai.Client(api_key=self.api_key)
-                logger.info(f"Gemini client initialised (model={self.model})")
-            except Exception as e:
-                raise ProviderError(
-                    message=f"Failed to initialise Gemini: {e}",
-                    code="PROVIDER_INIT_ERROR",
-                    details={"provider": self.name},
-                )
-
-    def _make_config(self, system_prompt: str, temperature: float, max_tokens: int):
-        """Build GenerateContentConfig with system_instruction set separately.
-
-        Passing system_instruction via config (not concatenated into the user
-        prompt) avoids INVALID_ARGUMENT errors on the free tier and gives
-        Gemini the two-turn structure it expects.
-
-        Gemini 2.5 Flash is a thinking model: internal reasoning tokens count
-        against max_output_tokens, so enforce a practical minimum of 1024 to
-        avoid MAX_TOKENS before any response text is produced.
-        """
-        from google.genai import types
-        return types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=temperature,
-            max_output_tokens=max(max_tokens, 1024),
-        )
-
-    def _classify_error(self, e: Exception):
-        """Map an exception to the correct domain error.
-
-        Rules:
-          - 429 / quota / resource_exhausted → RateLimitError  (retryable)
-          - confirmed bad-key strings         → AUTH_ERROR      (permanent)
-          - everything else                   → PROVIDER_ERROR  (retryable)
-        """
-        err = str(e).lower()
-        if "429" in err or "rate" in err or "quota" in err or "resource_exhausted" in err:
-            logger.warning(f"Gemini rate limited: {e}")
-            return RateLimitError(provider=self.name, retry_after=60)
-        if any(sig in err for sig in _AUTH_ERROR_SIGNALS):
-            logger.error(f"Gemini API key rejected: {e}")
-            return ProviderError(
-                message=f"Gemini auth error: {e}",
-                code="AUTH_ERROR",
-                details={"provider": self.name},
-            )
-        # INVALID_ARGUMENT, SAFETY, RECITATION, UNAVAILABLE, 403 (not key) → soft
-        logger.warning(f"Gemini transient error ({type(e).__name__}): {e}")
-        return ProviderError(
-            message=f"Gemini error: {e}",
-            code="PROVIDER_ERROR",
-            details={"provider": self.name},
-        )
+            self._client = genai.Client(api_key=self._api_key)
+        return self._client
 
     async def generate(
         self,
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
-        max_tokens: int = 4000,
+        max_tokens: int = 2048,
     ) -> str:
-        self._ensure_client()
-        # system_instruction goes into config; user_prompt is the sole content
-        config = self._make_config(system_prompt, temperature, max_tokens)
+        client = self._get_client()
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
         try:
-            response = await asyncio.wait_for(
-                self._client.aio.models.generate_content(
-                    model=self.model,
-                    contents=user_prompt,
-                    config=config,
-                ),
-                timeout=settings.llm_timeout,
+            response = await client.aio.models.generate_content(
+                model=_MODEL,
+                contents=user_prompt,
+                config=config,
             )
-
-            # Gemini can return a valid object with no text when the safety
-            # filter or recitation detector fires — treat as soft error.
-            if not response or not response.text:
-                finish = None
-                try:
-                    finish = response.candidates[0].finish_reason.name
-                except Exception:
-                    pass
-                reason = finish or "empty"
-                logger.warning(f"Gemini returned no text (finish_reason={reason})")
-                raise ProviderError(
-                    message=f"Gemini empty response (finish_reason={reason})",
-                    code="PROVIDER_ERROR",   # retryable — NOT AUTH_ERROR
-                    details={"provider": self.name, "finish_reason": reason},
-                )
-
-            logger.debug(f"Gemini response: {len(response.text)} chars")
-            return response.text
-
-        except asyncio.TimeoutError:
-            logger.warning(f"Gemini timeout after {settings.llm_timeout}s")
-            raise ProviderError(
-                message=f"Gemini timeout after {settings.llm_timeout}s",
-                code="TIMEOUT",
-                details={"provider": self.name},
-            )
-        except (ProviderError, RateLimitError):
+        except Exception as exc:
+            exc_str = str(exc)
+            if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+                raise RateLimitError("gemini")
+            if "timeout" in exc_str.lower() or "deadline" in exc_str.lower():
+                raise ProviderTimeoutError("gemini", self._timeout)
             raise
-        except Exception as e:
-            raise self._classify_error(e)
 
-    async def stream(
+        text = (response.text or "").strip()
+        if not text:
+            raise EmptyResponseError("gemini")
+        return text
+
+    async def generate_streaming(
         self,
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
-        max_tokens: int = 4000,
-    ) -> AsyncIterator[str]:
-        self._ensure_client()
-        # system_instruction goes into config; user_prompt is the sole content
-        config = self._make_config(system_prompt, temperature, max_tokens)
+        max_tokens: int = 2048,
+    ) -> AsyncGenerator[str, None]:
+        client = self._get_client()
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
         try:
-            # generate_content_stream is an async def that returns AsyncIterator
-            # — must be awaited first, then iterated with async for
-            stream = await self._client.aio.models.generate_content_stream(
-                model=self.model,
+            async for chunk in await client.aio.models.generate_content_stream(
+                model=_MODEL,
                 contents=user_prompt,
                 config=config,
-            )
-            async for chunk in stream:
+            ):
                 if chunk.text:
                     yield chunk.text
-        except (ProviderError, RateLimitError):
+        except Exception as exc:
+            exc_str = str(exc)
+            if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+                raise RateLimitError("gemini")
+            if "timeout" in exc_str.lower() or "deadline" in exc_str.lower():
+                raise ProviderTimeoutError("gemini", self._timeout)
             raise
-        except Exception as e:
-            raise self._classify_error(e)
+
+    async def health_check(self) -> bool:
+        if not self._api_key:
+            return False
+        try:
+            client = self._get_client()
+            await client.aio.models.get(model=_MODEL)
+            return True
+        except Exception:
+            return False
+
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ) -> str:
+        client = self._get_client()
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+        try:
+            response = await client.aio.models.generate_content(
+                model=_MODEL,
+                contents=[prompt, image_part],
+                config=config,
+            )
+        except Exception as exc:
+            exc_str = str(exc)
+            if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+                raise RateLimitError("gemini")
+            if "timeout" in exc_str.lower() or "deadline" in exc_str.lower():
+                raise ProviderTimeoutError("gemini", self._timeout)
+            raise
+
+        text = (response.text or "").strip()
+        if not text:
+            raise EmptyResponseError("gemini")
+        return text
+

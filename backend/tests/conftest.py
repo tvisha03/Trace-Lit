@@ -1,233 +1,68 @@
-"""TraceLit — Test Configuration & Fixtures.
-
-Provides async fixtures, test database, and mock clients for all test suites.
+"""
+Pytest configuration and fixtures for TraceLit tests.
 """
 
-import asyncio
-import json
-import os
+import pytest
 import sys
 from pathlib import Path
-from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, Session
-
-# Ensure backend root is on the path
-BACKEND_DIR = Path(__file__).parent.parent
-sys.path.insert(0, str(BACKEND_DIR))
-
-# ============================================================
-# Test Database
-# ============================================================
-
-TEST_DATABASE_URL = "sqlite:///./test_tracelit.db"
-
-
-@pytest.fixture(scope="session")
-def test_engine():
-    """Create a test database engine."""
-    engine = create_engine(
-        TEST_DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        echo=False,
-    )
-
-    @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.close()
-
-    from infrastructure.db.database import Base
-    Base.metadata.create_all(bind=engine)
-    yield engine
-    Base.metadata.drop_all(bind=engine)
-
-    # Cleanup test DB file
-    db_path = Path("./test_tracelit.db")
-    for f in [db_path, db_path.with_suffix(".db-wal"), db_path.with_suffix(".db-shm")]:
-        if f.exists():
-            f.unlink()
+# Add backend to path
+backend_path = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_path))
 
 
 @pytest.fixture
-def db_session(test_engine) -> Generator[Session, None, None]:
-    """Provide a transactional test database session.
+def mock_settings():
+    """Mock settings for testing."""
+    from unittest.mock import MagicMock
 
-    Each test gets a clean session that rolls back on completion.
-    """
-    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-    session = TestSession()
-    try:
-        yield session
-    finally:
-        session.rollback()
-        session.close()
-
-
-# ============================================================
-# FastAPI Test Client
-# ============================================================
-
-@pytest.fixture
-def app():
-    """Create a test FastAPI application."""
-    from app.main import app as fastapi_app
-    return fastapi_app
+    settings = MagicMock()
+    settings.HAVF_HIGH_THRESHOLD = 0.85
+    settings.HAVF_MEDIUM_THRESHOLD = 0.65
+    settings.HAVF_CROSS_ENCODER_THRESHOLD = 0.75
+    settings.EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+    settings.CROSS_ENCODER_MODEL = "BAAI/bge-reranker-base"
+    return settings
 
 
 @pytest.fixture
-def test_client(app, db_session):
-    """Provide an async HTTP test client.
-
-    Overrides the database dependency to use the test session.
-    """
-    from httpx import AsyncClient, ASGITransport
-    from app.dependencies import get_db
-
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
-
-    app.dependency_overrides[get_db] = override_get_db
-
-    client = AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://testserver",
-    )
-    yield client
-    app.dependency_overrides.clear()
-
-
-# ============================================================
-# Mock LLM Provider
-# ============================================================
-
-@pytest.fixture
-def mock_llm():
-    """Mock LLM that returns a canned response with citations."""
-    mock = AsyncMock()
-    mock.generate.return_value = {
-        "text": "The model uses attention mechanisms [P1]. It was trained on a large corpus [P2].",
-        "provider": "mock",
-        "warning": None,
-        "valid_paragraph_ids": {"P1", "P2"},
-        "query_type": "factual",
-        "citation_validation": {
-            "valid_citations": {"P1", "P2"},
-            "invalid_citations": set(),
-            "uncited_factual_sentences": [],
-            "citation_coverage": 1.0,
-        },
-    }
-    mock.stream_with_fallback = AsyncMock(return_value=iter(["The model ", "uses attention [P1]."]))
-    return mock
-
-
-@pytest.fixture
-def mock_embedder():
-    """Mock embedder that returns random but consistent embeddings."""
-    import numpy as np
-
-    mock = MagicMock()
-    mock.encode.side_effect = lambda texts, **kw: np.random.RandomState(42).randn(len(texts), 384).astype(np.float32)
-    mock.encode_single.side_effect = lambda text, **kw: np.random.RandomState(42).randn(384).astype(np.float32)
-    mock.embedding_dim = 384
-    mock.is_loaded.return_value = True
-    return mock
-
-
-# ============================================================
-# Sample Data Fixtures
-# ============================================================
-
-@pytest.fixture
-def sample_paper_data():
-    """Sample paper data for testing."""
-    return {
-        "id": "test_paper_001",
-        "title": "Attention Is All You Need",
-        "authors": ["Vaswani", "Shazeer", "Parmar"],
-        "year": 2017,
-        "pages": 11,
-        "filepath": "/tmp/test_paper.pdf",
-    }
-
-
-@pytest.fixture
-def sample_paragraphs():
-    """Sample paragraph data for testing retrieval and verification."""
+def sample_source_sentences():
+    """Sample source sentences for testing."""
     return [
         {
-            "paragraph_id": "P1",
-            "text": "The Transformer model relies entirely on self-attention mechanisms, dispensing with recurrence and convolutions.",
-            "paper_id": "test_paper_001",
-            "paper_title": "Attention Is All You Need",
-            "section": "Introduction",
-            "page": 1,
-            "sentences": [
-                {"sentence_id": "P1_S1", "text": "The Transformer model relies entirely on self-attention mechanisms, dispensing with recurrence and convolutions."}
-            ],
+            "text": "This is a sample source text from the paper.",
+            "paragraph_id": "abc12345_P1",
+            "paper_id": "paper-123",
+            "sentence_key": "s1",
+            "page_number": 1,
         },
         {
-            "paragraph_id": "P2",
-            "text": "The model was trained on the WMT 2014 English-to-German dataset consisting of about 4.5 million sentence pairs.",
-            "paper_id": "test_paper_001",
-            "paper_title": "Attention Is All You Need",
-            "section": "Training",
-            "page": 7,
-            "sentences": [
-                {"sentence_id": "P2_S1", "text": "The model was trained on the WMT 2014 English-to-German dataset consisting of about 4.5 million sentence pairs."}
-            ],
-        },
-        {
-            "paragraph_id": "P3",
-            "text": "Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions.",
-            "paper_id": "test_paper_001",
-            "paper_title": "Attention Is All You Need",
-            "section": "Model Architecture",
-            "page": 4,
-            "sentences": [
-                {"sentence_id": "P3_S1", "text": "Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions."}
-            ],
+            "text": "Another paragraph with important information.",
+            "paragraph_id": "abc12345_P2",
+            "paper_id": "paper-123",
+            "sentence_key": "s2",
+            "page_number": 2,
         },
     ]
 
 
 @pytest.fixture
-def sample_session_data():
-    """Sample session data for testing."""
-    return {
-        "id": "test_session_001",
-        "name": "Test Research Session",
-        "paper_ids": json.dumps(["test_paper_001"]),
-    }
-
-
-@pytest.fixture
-def sample_messages():
-    """Sample chat messages for testing."""
+def sample_claims():
+    """Sample claims for testing."""
     return [
-        {"role": "user", "content": "What is the Transformer model?"},
-        {
-            "role": "assistant",
-            "content": "The Transformer model relies entirely on self-attention mechanisms [P1]. It was trained on WMT 2014 data [P2].",
-        },
+        "This is a claim that needs verification.",
+        "Another claim from the user query.",
     ]
 
 
-# ============================================================
-# Markers
-# ============================================================
+@pytest.fixture
+def mock_faiss_store():
+    """Mock FAISS store for testing."""
+    from unittest.mock import MagicMock
 
-def pytest_configure(config):
-    """Register custom markers."""
-    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
-    config.addinivalue_line("markers", "integration: marks integration tests")
-    config.addinivalue_line("markers", "unit: marks unit tests")
+    store = MagicMock()
+    store.is_ready.return_value = True
+    store.search.return_value = [
+        {"paper_id": "paper-123", "paragraph_id": "abc12345_P1", "score": 0.9},
+    ]
+    return store

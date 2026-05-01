@@ -1,42 +1,15 @@
-"""TraceLit — SSE (Server-Sent Events) helpers shared across features."""
-
 import json
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator
 
+def sse_event(event: str, data: Any) -> str:
+    payload = json.dumps(data) if not isinstance(data, str) else data
+    return f"event: {event}\ndata: {payload}\n\n"
 
-def sse_event(event_type: str, data: Any) -> str:
-    """Format a single SSE message.
+async def sse_stream(
+    generator: AsyncGenerator[tuple[str, Any], None],
+) -> AsyncGenerator[str, None]:
+    async for event_name, data in generator:
+        yield sse_event(event_name, data)
 
-    Args:
-        event_type: Event type string (e.g. "chunk", "done", "error").
-        data: JSON-serialisable payload.
+    yield sse_event("done", {"status": "complete"})
 
-    Returns:
-        Formatted SSE string ending with double newline.
-    """
-    if isinstance(data, dict):
-        payload = {"type": event_type, **data}
-    else:
-        payload = {"type": event_type, "payload": data}
-    return "data: " + json.dumps(payload) + "\n\n"
-
-
-def sse_chunk(text: str) -> str:
-    """Shorthand for a streaming text chunk event."""
-    return sse_event("chunk", {"text": text})
-
-
-def sse_error(message: str) -> str:
-    """Shorthand for a streaming error event."""
-    return sse_event("error", {"message": message})
-
-
-def sse_done(metadata: dict) -> str:
-    """Shorthand for the final done event carrying metadata."""
-    return sse_event("done", {"metadata": metadata})
-
-
-SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-}

@@ -1,271 +1,471 @@
-"""TraceLit — PDF Export via WeasyPrint + Jinja2.
 
-Generates professional PDF documents from chat sessions with:
-- Cover page
-- Messages with citations and confidence indicators
-- Source reference list
-"""
-
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+import importlib
 
-from loguru import logger
+from shared.logger import get_logger
+from shared.errors import PDFExportError
+from shared.utils.export_media import prepare_cited_assets
+from shared.utils.export_text import build_export_blocks, inline_tokens_to_text, sanitize_for_pdf, format_structured_text, shorten_paragraph_id
+from shared.utils.time_utils import timer
+
+logger = get_logger(__name__)
+
+_MAX_TEXT_CHARS = 50_000
+_DATE_FMT = "%B %d, %Y"
+_ACCENT_RGB = (47, 79, 111)
+_ACCENT_LIGHT_RGB = (232, 238, 244)
+_USER_RGB = (95, 95, 95)
+_ASSISTANT_RGB = (32, 76, 165)
+# Font candidates ordered by platform preference.
+# macOS paths first (most likely deployment target), then Linux, then Windows.
+# Paths prefixed with "~" are expanded at runtime to the current user's home dir.
+_PDF_FONT_CANDIDATES = [
+    # macOS — Arial via Microsoft Office (/Library/Fonts is system-wide)
+    ("TraceLitUnicode", "/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
+    # macOS — Arial in system supplemental directory (Catalina+)
+    ("TraceLitUnicode", "/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    # macOS — Liberation Sans system-wide (via LibreOffice installer)
+    ("TraceLitUnicode", "/Library/Fonts/LiberationSans-Regular.ttf", "/Library/Fonts/LiberationSans-Bold.ttf"),
+    # macOS — Liberation Sans per-user (via Homebrew: brew install --cask font-liberation)
+    ("TraceLitUnicode", "~/Library/Fonts/LiberationSans-Regular.ttf", "~/Library/Fonts/LiberationSans-Bold.ttf"),
+    # macOS — Arial per-user (via Homebrew or manual install)
+    ("TraceLitUnicode", "~/Library/Fonts/Arial.ttf", "~/Library/Fonts/Arial Bold.ttf"),
+    # Linux — Liberation Sans (ubuntu/debian: apt install fonts-liberation)
+    ("TraceLitUnicode", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+    # Linux — Liberation Sans (fedora/rhel/arch path)
+    ("TraceLitUnicode", "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf", "/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf"),
+    # Linux — DejaVu Sans (nearly universally available on any Linux distro)
+    ("TraceLitUnicode", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ("TraceLitUnicode", "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf"),
+    # Windows — Arial, Calibri, Segoe UI
+    ("TraceLitUnicode", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+    ("TraceLitUnicode", "C:/Windows/Fonts/calibri.ttf", "C:/Windows/Fonts/calibrib.ttf"),
+    ("TraceLitUnicode", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf"),
+]
+
+def _truncate_text(text: str, max_chars: int = _MAX_TEXT_CHARS) -> str:
+    if len(text) > max_chars:
+        return text[:max_chars] + "..."
+    return text
+
+def _break_long_words(text: str, max_word: int = 80) -> str:
+
+    parts: list[str] = []
+    for token in text.split(" "):
+        while len(token) > max_word:
+            parts.append(token[:max_word])
+            token = token[max_word:]
+        parts.append(token)
+    return " ".join(parts)
 
 
-def generate_session_pdf(
-    session_data: Dict[str, Any],
-    output_dir: str = None,
-) -> str:
-    """Generate a PDF export of a chat session.
-
-    Args:
-        session_data: Dict with keys:
-            - session_id, session_name
-            - messages: list of message dicts
-            - papers: list of paper metadata dicts
-            - export_options: optional dict with formatting prefs
-
-    Returns:
-        Path to generated PDF file.
-    """
-    from jinja2 import Environment, FileSystemLoader, BaseLoader
-
-    if output_dir is None:
-        from app.config import settings
-        output_dir = settings.export_dir
-
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    session_id = session_data.get("session_id", "unknown")
-    session_name = session_data.get("session_name", "TraceLit Session")
-    messages = session_data.get("messages", [])
-    papers = session_data.get("papers", [])
-
-    # Build HTML
-    html_content = _render_pdf_html(
-        session_name=session_name,
-        messages=messages,
-        papers=papers,
+def _configure_pdf_fonts(pdf) -> str:
+    for family, regular, bold in _PDF_FONT_CANDIDATES:
+        # Expand ~ so per-user font directories (e.g. ~/Library/Fonts on macOS) resolve correctly.
+        regular_path = Path(regular).expanduser()
+        bold_path = Path(bold).expanduser()
+        if not regular_path.exists():
+            continue
+        try:
+            pdf.add_font(family, "", fname=str(regular_path))
+            if bold_path.exists():
+                pdf.add_font(family, "B", fname=str(bold_path))
+            logger.debug(f"PDF export: using font '{family}' from {regular_path}")
+            return family
+        except Exception as exc:
+            logger.debug(f"PDF export: skipping font {regular_path} — {exc}")
+            continue
+    logger.warning(
+        "PDF export: no suitable Unicode font found on this system. "
+        "Falling back to built-in Helvetica, which may not render non-ASCII characters correctly. "
+        "To fix, install Liberation Sans: "
+        "macOS → `brew install --cask font-liberation`; "
+        "Linux → `apt install fonts-liberation` or `dnf install liberation-fonts`."
     )
+    return "Helvetica"
 
-    # Generate PDF
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"tracelit_export_{session_id[:8]}_{timestamp}.pdf"
-    output_path = os.path.join(output_dir, filename)
+
+def _set_font(pdf, style: str, size: int) -> None:
+    family = getattr(pdf, "trace_font_family", "Helvetica")
+    try:
+        pdf.set_font(family, style=style, size=size)
+    except Exception:
+        pdf.set_font("Helvetica", style=style, size=size)
+
+
+def _safe_multi_cell(pdf, text: str, line_height: float = 4.5) -> None:
+    pdf.set_x(pdf.l_margin)
+    safe_text = text or ""
+    try:
+        pdf.multi_cell(w=0, h=line_height, text=safe_text)
+    except Exception:
+        fallback = _break_long_words(sanitize_for_pdf(safe_text), max_word=24)
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w=0, h=line_height, text=fallback)
+
+
+def _write_flowing_text(pdf, text: str, line_height: float = 4.5) -> None:
+    pdf.set_x(pdf.l_margin)
+    safe_text = sanitize_for_pdf(text or "")
+    try:
+        pdf.write(line_height, safe_text)
+    except Exception:
+        _safe_multi_cell(pdf, safe_text, line_height)
+
+
+def _prepare_landscape_pdf() -> Any:
+    FPDF = importlib.import_module("fpdf").FPDF
+    pdf = FPDF(orientation="L", format="A4", unit="mm")
+    pdf.set_margins(left=10, top=12, right=10)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    setattr(pdf, "trace_font_family", _configure_pdf_fonts(pdf))
+    pdf.add_page()
+    return pdf
+
+def _havf_confidence_color(confidence: str) -> tuple[int, int, int]:
+    if confidence == "high":
+        return (34, 139, 34)
+    if confidence == "medium":
+        return (204, 153, 0)
+    return (204, 51, 51)
+
+def _add_page_header(pdf, title: str) -> None:
+    _set_font(pdf, "I", 7)
+    pdf.set_text_color(140, 140, 140)
+    date_str = datetime.now().strftime(_DATE_FMT)
+    header_text = f"TraceLit  |  {sanitize_for_pdf(_truncate_text(title, 80))}  |  {date_str}"
+    pdf.cell(w=0, h=4, text=header_text, ln=True, align="C")
+    pdf.set_draw_color(200, 200, 200)
+    y = pdf.get_y()
+    pdf.line(15, y, 195, y)
+    pdf.ln(3)
+    pdf.set_text_color(0, 0, 0)
+
+def _render_message_role(pdf, role: str) -> None:
+    role_color = _ASSISTANT_RGB if role == "ASSISTANT" else _USER_RGB
+    _set_font(pdf, "B", 9)
+    pdf.set_fill_color(*role_color)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(w=28, h=6, text=f" {role} ", ln=True, fill=True)
+    pdf.ln(1)
+    pdf.set_text_color(0, 0, 0)
+
+def _render_havf_results(pdf, havf_results: list[dict]) -> None:
+    pdf.ln(1)
+    _set_font(pdf, "I", 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(w=0, h=4, text="Citation Verification:", ln=True)
+
+    for result in havf_results:
+        confidence = result.get("confidence", "low")
+        raw_claim = result.get("claim", "")
+
+        if len(raw_claim) > 500:
+            raw_claim = raw_claim[:500].rsplit(" ", 1)[0] + "..."
+        claim = sanitize_for_pdf(raw_claim)
+        paragraph_id = result.get("paragraph_id", "")
+        chunk_type = result.get("chunk_type", "")
+        score = result.get("score", 0)
+
+        cr, cg, cb = _havf_confidence_color(confidence)
+        pdf.set_text_color(cr, cg, cb)
+        _set_font(pdf, "B", 7)
+
+        badge = f"  [{confidence.upper()}] ({score:.0%})"
+        if paragraph_id:
+            badge += f"  [{shorten_paragraph_id(paragraph_id)}]"
+        if chunk_type and chunk_type != "text":
+            badge += f"  ({chunk_type})"
+        pdf.cell(w=0, h=3.5, text=badge, ln=True)
+
+        _set_font(pdf, "", 7)
+        pdf.set_text_color(60, 60, 60)
+        _safe_multi_cell(pdf, f'    "{_break_long_words(claim, max_word=48)}"', 3.5)
+
+    pdf.set_text_color(0, 0, 0)
+
+def _render_message_separator(pdf) -> None:
+    pdf.set_draw_color(210, 217, 224)
+    y = pdf.get_y()
+    pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
+    pdf.ln(4)
+
+def _setup_pdf_title_and_date(pdf, title: str) -> None:
+    pdf.set_fill_color(*_ACCENT_RGB)
+    pdf.set_text_color(255, 255, 255)
+    _set_font(pdf, "B", 16)
+    pdf.cell(w=0, h=11, text=sanitize_for_pdf(_truncate_text(title, 200)), ln=True, align="C", fill=True)
+    pdf.set_fill_color(*_ACCENT_LIGHT_RGB)
+    _set_font(pdf, "", 9)
+    pdf.set_text_color(70, 70, 70)
+    pdf.cell(w=0, h=7, text=f"Exported on {datetime.now().strftime(_DATE_FMT)}", ln=True, align="C", fill=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(5)
+
+def _add_papers_compared_section(pdf, paper_titles: list[str]) -> None:
+    _set_font(pdf, "B", 12)
+    pdf.cell(w=0, h=7, text="Papers Compared:", ln=True)
+    pdf.ln(1)
+    _set_font(pdf, "", 9)
+    for i, paper in enumerate(paper_titles, start=1):
+        truncated = sanitize_for_pdf(_truncate_text(paper, 200))
+        safe = _break_long_words(truncated)
+        _safe_multi_cell(pdf, f"  {i}. {safe}", 5)
+    pdf.ln(3)
+
+def _render_message_block(pdf, msg: dict) -> None:
+    role = msg.get("role", "user").upper()
+    content = msg.get("content", "")
+    havf_results = msg.get("havf_results") or []
+
+    _render_message_role(pdf, role)
+    _render_blocks_pdf(pdf, build_export_blocks(content))
+
+    if havf_results:
+        _render_havf_results(pdf, havf_results)
+
+    _render_message_separator(pdf)
+
+
+def _render_table_as_sections(pdf, headers: list[str], rows: list[list[str]]) -> None:
+    for row in rows:
+        for index, value in enumerate(row):
+            if index >= len(headers):
+                continue
+            label = sanitize_for_pdf(headers[index])
+            body = sanitize_for_pdf(_break_long_words(value, max_word=42))
+            _set_font(pdf, "B", 9)
+            _safe_multi_cell(pdf, label, 4.2)
+            _set_font(pdf, "", 9)
+            _safe_multi_cell(pdf, body, 4.2)
+        pdf.ln(1)
+
+
+def _render_table_grid(pdf, headers: list[str], rows: list[list[str]]) -> None:
+    if not headers:
+        return
+
+    normalized_rows = []
+    for row in rows:
+        padded = row + [""] * max(0, len(headers) - len(row))
+        normalized_rows.append([sanitize_for_pdf(format_structured_text(cell)) for cell in padded[:len(headers)]])
+
+    available_width = pdf.w - pdf.l_margin - pdf.r_margin
+    col_width = available_width / max(len(headers), 1)
+    _set_font(pdf, "", 8)
+    try:
+        with pdf.table(
+            col_widths=[col_width] * len(headers),
+            line_height=4.2,
+            text_align="LEFT",
+            borders_layout="ALL",
+            width=available_width,
+        ) as table:
+            header_row = table.row()
+            for header in headers:
+                header_row.cell(sanitize_for_pdf(header))
+            for row in normalized_rows:
+                body_row = table.row()
+                for cell in row:
+                    body_row.cell(cell)
+    except Exception:
+        _render_table_as_sections(pdf, headers, rows)
+
+
+def _render_landscape_table(pdf, headers: list[str], rows: list[list[str]]) -> None:
+    normalized_rows = []
+    for row in rows:
+        padded = row + [""] * max(0, len(headers) - len(row))
+        normalized_rows.append([sanitize_for_pdf(format_structured_text(cell)) for cell in padded[:len(headers)]])
+
+    available_width = pdf.w - pdf.l_margin - pdf.r_margin
+    col_width = available_width / max(len(headers), 1)
+    _set_font(pdf, "", 8)
+    with pdf.table(
+        col_widths=[col_width] * len(headers),
+        line_height=4.2,
+        text_align="LEFT",
+        borders_layout="SINGLE_TOP_LINE",
+        width=available_width,
+    ) as table:
+        header_row = table.row()
+        for header in headers:
+            header_row.cell(sanitize_for_pdf(header))
+        for row in normalized_rows:
+            body_row = table.row()
+            for cell in row:
+                body_row.cell(cell)
+
+
+def _render_blocks_pdf(pdf, blocks: list) -> None:
+    for block in blocks:
+        if block.kind == "heading":
+            size = max(10, 15 - min(block.level, 4))
+            _set_font(pdf, "B", size)
+            _safe_multi_cell(pdf, sanitize_for_pdf(block.text), 5)
+            pdf.ln(1)
+        elif block.kind == "bullet":
+            _set_font(pdf, "", 9)
+            bullet_text = sanitize_for_pdf(_break_long_words(block.text, max_word=42))
+            _write_flowing_text(pdf, f"- {bullet_text}", 4.5)
+            pdf.ln(4.5)
+        elif block.kind == "table":
+            _render_table_grid(pdf, block.headers, block.rows)
+        else:
+            _set_font(pdf, "", 9)
+            paragraph = sanitize_for_pdf(_break_long_words(inline_tokens_to_text(block.tokens), max_word=42))
+            _write_flowing_text(pdf, paragraph, 4.5)
+            pdf.ln(5.5)
+
+
+def _render_cited_assets_pdf(pdf, cited_assets: list[dict]) -> None:
+    if not cited_assets:
+        return
+
+    if pdf.page_no() > 0:
+        pdf.add_page()
+    pdf.set_fill_color(*_ACCENT_LIGHT_RGB)
+    _set_font(pdf, "B", 12)
+    pdf.cell(w=0, h=8, text="Cited Figures, Tables, and Formulas", ln=True, fill=True)
+    pdf.ln(2)
+
+    for asset in cited_assets:
+        label = f"[{asset.get('citation_id', '')}] {str(asset.get('chunk_type', '')).title()}"
+        meta_parts = [str(asset.get("paper_title", ""))]
+        if asset.get("page_number"):
+            meta_parts.append(f"page {asset.get('page_number')}")
+        if asset.get("section_title"):
+            meta_parts.append(str(asset.get("section_title")))
+
+        _set_font(pdf, "B", 10)
+        _safe_multi_cell(pdf, sanitize_for_pdf(label), 5)
+        if meta_parts:
+            _set_font(pdf, "I", 8)
+            _safe_multi_cell(pdf, sanitize_for_pdf(" | ".join(part for part in meta_parts if part)), 4)
+
+        chunk_type = str(asset.get("chunk_type", "")).lower()
+        if chunk_type == "table" and asset.get("table_headers"):
+            description = str(asset.get("description") or "").strip()
+            if description:
+                _render_blocks_pdf(pdf, build_export_blocks(description))
+            _render_table_grid(
+                pdf,
+                list(asset.get("table_headers") or []),
+                [list(row) for row in asset.get("table_rows") or []],
+            )
+        else:
+            description = str(asset.get("description") or asset.get("raw_content") or asset.get("content", "")).strip()
+            if description:
+                _render_blocks_pdf(pdf, build_export_blocks(description))
+
+            image_path = asset.get("image_path")
+            if image_path and Path(image_path).exists():
+                try:
+                    pdf.image(str(image_path), w=160)
+                    pdf.ln(2)
+                except Exception:
+                    pass
+            elif chunk_type == "formula" and asset.get("formula_text"):
+                _set_font(pdf, "", 9)
+                _safe_multi_cell(pdf, sanitize_for_pdf(str(asset.get("formula_text"))), 4.5)
+
+        _render_message_separator(pdf)
+
+def export_chat_to_pdf(
+    session_title: str,
+    messages: list[dict],
+    cited_assets: list[dict] | None,
+    output_path: str | Path,
+) -> Path:
+    try:
+        importlib.import_module("fpdf")
+    except ImportError as e:
+        raise PDFExportError("fpdf2 library not installed") from e
+
+    output_path = Path(output_path)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
     try:
-        from weasyprint import HTML
-        HTML(string=html_content).write_pdf(output_path)
-        logger.info("PDF generated: {} ({} messages)", output_path, len(messages))
-        return output_path
-    except ImportError:
-        logger.error("WeasyPrint not installed — PDF export unavailable")
-        raise RuntimeError("WeasyPrint is required for PDF export")
+        with timer("PDF generation"):
+            FPDF = importlib.import_module("fpdf").FPDF
+            pdf = FPDF(format="A4", unit="mm")
+            pdf.set_margins(left=15, top=15, right=15)
+            pdf.set_auto_page_break(auto=True, margin=20)
+            setattr(pdf, "trace_font_family", _configure_pdf_fonts(pdf))
+            pdf.add_page()
+
+            _setup_pdf_title_and_date(pdf, session_title)
+
+            pdf.set_draw_color(180, 180, 180)
+            y = pdf.get_y()
+            pdf.line(15, y, 195, y)
+            pdf.ln(5)
+
+            for msg in messages:
+                _render_message_block(pdf, msg)
+
+            _render_cited_assets_pdf(pdf, cited_assets)
+
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            pdf.output(str(output_path))
     except Exception as e:
-        logger.error("PDF generation failed: {}", e)
-        raise
+        raise PDFExportError(f"Failed to generate PDF: {str(e)}") from e
 
+    logger.info(f"Exported chat PDF to {output_path.name}")
+    return output_path
 
-def _render_pdf_html(
-    session_name: str,
-    messages: List[Dict],
-    papers: List[Dict],
-) -> str:
-    """Render the PDF HTML template."""
+def export_comparison_to_pdf(
+    title: str,
+    comparison_content: str,
+    paper_titles: list[str],
+    comparison_table: list[dict] | None,
+    cited_assets: list[dict] | None,
+    output_path: str | Path,
+) -> Path:
+    try:
+        importlib.import_module("fpdf")
+    except ImportError as e:
+        raise PDFExportError("fpdf2 library not installed") from e
 
-    paper_refs = ""
-    for p in papers:
-        authors = p.get("authors", [])
-        if isinstance(authors, str):
-            import json
-            try:
-                authors = json.loads(authors)
-            except Exception:
-                authors = [authors]
-        author_str = ", ".join(authors[:3])
-        if len(authors) > 3:
-            author_str += " et al."
-        year = p.get("year", "")
-        year_str = f" ({year})" if year else ""
-        paper_refs += f"""
-        <div class="paper-ref">
-            <strong>{p.get('title', 'Unknown')}</strong>{year_str}<br/>
-            <em>{author_str}</em>
-        </div>"""
+    output_path = Path(output_path)
+    cited_assets = prepare_cited_assets(cited_assets or [], output_path.parent)
 
-    message_blocks = ""
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        metadata = msg.get("metadata", {})
+    try:
+        pdf = _prepare_landscape_pdf()
 
-        if role == "user":
-            message_blocks += f"""
-            <div class="message user-message">
-                <div class="role-label">Question</div>
-                <div class="content">{_escape_html(content)}</div>
-            </div>"""
+        _setup_pdf_title_and_date(pdf, title)
+        _add_papers_compared_section(pdf, paper_titles)
+
+        pdf.set_draw_color(180, 180, 180)
+        y = pdf.get_y()
+        pdf.line(15, y, 195, y)
+        pdf.ln(4)
+
+        _set_font(pdf, "B", 12)
+        pdf.cell(w=0, h=7, text="Comparison Analysis:", ln=True)
+        pdf.ln(1)
+        if comparison_table:
+            headers = ["Dimension", *paper_titles, "Synthesis"]
+            rows = []
+            for row in comparison_table:
+                rows.append([
+                    str(row.get("dimension", "")),
+                    *[format_structured_text(str(cell.get("content", ""))) for cell in row.get("cells", [])],
+                    format_structured_text(str(row.get("synthesis", ""))),
+                ])
+            _render_landscape_table(pdf, headers, rows)
         else:
-            confidence = metadata.get("overall_confidence", 0)
-            provider = metadata.get("provider", "unknown")
-            conf_class = _confidence_class(confidence)
+            _render_blocks_pdf(pdf, build_export_blocks(comparison_content))
 
-            message_blocks += f"""
-            <div class="message assistant-message">
-                <div class="role-label">
-                    TraceLit Response
-                    <span class="confidence-badge {conf_class}">
-                        Confidence: {confidence:.0%}
-                    </span>
-                    <span class="provider-badge">{provider}</span>
-                </div>
-                <div class="content">{_format_citations_html(content)}</div>
-            </div>"""
+        _render_cited_assets_pdf(pdf, cited_assets)
 
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <style>
-        @page {{
-            size: A4;
-            margin: 2cm;
-        }}
-        body {{
-            font-family: 'Helvetica Neue', Arial, sans-serif;
-            font-size: 11pt;
-            line-height: 1.6;
-            color: #1a1a1a;
-        }}
-        .cover {{
-            text-align: center;
-            padding-top: 8cm;
-            page-break-after: always;
-        }}
-        .cover h1 {{
-            font-size: 28pt;
-            color: #2563eb;
-            margin-bottom: 0.5em;
-        }}
-        .cover .subtitle {{
-            font-size: 14pt;
-            color: #64748b;
-        }}
-        .cover .date {{
-            margin-top: 2em;
-            color: #94a3b8;
-        }}
-        h2 {{
-            color: #1e40af;
-            border-bottom: 2px solid #dbeafe;
-            padding-bottom: 0.3em;
-            margin-top: 1.5em;
-        }}
-        .message {{
-            margin: 1em 0;
-            padding: 1em;
-            border-radius: 8px;
-        }}
-        .user-message {{
-            background: #eff6ff;
-            border-left: 4px solid #3b82f6;
-        }}
-        .assistant-message {{
-            background: #f8fafc;
-            border-left: 4px solid #10b981;
-        }}
-        .role-label {{
-            font-weight: 600;
-            font-size: 10pt;
-            color: #475569;
-            margin-bottom: 0.5em;
-        }}
-        .confidence-badge {{
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 9pt;
-            font-weight: 500;
-            margin-left: 0.5em;
-        }}
-        .confidence-high {{ background: #dcfce7; color: #166534; }}
-        .confidence-medium {{ background: #fef3c7; color: #92400e; }}
-        .confidence-low {{ background: #fee2e2; color: #991b1b; }}
-        .provider-badge {{
-            display: inline-block;
-            padding: 2px 8px;
-            background: #e2e8f0;
-            border-radius: 12px;
-            font-size: 9pt;
-            color: #475569;
-            margin-left: 0.5em;
-        }}
-        .citation {{
-            color: #2563eb;
-            font-weight: 600;
-            font-size: 9pt;
-            vertical-align: super;
-        }}
-        .paper-ref {{
-            padding: 0.5em 0;
-            border-bottom: 1px solid #e2e8f0;
-        }}
-        .footer {{
-            text-align: center;
-            font-size: 9pt;
-            color: #94a3b8;
-            margin-top: 3em;
-        }}
-    </style>
-</head>
-<body>
-    <div class="cover">
-        <h1>TraceLit</h1>
-        <div class="subtitle">{_escape_html(session_name)}</div>
-        <div class="date">Generated on {datetime.now().strftime("%B %d, %Y at %H:%M")}</div>
-        <div class="date">AI-Powered Research Paper Analysis</div>
-    </div>
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf.output(str(output_path))
+    except Exception as e:
+        raise PDFExportError(f"Failed to generate PDF: {str(e)}") from e
 
-    <h2>Conversation</h2>
-    {message_blocks}
+    logger.info(f"Exported comparison PDF to {output_path.name}")
+    return output_path
 
-    <h2>Paper References</h2>
-    {paper_refs if paper_refs else "<p>No papers referenced.</p>"}
-
-    <div class="footer">
-        Generated by TraceLit — Sentence-Level Attribution for Research Papers
-    </div>
-</body>
-</html>"""
-
-
-def _escape_html(text: str) -> str:
-    """Escape HTML special characters."""
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
-
-
-def _format_citations_html(text: str) -> str:
-    """Convert [P#] citations to styled superscript HTML."""
-    import re
-    escaped = _escape_html(text)
-    return re.sub(
-        r'\[P(\d+)\]',
-        r'<span class="citation">[P\1]</span>',
-        escaped,
-    )
-
-
-def _confidence_class(confidence: float) -> str:
-    """Map confidence to CSS class."""
-    if confidence >= 0.85:
-        return "confidence-high"
-    elif confidence >= 0.65:
-        return "confidence-medium"
-    return "confidence-low"

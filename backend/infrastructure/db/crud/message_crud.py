@@ -1,43 +1,88 @@
-"""TraceLit — Message CRUD operations."""
 
-import json
-from datetime import datetime
-from typing import Dict, List, Optional
-
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.message import Message
 
-
-def get_messages_for_session(db: Session, session_id: str) -> List[Message]:
-    return (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
-        .order_by(Message.timestamp.asc())
-        .all()
-    )
-
-
-def create_message(
-    db: Session,
-    message_id: str,
-    session_id: str,
-    role: str,
-    content: str,
-    metadata: Optional[Dict] = None,
-) -> Message:
-    msg = Message(
-        id=message_id,
-        session_id=session_id,
-        role=role,
-        content=content,
-        timestamp=datetime.utcnow(),
-        metadata_=json.dumps(metadata) if metadata else None,
-    )
+async def create_message(db: AsyncSession, **kwargs) -> Message:
+    msg = Message(**kwargs)
     db.add(msg)
-    db.flush()
+    await db.flush()
     return msg
 
+async def get_messages_by_session(
+    db: AsyncSession,
+    session_id: str,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> list[Message]:
+    stmt = (
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.created_at.asc())
+    )
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit:
+        stmt = stmt.limit(limit)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
-def delete_messages_for_session(db: Session, session_id: str) -> None:
-    db.query(Message).filter(Message.session_id == session_id).delete()
+async def count_messages_by_session(
+    db: AsyncSession, session_id: str,
+) -> int:
+    stmt = select(func.count()).select_from(Message).where(Message.session_id == session_id)
+    result = await db.execute(stmt)
+    return result.scalar_one()
+
+async def get_recent_messages(
+    db: AsyncSession, session_id: str, max_turns: int = 5
+) -> list[Message]:
+    stmt = (
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.created_at.desc())
+        .limit(max_turns * 2)
+    )
+    result = await db.execute(stmt)
+    messages = list(result.scalars().all())
+    messages.reverse()
+    return messages
+
+async def delete_messages_by_session(db: AsyncSession, session_id: str) -> None:
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(Message).where(Message.session_id == session_id))
+    await db.flush()
+
+async def prune_old_messages(
+    db: AsyncSession,
+    session_id: str,
+    keep_recent: int = 50,
+) -> int:
+    keep_stmt = (
+        select(Message.id)
+        .where(Message.session_id == session_id)
+        .order_by(Message.created_at.desc())
+        .limit(keep_recent)
+    )
+    keep_result = await db.execute(keep_stmt)
+    keep_ids = {row[0] for row in keep_result.all()}
+
+    if not keep_ids:
+        return 0
+
+    total = await count_messages_by_session(db, session_id)
+    to_prune = max(0, total - keep_recent)
+    if to_prune == 0:
+        return 0
+
+    from sqlalchemy import delete as sa_delete
+    del_stmt = (
+        sa_delete(Message)
+        .where(Message.session_id == session_id)
+        .where(Message.id.notin_(keep_ids))
+    )
+    await db.execute(del_stmt)
+    await db.flush()
+    return to_prune
+

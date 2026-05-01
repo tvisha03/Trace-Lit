@@ -1,14 +1,14 @@
-/** TraceLit — Sentence Highlight (placeholder) */
+/** TraceLit — Sentence Highlight */
 export default function SentenceHighlight({ sentence, isHighlighted }) {
   return (
     <span
-      className={`${
+      className={`transition-colors duration-300 ${
         isHighlighted
-          ? 'bg-yellow-200 border-b-2 border-yellow-400'
-          : ''
+          ? 'bg-tl-gold/20 border-b-2 border-tl-gold text-tl-t1'
+          : 'text-tl-t2'
       }`}
     >
-      {sentence.text}
+      {sentence?.text ?? sentence}
     </span>
   );
 }

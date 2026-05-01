@@ -1,25 +1,39 @@
-"""TraceLit — Paragraph / Chunk ORM model."""
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, Integer, DateTime, Text, JSON, ForeignKey, Index
+from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.database import Base
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
-class Paragraph(Base):
-    """Individual paragraph with sentence-level tracking.
+class Chunk(Base):
+    __tablename__ = "chunks"
 
-    The ``sentences`` column stores a JSON array::
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    paper_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("papers.id", ondelete="CASCADE"),
+        index=True,
+    )
+    paragraph_id: Mapped[str] = mapped_column(String(32), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    enriched_text: Mapped[str] = mapped_column(Text)
+    section_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sentence_map: Mapped[dict] = mapped_column(JSON, default=dict)
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_type: Mapped[str] = mapped_column(String(16), default="text", index=True)
+    image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
-        [{"sentence_id": "P0_S0", "text": "...", "start_char": 0, "end_char": 50}]
-    """
+    __table_args__ = (
+        Index("ix_chunks_paper_paragraph", "paper_id", "paragraph_id"),
+    )
 
-    __tablename__ = "paragraphs"
-
-    id = Column(String, primary_key=True)           # e.g. "paper_uuid_P0"
-    paper_id = Column(String, ForeignKey("papers.id", ondelete="CASCADE"))
-    section_id = Column(Integer, ForeignKey("sections.id", ondelete="CASCADE"))
-    text = Column(Text)
-    page = Column(Integer)
-    token_count = Column(Integer)
-    embedding_id = Column(String)                   # FAISS int64 id (as string)
-    sentences = Column(Text)                        # JSON sentence map

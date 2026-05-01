@@ -1,297 +1,336 @@
-"""TraceLit — Pydantic API Schemas for v1.
+import re
+import uuid as _uuid
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional
 
-Request/response models defining the contract between frontend and backend.
-All API v1 endpoints use these for validation and serialization.
-"""
-
-from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel, Field
-
-
-# ============================================================
-# Request Models
-# ============================================================
-
-class ChatQueryRequest(BaseModel):
-    """Request body for the chat query endpoint."""
-
-    query: str = Field(..., max_length=2000, description="User's question")
-    session_id: str
-    active_paper_ids: Optional[List[str]] = Field(
-        default=None,
-        description="Filter by specific papers; None = all session papers",
-    )
-
-
-class SessionCreateRequest(BaseModel):
-    """Request body for creating a new session."""
-
-    name: Optional[str] = "Untitled Session"
-    paper_ids: List[str] = Field(default_factory=list)
+_INJECT_PATTERNS: list[re.Pattern] = [
+    re.compile(
+        r"ignore\s+(previous|prior|all)\s+(instructions?|prompts?)", re.IGNORECASE
+    ),
+    re.compile(r"you\s+are\s+now\s+a", re.IGNORECASE),
+    re.compile(r"forget\s+(everything|all|your)\s+instructions?", re.IGNORECASE),
+    re.compile(r"new\s+system\s+prompt", re.IGNORECASE),
+    re.compile(
+        r"disregard\s+(all|previous|prior)\s+(instructions?|prompts?)", re.IGNORECASE
+    ),
+    re.compile(r"\[INST\]|\[\/INST\]|<\|system\|>|<\|user\|>", re.IGNORECASE),
+    re.compile(
+        r"override\s+your\s+(instructions?|programming|guidelines)", re.IGNORECASE
+    ),
+    re.compile(r"do\s+not\s+(follow|obey|listen\s+to)", re.IGNORECASE),
+    re.compile(r"jailbreak", re.IGNORECASE),
+    re.compile(r"prompt\s+injection", re.IGNORECASE),
+    re.compile(r"roleplay\s+as", re.IGNORECASE),
+    re.compile(r"pretend\s+to\s+be", re.IGNORECASE),
+    re.compile(r"access\s+developer\s+mode", re.IGNORECASE),
+]
 
 
-class SessionUpdateRequest(BaseModel):
-    """Request body for updating a session."""
-
-    name: Optional[str] = None
-    paper_ids: Optional[List[str]] = None
-
-
-class ComparisonUpdateRequest(BaseModel):
-    """Request body for updating a comparison table cell (Phase 2)."""
-
-    paper_id: str
-    field: str  # problem | method | dataset | metrics | results
-    value: str
+def _sanitize_user_text(value: str) -> str:
+    value = value.strip()
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
+    if not value:
+        raise ValueError("Input must contain visible characters after sanitization.")
+    for pattern in _INJECT_PATTERNS:
+        if pattern.search(value):
+            raise ValueError("Input contains disallowed content.")
+    return value
 
 
-class ExportRequest(BaseModel):
-    """Request body for export endpoints."""
-
-    session_id: str
-    format: Optional[str] = "pdf"  # "pdf" | "excel" | "session-excel"
-
-
-# ============================================================
-# Response Models — Papers
-# ============================================================
-
-class PaperUploadResponse(BaseModel):
-    """Response after uploading PDFs."""
-
-    status: str = "processing"
-    paper_ids: List[str]
-    websocket_url: str = "/ws/papers/progress"
+def _validate_paper_ids(value: list[str]) -> list[str]:
+    for paper_id in value:
+        try:
+            _uuid.UUID(paper_id)
+        except ValueError:
+            raise ValueError(f"Invalid UUID format for paper_id: {paper_id}")
+    if len(set(value)) != len(value):
+        raise ValueError("Duplicate paper_ids are not allowed")
+    return value
 
 
-class PaperSchema(BaseModel):
-    """Paper metadata for list/detail endpoints."""
+class SessionCreate(BaseModel):
+    title: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
 
+
+class SessionRename(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+
+
+class SessionResponse(BaseModel):
     id: str
     title: str
-    authors: List[str] = Field(default_factory=list)
+    description: Optional[str] = None
+    created_at: str
+    updated_at: Optional[str] = None
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionResponse]
+
+
+class WebSocketURLResponse(BaseModel):
+    websocket_url: str
+    session_id: str
+
+
+class PaperResponse(BaseModel):
+    id: str
+    session_id: str
+    filename: str
+    title: Optional[str] = None
+    authors: Optional[list[str]] = None
     year: Optional[int] = None
-    pages: Optional[int] = None
+    abstract: Optional[str] = None
+    doi: Optional[str] = None
     status: str
-    upload_date: str
+    progress: float = 0.0
+    page_count: Optional[int] = None
+    chunk_count: Optional[int] = None
+    file_size_mb: Optional[float] = None
     error_message: Optional[str] = None
+    created_at: str
 
-    model_config = {"from_attributes": True}
+
+class PaperListResponse(BaseModel):
+    papers: list[PaperResponse]
 
 
-class SentenceSchema(BaseModel):
-    """Individual sentence within a paragraph."""
+class PaperUploadResponse(BaseModel):
+    paper_ids: list[str]
+    message: str
+    websocket_url: Optional[str] = None
 
-    sentence_id: str  # "P5_S2"
+
+class ChunkResponse(BaseModel):
+    paragraph_id: str
     text: str
-    start_char: int
-    end_char: int
-    tokens: int = 0
+    section_title: Optional[str] = None
+    page_number: Optional[int] = None
+    chunk_type: str
+    sentence_map: dict = Field(default_factory=dict)
 
 
-class ParagraphSchema(BaseModel):
-    """Paragraph with sentence map."""
-
-    paragraph_id: str  # "P5"
-    text: str
-    section: str
-    page: int
-    sentences: List[SentenceSchema] = Field(default_factory=list)
-
-
-class SectionSchema(BaseModel):
-    """Section within a paper."""
-
-    id: int
-    title: str
-    page_start: Optional[int] = None
-    order: int
-
-
-class PaperContentResponse(BaseModel):
-    """Full paper content with sections and paragraphs."""
-
+class PaperChunksResponse(BaseModel):
     paper_id: str
-    title: str
-    sections: List[SectionSchema] = Field(default_factory=list)
-    paragraphs: List[ParagraphSchema] = Field(default_factory=list)
-    total_paragraphs: int = 0
-    total_sentences: int = 0
+    chunks: list[ChunkResponse]
 
 
-# ============================================================
-# Response Models — Chat & HAVF
-# ============================================================
+class ChatRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=5000)
+    stream: bool = False
+    keywords: Optional[list[str]] = Field(
+        None,
+        max_length=10,
+        description="Optional keyword filter — when provided, retrieved context "
+        "is limited to chunks containing at least one of these terms.",
+    )
 
-class CitationSource(BaseModel):
-    """A single citation source linking to a specific sentence in a paper."""
-
-    paragraph_id: str   # e.g. "P5"
-    sentence_id: str    # e.g. "P5_S2"
-    paper_id: str
-    paper_title: str
-    section: str
-    page: int
-    matched_text: str   # The specific source sentence (≤ 300 chars)
+    @field_validator("query")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        return _sanitize_user_text(v)
 
 
-class SentenceVerification(BaseModel):
-    """HAVF verification result for a single generated sentence."""
+class VerificationItem(BaseModel):
+    claim: str
+    confidence: str
+    score: float
+    source_sentence: Optional[str] = None
+    paragraph_id: Optional[str] = None
+    paper_id: Optional[str] = None
+    sentence_key: Optional[str] = None
+    verification_method: Optional[str] = None
+    chunk_type: Optional[str] = None
+    citation_ref: Optional[str] = None
+    page_number: Optional[int] = None
+    full_context: Optional[str] = None
+    bbox: Optional[list] = None
 
-    text: str                                          # Generated sentence text
-    citations: List[str] = Field(default_factory=list)  # ["P5", "P12"]
-    confidence: float                                  # 0.0 – 1.0
-    level: str                                         # "high" | "medium" | "low"
-    method: str  # "embedding_similarity" | "cross_encoder_rerank" | "automatic_fallback"
-    sources: List[CitationSource] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
-    """Full chat response with HAVF-verified sentences."""
-
-    message_id: str
-    query: str
-    text: str                                              # Full response text
-    sentences: List[SentenceVerification] = Field(default_factory=list)
-    overall_confidence: float = 0.0
-    provider: str                                          # "gemini" | "groq" | "ollama"
-    warning: Optional[str] = None                         # Fallback attribution warning
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    content: str
+    provider: str
+    havf_results: list[VerificationItem]
+    token_count: int
+    latency_ms: float
 
 
-# ============================================================
-# Response Models — Sessions
-# ============================================================
-
-class SessionSchema(BaseModel):
-    """Session metadata."""
-
+class MessageResponse(BaseModel):
     id: str
-    name: str
+    role: str
+    content: str
+    provider: Optional[str] = None
+    havf_results: Optional[list[VerificationItem]] = None
+    token_count: Optional[int] = None
+    latency_ms: Optional[float] = None
     created_at: str
-    updated_at: Optional[str] = None
-    paper_ids: List[str] = Field(default_factory=list)
-
-    model_config = {"from_attributes": True}
 
 
-# ============================================================
-# Response Models — Generic
-# ============================================================
-
-class ErrorResponse(BaseModel):
-    """Standardised error response — never raw stack traces."""
-
-    error: Dict[str, Any] = Field(
-        ...,
-        description="Error details with code, message, details",
-    )
-    status: str = "error"
+class MessageListResponse(BaseModel):
+    messages: list[MessageResponse]
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
 
 
-# ============================================================
-# Response Models — Comparison
-# ============================================================
+class CompareRequest(BaseModel):
+    paper_ids: list[str] = Field(..., min_length=2, max_length=7)
 
-class ContributionEntry(BaseModel):
-    """A single contribution field value with source."""
-
-    value: str = "Not specified"
-    source: str = ""
+    @field_validator("paper_ids")
+    @classmethod
+    def validate_paper_ids(cls, v: list[str]) -> list[str]:
+        return _validate_paper_ids(v)
 
 
-class PaperContributions(BaseModel):
-    """Structured contributions for a single paper."""
-
-    problem: ContributionEntry = Field(default_factory=ContributionEntry)
-    method: ContributionEntry = Field(default_factory=ContributionEntry)
-    dataset: ContributionEntry = Field(default_factory=ContributionEntry)
-    metrics: ContributionEntry = Field(default_factory=ContributionEntry)
-    results: ContributionEntry = Field(default_factory=ContributionEntry)
+class ComparisonCell(BaseModel):
+    paper_id: str
+    paper_title: str
+    content: str
 
 
 class ComparisonRow(BaseModel):
-    """A single row in the comparison table."""
-
-    field: str
-    papers: Dict[str, ContributionEntry] = Field(default_factory=dict)
+    dimension: str
+    cells: list[ComparisonCell]
+    synthesis: str = ""
 
 
 class ComparisonResponse(BaseModel):
-    """Full comparison table response."""
+    comparison: str
+    comparison_table: list[ComparisonRow] = Field(default_factory=list)
+    paper_ids: list[str]
+    paper_titles: list[str]
+    provider: str
 
-    session_id: str
-    papers: List[Dict[str, Any]] = Field(default_factory=list)
-    contributions: Dict[str, Any] = Field(default_factory=dict)
-    rows: List[ComparisonRow] = Field(default_factory=list)
+
+class ContributionResponse(BaseModel):
+    paper_id: str
+    title: str
+    contributions: dict
 
 
-# ============================================================
-# Response Models — Analysis (Phase 2)
-# ============================================================
+class ExportRequest(BaseModel):
+    format: str = Field(..., pattern="^(pdf|excel|bibtex|docx|latex)$")
+
+
+class ComparisonExportRequest(BaseModel):
+    paper_ids: list[str] = Field(..., min_length=2, max_length=7)
+    format: str = Field(default="pdf", pattern="^(pdf|excel|bibtex|docx|latex)$")
+
+    @field_validator("paper_ids")
+    @classmethod
+    def validate_paper_ids(cls, v: list[str]) -> list[str]:
+        return _validate_paper_ids(v)
+
+
+class ExportResponse(BaseModel):
+    download_url: str
+    filename: str
+    format: str
+
+
+class ExportListItem(BaseModel):
+    filename: str
+    download_url: str
+    size_bytes: int
+
+
+class ExportListResponse(BaseModel):
+    exports: list[ExportListItem]
+
+
+class KeywordItem(BaseModel):
+    keyword: str
+    score: float
+
 
 class KeywordResponse(BaseModel):
-    """Keywords extracted from a paper."""
-
     paper_id: str
-    keywords: List[str] = Field(default_factory=list)
-    cached: bool = False
+    keywords: list[KeywordItem]
+
+
+class ThemeItem(BaseModel):
+    label: str
+    keywords: list[str]
+    papers_covering: Optional[list[str]] = None
+    coverage_ratio: float
+
+
+class GapAnalysisResponse(BaseModel):
+    themes: list[ThemeItem]
+    underexplored: list[ThemeItem]
+    narrative: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class ReviewResponse(BaseModel):
+    review: str
+    paper_count: int
+    provider: str
 
 
 class SummaryResponse(BaseModel):
-    """Generated paper summary."""
-
     paper_id: str
-    summary: Optional[str] = None
-    has_summary: bool = False
+    title: Optional[str] = None
+    summary: str
+    provider: str
 
 
-class LiteratureReviewResponse(BaseModel):
-    """Generated literature review."""
+class VerifyRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=10000)
+    paper_ids: list[str] = Field(..., min_length=1)
 
-    session_id: str
-    review: str
-    focus_area: Optional[str] = None
+    @field_validator("text")
+    @classmethod
+    def sanitize_text(cls, v: str) -> str:
+        return _sanitize_user_text(v)
 
-
-class ResearchGapEntry(BaseModel):
-    """A single identified research gap."""
-
-    gap_title: str
-    description: str
-    papers_affected: List[str] = Field(default_factory=list)
-    severity: str = "medium"
-    cluster_size: int = 0
-    limitations: List[Dict[str, str]] = Field(default_factory=list)
+    @field_validator("paper_ids")
+    @classmethod
+    def validate_paper_ids(cls, v: list[str]) -> list[str]:
+        return _validate_paper_ids(v)
 
 
-class ResearchGapsResponse(BaseModel):
-    """Research gaps analysis result."""
-
-    session_id: str
-    gaps: List[ResearchGapEntry] = Field(default_factory=list)
-    total_limitations_found: int = 0
-    clusters_formed: int = 0
-    papers_analyzed: int = 0
+class VerifyResponse(BaseModel):
+    results: list[VerificationItem]
 
 
-# ============================================================
-# Response Models — Processing Status
-# ============================================================
+class HealthResponse(BaseModel):
+    status: str
+    version: str
+    use_local_llm: bool = False
+    provider_order: list[str] = []
+    providers: dict[str, bool] = {}
+    db: bool = False
+    faiss: bool = False
+    faiss_stats: Optional[dict] = None
+    cross_encoder: bool = False
 
-class ProcessingJobStatus(BaseModel):
-    """Status of a single paper processing job."""
 
+class SSEQueryTypeEvent(BaseModel):
+    type: str
+
+
+class SSESourceItem(BaseModel):
+    paragraph_id: str
     paper_id: str
-    stage: str  # queued | extracting | chunking | embedding | indexing | complete | failed
-    progress: float = 0.0
-    error: Optional[str] = None
+    score: float
+    page_number: Optional[int] = None
 
 
-class ProcessingQueueStatus(BaseModel):
-    """Status of the paper processing queue."""
+class SSETokenEvent(BaseModel):
+    token: str
 
-    active_count: int = 0
-    queue_size: int = 0
-    jobs: Dict[str, ProcessingJobStatus] = Field(default_factory=dict)
+
+class SSEHavfEvent(BaseModel):
+    results: list[VerificationItem]
+
+
+class SSEDoneEvent(BaseModel):
+    provider: str
+    full_text: str
+
+
+class SSEErrorEvent(BaseModel):
+    detail: str

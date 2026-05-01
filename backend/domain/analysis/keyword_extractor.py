@@ -1,110 +1,93 @@
-"""TraceLit — Keyword Extraction using KeyBERT.
 
-Extracts diverse, representative keywords from paper text
-using KeyBERT with Maximal Marginal Relevance (MMR) for diversity.
-"""
+import re
 
-from typing import List, Optional, Tuple
+from shared.logger import get_logger
+from shared.utils.time_utils import timer
 
-from loguru import logger
+logger = get_logger(__name__)
 
+_MD_IMAGE = re.compile(r"!\[.*?\]\(.+?\)")
+_URL = re.compile(r"https?://\S+")
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+_ORCID = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]")
+_MD_FORMAT = re.compile(r"[*_#|`>]")
+_MULTI_SPACE = re.compile(r"\s+")
 
-# ============================================================
-# Lazy-loaded KeyBERT instance
-# ============================================================
+def _clean_for_keywords(text: str) -> str:
+    text = _MD_IMAGE.sub("", text)
+    text = _URL.sub("", text)
+    text = _EMAIL.sub("", text)
+    text = _ORCID.sub("", text)
+    text = _MD_FORMAT.sub(" ", text)
+    return _MULTI_SPACE.sub(" ", text).strip()
 
-_kw_model = None
+class KeywordModelFactory:
+    _instance = None
+    _model = None
 
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def get_model(self):
+        if self._model is None:
+            from app.config import get_settings
+            keybert_model_name = get_settings().KEYBERT_MODEL
+            with timer("Load KeyBERT model"):
+                from keybert import KeyBERT
+                self._model = KeyBERT(model=keybert_model_name)
+                logger.info(f"KeyBERT model loaded into memory ({keybert_model_name})")
+        return self._model
+
+    def unload(self) -> None:
+        if self._model is not None:
+            self._model = None
+            logger.info("KeyBERT model unloaded from memory")
 
 def _get_kw_model():
-    """Lazy-load KeyBERT to avoid startup overhead."""
-    global _kw_model
-    if _kw_model is None:
-        try:
-            from keybert import KeyBERT
-            _kw_model = KeyBERT(model="all-MiniLM-L6-v2")
-            logger.info("KeyBERT model loaded (all-MiniLM-L6-v2)")
-        except ImportError:
-            logger.warning("KeyBERT not installed — keyword extraction disabled")
-            return None
-    return _kw_model
+    factory = KeywordModelFactory()
+    return factory.get_model()
 
+def unload_kw_model() -> None:
+    factory = KeywordModelFactory()
+    factory.unload()
+    logger.info("KeyBERT model unloaded from memory via factory")
 
 def extract_keywords(
     text: str,
     top_n: int = 10,
-    keyphrase_ngram_range: Tuple[int, int] = (1, 3),
-    diversity: float = 0.7,
+    keyphrase_ngram_range: tuple[int, int] = (1, 3),
     use_mmr: bool = True,
-) -> List[str]:
-    """Extract keywords from text using KeyBERT with MMR diversity.
-
-    Args:
-        text: Full paper text or sections concatenated.
-        top_n: Number of keywords to extract.
-        keyphrase_ngram_range: Min/max n-gram size for keyphrases.
-        diversity: MMR diversity parameter (0=similar, 1=diverse).
-        use_mmr: Whether to use Maximal Marginal Relevance.
-
-    Returns:
-        List of keyword strings, ordered by relevance.
-    """
-    model = _get_kw_model()
-    if model is None:
-        return []
-
+    diversity: float = 0.5,
+) -> list[dict]:
     if not text or len(text.strip()) < 50:
         return []
 
-    try:
-        # Truncate very long texts to avoid memory issues
-        max_chars = 50_000
-        if len(text) > max_chars:
-            text = text[:max_chars]
-
-        keywords = model.extract_keywords(
-            text,
-            keyphrase_ngram_range=keyphrase_ngram_range,
-            stop_words="english",
-            top_n=top_n,
-            use_mmr=use_mmr,
-            diversity=diversity,
-        )
-
-        # keywords is a list of (keyword, score) tuples
-        result = [kw for kw, _score in keywords]
-        logger.debug("Extracted {} keywords", len(result))
-        return result
-
-    except Exception as e:
-        logger.error("Keyword extraction failed: {}", e)
+    cleaned = _clean_for_keywords(text)
+    if len(cleaned) < 50:
         return []
 
+    kw_model = _get_kw_model()
 
-def extract_paper_keywords(sections: List[dict], top_n: int = 10) -> List[str]:
-    """Extract keywords from paper sections.
+    keywords = kw_model.extract_keywords(
+        cleaned,
+        keyphrase_ngram_range=keyphrase_ngram_range,
+        stop_words="english",
+        top_n=top_n,
+        use_mmr=use_mmr,
+        diversity=diversity,
+    )
 
-    Concatenates all section texts and runs keyword extraction.
+    results = [{"keyword": kw, "score": round(score, 4)} for kw, score in keywords]
+    logger.info(f"Extracted {len(results)} keywords")
+    return results
 
-    Args:
-        sections: List of section dicts with 'title' and 'paragraphs'.
-        top_n: Number of keywords to extract.
-
-    Returns:
-        List of keyword strings.
-    """
-    text_parts = []
-    for section in sections:
-        if isinstance(section, dict):
-            title = section.get("title", "")
-            paragraphs = section.get("paragraphs", [])
-            if title:
-                text_parts.append(title)
-            for para in paragraphs:
-                if isinstance(para, dict):
-                    text_parts.append(para.get("text", ""))
-                elif isinstance(para, str):
-                    text_parts.append(para)
-
-    full_text = "\n".join(text_parts)
-    return extract_keywords(full_text, top_n=top_n)
+def extract_keywords_per_paper(
+    paper_texts: dict[str, str],
+    top_n: int = 10,
+) -> dict[str, list[dict]]:
+    return {
+        pid: extract_keywords(text, top_n=top_n)
+        for pid, text in paper_texts.items()
+    }

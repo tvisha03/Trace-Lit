@@ -1,0 +1,1718 @@
+{
+  "info": {
+    "_postman_id": "trace-lit-collection-007",
+    "name": "TraceLit API v2.9",
+    "description": "## TraceLit — Intelligent Academic Literature Assistant\n\nSentence-level verified attribution and confidence scoring for multi-document QA.\n\n**Base URL:** `{{base_url}}{{api_prefix}}`  (default: `http://localhost:8000/api/v1`)\n\n---\n\n### Changelog v2.9\n\n- **Background parallel upload**: `POST /sessions/{id}/papers` now returns `201` immediately after file registration — all PDF processing happens in parallel background tasks (up to `MAX_PARALLEL_PAPERS` concurrent workers), with memory-aware scheduling (`_wait_for_memory()`) and a per-paper timeout (`asyncio.wait_for`). Connect to WebSocket to monitor live progress per paper.\n- **`upload_batch_complete` WebSocket event**: When every paper in an upload batch finishes (completed or failed), the server emits `{ \"type\": \"upload_batch_complete\", \"paper_ids\": [...], \"total\": N, \"completed\": N, \"failed\": 0 }`. Clients can listen for this event to know when all papers are ready, instead of relying on the previously blocking HTTP request.\n- **Timeout bypass removed**: `POST /sessions/{id}/papers` is no longer exempt from the 120-second request timeout (the request completes in seconds now).\n\n### Changelog v2.8\n\n- **Synchronous paper upload**: `POST /sessions/{id}/papers` now blocks until all uploaded papers are fully processed (completed or failed) before returning `201`. WebSocket progress events (`paper_progress`) are still emitted during processing so the frontend can show live progress. The upload endpoint is exempt from the 120-second server-side timeout.\n- **HAVF `chunk_type` and `citation_ref` fields**: Every HAVF verification result now includes `chunk_type` (`\"text\"` | `\"figure\"` | `\"table\"` | `\"formula\"`) and `citation_ref` (the paragraph-ID suffix, e.g. `\"F3\"`, `\"T1\"`, `\"E2\"`, `\"P5\"`). Clients can now distinguish figure/table/formula citations from plain-text paragraph citations.\n- **`paper_id` exposed in `VerificationItem` schema**: The `paper_id` field is now part of the official response schema (it was generated in the service but previously silently dropped by Pydantic). All HAVF results in chat, streaming, and standalone verify now include it.\n- **`chunk_type` propagated through retrieval**: `RetrievedChunk` now carries `chunk_type` from the source DB chunk, giving downstream consumers full type context.\n- **Cascading delete confirmed**: Both `DELETE /sessions/{id}` and `DELETE /sessions/{id}/papers/{paper_id}` correctly remove all associated data (DB records + FAISS vectors). No consumer-visible API change; existing behaviour confirmed correct.\n- **Analytics/comparison use all chunk types**: Paper summaries, gap analysis, literature reviews, and comparison already fetch all DB chunks (text + figure + table + formula) — no API change needed.\n\n### Changelog v2.7\n\n- Smart summary chunk selection: prioritises abstract, introduction, conclusion, results, and methodology sections (up to 25 chunks) instead of blindly taking the first 20 — fixes summary returning \"information not available\"\n- Increased comparison/summary token budget: `COMPARISON_TOKEN_BUDGET_PER_PAPER` raised from 3000 to 5000 tokens; `max_tokens` set to 4096 for comparison and summary generation — fixes mid-sentence truncation\n- Diversity boost for non-text retrieval: FAISS results now reserve 3 slots for figure (`[F#]`), table (`[T#]`), and formula (`[E#]`) chunks, ensuring non-text citations appear in LLM context\n- `paper_id` field added to all HAVF verification results: every sentence verification now includes the UUID of the source paper for cross-paper attribution\n- OCR Tesseract warning suppressed: the misleading pymupdf \"OCR disabled\" log is silenced — RapidOCR continues working correctly\n\n### Changelog v2.6\n\n- Structured table extraction: dual pipeline using regex-based markdown table detection and PyMuPDF native `page.find_tables()` with deduplication\n- Formula/equation extraction: regex-based detection of display math (`$$`), LaTeX environments (`\\begin{equation}`), numbered equations, inline math (`$`), and Unicode math symbols\n- New `chunk_type` value: `formula` — chunks now support `text` | `figure` | `table` | `formula`\n- Citation format extended: `[P#]` paragraphs, `[F#]` figures, `[T#]` tables, `[E#]` equations\n- Vision-based figure routing: Gemini-analysed figures auto-classified as TABLE, FORMULA, or FIGURE chunks based on detected content type\n- Context builder tags chunks with `[TABLE]`, `[EQUATION]`, or `[FIGURE]` headers for LLM context\n- SYSTEM_PROMPT updated with rules for `[T#]` and `[E#]` citations\n- All citation validation regex updated to match `[PTFE]` pattern\n\n### Changelog v2.5\n\n- Enhanced PDF layout analysis via `pymupdf4llm[layout]` — improved section, heading, and figure detection using AI-based page layout classification\n- Vision-based chart/figure understanding: figures extracted per page and analysed with Gemini vision (type + description)\n- New paper processing stage `analyzing_figures` added between `extracting` and `chunking`\n- `chunk_type` field on chunks: `text` | `figure` | `table` | `formula`\n- `image_path` field on figure chunks: absolute path to the saved image\n- SYSTEM_PROMPT updated: figure context cited as `[F#]`, tables as `[T#]`, equations as `[E#]` alongside `[P#]`\n\n### Changelog v2.4\n\n- Codebase cleanup: all comments and docstrings stripped (except `# pylint: disable=unused-import`)\n- All Codacy/Pylance errors resolved (complexity, line-count)\n- 28 endpoints verified — no API contract changes from v2.3\n\n---\n\n## Request ID Tracking\n\nEvery response includes an `X-Request-ID` header. If you send an `X-Request-ID` header in your request, it is echoed back; otherwise a UUID is auto-generated. Use this for correlating logs and debugging.\n\n---\n\n## Request Timeout\n\nAll non-streaming, non-WebSocket requests have a **120-second server-side timeout**. If the request exceeds this limit, a `504 Gateway Timeout` response is returned.\n\n---\n\n## Quickstart Flow\n\n```\n1.  GET  /health                              Health check\n2.  POST /sessions                            Create session      → session_id\n3.  POST /sessions/{id}/papers               Upload PDFs         → paper_id  (queued for background processing)\n4.  WS   /ws/{id}                            Monitor processing  (WebSocket)\n5.  POST /sessions/{id}/chat                 Chat with papers\n6.  POST /sessions/{id}/compare              Compare papers\n7.  GET  /sessions/{id}/analysis/gaps        Research gap analysis\n8.  GET  /sessions/{id}/analysis/review      Literature review\n9.  GET  /sessions/{id}/analysis/review/stream  Streaming lit review (SSE)\n10. POST /sessions/{id}/export               Export results\n11. POST /verify/{session_id}               Standalone HAVF verify\n12. GET  /settings/ollama                    Check Ollama status\n13. PUT  /settings/ollama                    Toggle Ollama priority\n```\n\n---\n\n## Auto-Captured Environment Variables\n\n| Variable | Set by | Value |\n|---|---|---|\n| `session_id` | Create Session | Session UUID |\n| `paper_id` | Upload Papers | First paper UUID |\n| `second_paper_id` | Upload Papers | Second paper UUID |\n| `export_filename` | Export requests | Generated filename |\n\n---\n\n## HAVF Confidence Levels\n\n| Level | Embedding Score | Algorithm |\n|---|---|---|\n| `HIGH` | >= 0.85 | Level 1: fast embedding similarity |\n| `MEDIUM` | 0.65–0.84 | Level 2: cross-encoder reranking |\n| `LOW` | < 0.65 | No reliable source found |\n\n---\n\n## HAVF Verification Result Fields (v2.9)\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The generated sentence being verified |\n| `confidence` | string | `\"HIGH\"` \\| `\"MEDIUM\"` \\| `\"LOW\"` |\n| `score` | float | Best embedding or reranker score (0–1) |\n| `source_sentence` | string\\|null | Most similar source sentence found |\n| `paragraph_id` | string\\|null | Full paragraph ID (e.g. `\"3f9a0b2c_F3\"`) |\n| `paper_id` | string\\|null | UUID of the source paper |\n| `sentence_key` | string\\|null | Source sentence key within the paragraph |\n| `verification_method` | string\\|null | `\"EMBEDDING_SIMILARITY\"` \\| `\"CROSS_ENCODER_RERANK\"` \\| `\"SKIPPED\"` |\n| `chunk_type` | string\\|null | Content type: `\"text\"` \\| `\"figure\"` \\| `\"table\"` \\| `\"formula\"` |\n| `citation_ref` | string\\|null | Brief citation suffix, e.g. `\"F3\"`, `\"T1\"`, `\"E2\"`, `\"P5\"` |\n\n---\n\n## Paper Processing Stages\n\n`registered` → `queued` → `extracting` → `analyzing_figures` → `chunking` → `embedding` → `completed` | `failed`\n\n| Stage | Progress | Description |\n|---|---|---|\n| `registered` | 0.0 | Paper record created, awaiting queue slot |\n| `queued` | 0.0 | Waiting for a worker slot |\n| `extracting` | 0.1–0.25 | PDF text extraction with layout analysis (pymupdf4llm), table extraction (regex + PyMuPDF), and formula detection |\n| `analyzing_figures` | 0.3 | Gemini vision analysis of extracted figures/charts; auto-routes to TABLE/FORMULA/FIGURE chunk types |\n| `chunking` | 0.45 | Sentence-aware paragraph chunking |\n| `embedding` | 0.6–1.0 | FAISS vector indexing |\n| `completed` | 1.0 | Fully ready for querying |\n| `failed` | -1.0 | Unrecoverable error — see `error_message` |\n\n---\n\n## Limits\n\n| Resource | Limit |\n|---|---|\n| Sessions per instance | 50 |\n| Papers per session | 7 |\n| Max file size | 50 MB |\n| Max export file size | 100 MB |\n| FAISS vectors | 500,000 |\n| Min free disk space | 500 MB |\n| Request timeout | 120 s |\n| WebSocket connections per session | 10 |\n| Export formats | pdf, excel, bibtex, docx, latex |",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "{{base_url}}"
+    },
+    {
+      "key": "api_prefix",
+      "value": "{{api_prefix}}"
+    },
+    {
+      "key": "ws_base_url",
+      "value": "{{ws_base_url}}"
+    }
+  ],
+  "item": [
+    {
+      "name": "🔥 Health",
+      "description": "Service health and LLM provider availability.",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/health",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["health"]
+            },
+            "description": "Returns live health status of the service and reachability of each configured LLM provider.\n\n**Response headers:**\n\n| Header | Description |\n|---|---|\n| `X-Request-ID` | Auto-generated UUID for request tracing (or echoed from request) |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `status` | string | Always `\"ok\"` when the service is up |\n| `version` | string | API version, e.g. `\"0.1.0\"` |\n| `providers` | object | Map of provider name → `true` (reachable) / `false` |\n| `db` | bool | Database connectivity |\n| `faiss` | bool | FAISS index loaded |\n| `cross_encoder` | bool | Cross-encoder model available |\n| `faiss_stats` | object\\|null | FAISS index statistics: `total_vectors`, `max_vectors`, `utilization_pct`, `memory_mb` (null when FAISS not ready) |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "X-Request-ID",
+                  "value": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+                }
+              ],
+              "body": "{\n  \"status\": \"ok\",\n  \"version\": \"0.1.0\",\n  \"providers\": {\n    \"GeminiProvider\": true,\n    \"GroqProvider\": true,\n    \"OllamaProvider\": false\n  },\n  \"db\": true,\n  \"faiss\": true,\n  \"cross_encoder\": true,\n  \"faiss_stats\": {\n    \"total_vectors\": 12480,\n    \"max_vectors\": 500000,\n    \"utilization_pct\": 2.5,\n    \"memory_mb\": 18.2\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "📂 Sessions",
+      "description": "Research sessions group uploaded papers, chat history, and exports. All other resources are scoped under a session.",
+      "item": [
+        {
+          "name": "Create Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"session_id\", body.id);",
+                  "    console.log(\"✅ session_id →\", body.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"My Research Session\",\n  \"description\": \"Exploring NLP papers on transformer architectures\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions"]
+            },
+            "description": "Create a new research session. Both fields are optional.\n\nMaximum of 50 sessions allowed. Returns `409 Conflict` when limit reached.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `title` | string | No | max 200 chars |\n| `description` | string | No | max 1000 chars |\n\n**Response:** `SessionResponse` — `201 Created`\n\n> The test script automatically stores `session_id` in the environment."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n  \"title\": \"My Research Session\",\n  \"description\": \"Exploring NLP papers on transformer architectures\",\n  \"created_at\": \"2026-03-02T10:00:00.000000\",\n  \"updated_at\": null\n}"
+            },
+            {
+              "name": "422 Validation Error",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": [\n    {\n      \"loc\": [\n        \"body\",\n        \"title\"\n      ],\n      \"msg\": \"ensure this value has at most 200 characters\",\n      \"type\": \"value_error.any_str.max_length\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "409 Max Sessions Reached",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Maximum number of sessions (50) reached. Please delete unused sessions before creating new ones.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List Sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions"]
+            },
+            "description": "Returns all sessions ordered by most recently updated first.\n\n**Response:** `SessionListResponse` — array of `SessionResponse` objects.\n\n| Field | Type | Description |\n|---|---|---|\n| `id` | string | Session UUID |\n| `title` | string | Session title |\n| `description` | string\\|null | Optional description |\n| `created_at` | string | ISO-8601 creation timestamp |\n| `updated_at` | string\\|null | Last modification timestamp |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"sessions\": [\n    {\n      \"id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n      \"title\": \"My Research Session\",\n      \"description\": \"Exploring NLP papers on transformer architectures\",\n      \"created_at\": \"2026-03-02T10:00:00.000000\",\n      \"updated_at\": null\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
+            },
+            "description": "Retrieve a single session by its UUID.\n\n**Errors:** `404 Not Found` if the session does not exist."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n  \"title\": \"My Research Session\",\n  \"description\": \"Exploring NLP papers on transformer architectures\",\n  \"created_at\": \"2026-03-02T10:00:00.000000\",\n  \"updated_at\": null\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Session ca86d21e-eb4a-49a3-9beb-073a47ae7cf4 not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Rename Session",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Session Title\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
+            },
+            "description": "Update the title of an existing session.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `title` | string | **Yes** | 1–200 chars |\n\n**Response:** Updated `SessionResponse` — `200 OK`"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n  \"title\": \"Updated Session Title\",\n  \"description\": \"Exploring NLP papers on transformer architectures\",\n  \"created_at\": \"2026-03-02T10:00:00.000000\",\n  \"updated_at\": \"2026-03-02T11:00:00.000000\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}"]
+            },
+            "description": "Permanently delete a session and **all associated data**: papers, sentence chunks, FAISS vectors, and exported files.\n\n⚠️ This action is irreversible.\n⚠️ Returns `409 Conflict` if any papers are still being processed.\n\n**Response:** `204 No Content`"
+          },
+          "response": [
+            {
+              "name": "204 No Content",
+              "status": "No Content",
+              "code": 204,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": ""
+            },
+            {
+              "name": "409 Papers Still Processing",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Cannot delete session: papers [a1b2c3d4-...] are still being processed (EXTRACTING / CHUNKING / EMBEDDING). Wait for processing to complete or delete those papers first.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get WebSocket URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/ws-url",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "ws-url"]
+            },
+            "description": "Returns the WebSocket (`ws://` or `wss://`) URL for real-time paper processing progress.\n\nThe scheme is derived from the incoming HTTP request (`http` → `ws`, `https` → `wss`).\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `websocket_url` | string | Full WebSocket URL to connect to |\n| `session_id` | string | Echo of the session UUID |\n\n**WebSocket events after connecting:**\n\n```json\n{ \"type\": \"paper_progress\",  \"paper_id\": \"...\", \"progress\": 0.1,  \"stage\": \"extracting\",         \"eta_seconds\": 45 }\n{ \"type\": \"paper_progress\",  \"paper_id\": \"...\", \"progress\": 0.3,  \"stage\": \"analyzing_figures\",  \"eta_seconds\": 30 }\n{ \"type\": \"paper_progress\",  \"paper_id\": \"...\", \"progress\": 0.45, \"stage\": \"chunking\",           \"eta_seconds\": 18 }\n{ \"type\": \"paper_progress\",  \"paper_id\": \"...\", \"progress\": 0.7,  \"stage\": \"embedding\",          \"eta_seconds\": 8 }\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n{ \"type\": \"paper_failed\",    \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n{ \"type\": \"upload_batch_complete\", \"paper_ids\": [\"...\"], \"total\": 1, \"completed\": 1, \"failed\": 0 }\n```\n\n**Stage values:** `extracting` → `analyzing_figures` → `chunking` → `embedding` → `completed` | `failed`"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"websocket_url\": \"ws://localhost:8000/api/v1/ws/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n  \"session_id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "📄 Papers",
+      "description": "Upload, list, inspect, and delete PDF papers within a session. `POST /papers` registers files and returns `201` immediately — all processing happens in parallel background tasks. Monitor live progress via WebSocket and listen for `upload_batch_complete` to know when all papers in a batch are ready.",
+      "item": [
+        {
+          "name": "Upload Papers (PDF)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.paper_ids && body.paper_ids.length > 0) {",
+                  "        pm.environment.set(\"paper_id\", body.paper_ids[0]);",
+                  "        console.log(\"✅ paper_id →\", body.paper_ids[0]);",
+                  "    }",
+                  "    if (body.paper_ids && body.paper_ids.length > 1) {",
+                  "        pm.environment.set(\"second_paper_id\", body.paper_ids[1]);",
+                  "        console.log(\"✅ second_paper_id →\", body.paper_ids[1]);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select 1–7 PDF files. Each must be ≤ 50 MB."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers"]
+            },
+            "description": "Upload 1–7 PDF files to the session. Each file is validated (extension, size, PDF magic bytes), saved to disk, and queued for async background processing.\n\nThe server checks available disk space before accepting files (minimum 500 MB free) and validates that the file begins with `%PDF-` magic bytes to prevent disguised non-PDFs.\n\n**Processing pipeline per paper:**\n1. PDF layout extraction (`pymupdf4llm[layout]`) — page-by-page text, tables, figures\n2. Figure/chart vision analysis (Gemini) — type + description per figure\n3. Section detection and sentence-aware chunking (text chunks + figure chunks)\n4. Sentence embedding (local model `mixedbread-ai/mxbai-embed-large-v1`)\n5. FAISS vector indexing\n6. Metadata extraction (title, authors, year, abstract)\n\n**Constraints:**\n- `Content-Type: multipart/form-data`\n- Form field name must be `files` (repeat field for multiple files)\n- Only `.pdf` extension accepted (+ valid PDF magic bytes)\n- Maximum 7 files per request (and per session)\n- Maximum 50 MB per file\n- Minimum 500 MB free disk space required\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_ids` | string[] | UUIDs for all registered papers |\n| `message` | string | Human-readable confirmation |\n\n> The test script stores the first two paper IDs as `paper_id` and `second_paper_id`."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"paper_ids\": [\n    \"a1b2c3d4-0000-0000-0000-111111111111\",\n    \"a1b2c3d4-0000-0000-0000-222222222222\"\n  ],\n  \"message\": \"2 paper(s) uploaded and queued for processing\"\n}"
+            },
+            {
+              "name": "400 File Validation Error",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Only PDF files are accepted: report.docx\"\n}"
+            },
+            {
+              "name": "400 Too Many Files",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Maximum 7 files allowed per upload\"\n}"
+            },
+            {
+              "name": "400 File Too Large",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"paper.pdf exceeds 50MB limit (63.2MB)\"\n}"
+            },
+            {
+              "name": "400 Duplicate Filenames",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"These files have already been uploaded to this session: attention_is_all_you_need.pdf\"\n}"
+            },
+            {
+              "name": "400 Invalid PDF (not a real PDF)",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"File 'renamed.pdf' is not a valid PDF (magic-byte check failed)\"\n}"
+            },
+            {
+              "name": "409 Duplicate Content (SHA-256)",
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"A file with identical content has already been uploaded to this session (SHA-256 match). Filename: attention_is_all_you_need.pdf\"\n}"
+            },
+            {
+              "name": "507 Insufficient Disk Space",
+              "status": "Insufficient Storage",
+              "code": 507,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Insufficient disk space. Please free up storage and try again.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List Papers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers"]
+            },
+            "description": "List all papers in the session with current processing status and metadata.\n\n**Status values:** `pending` | `processing` | `ready` | `failed`\n\n**Response fields per paper:**\n\n| Field | Type | Description |\n|---|---|---|\n| `id` | string | Paper UUID |\n| `session_id` | string | Owning session UUID |\n| `filename` | string | Original filename |\n| `title` | string\\|null | Extracted title (available after `ready`) |\n| `authors` | string\\|null | Comma-separated author names |\n| `year` | int\\|null | Publication year |\n| `abstract` | string\\|null | Extracted abstract |\n| `status` | string | Processing status |\n| `progress` | float | 0.0–1.0 progress |\n| `page_count` | int\\|null | Number of pages |\n| `chunk_count` | int\\|null | Number of indexed sentence chunks |\n| `file_size_mb` | float\\|null | File size in MB |\n| `error_message` | string\\|null | Error detail (only when `failed`) |\n| `created_at` | string | ISO-8601 timestamp |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"papers\": [\n    {\n      \"id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n      \"session_id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n      \"filename\": \"attention_is_all_you_need.pdf\",\n      \"title\": \"Attention Is All You Need\",\n      \"authors\": \"Vaswani, A.; Shazeer, N.; Parmar, N.\",\n      \"year\": 2017,\n      \"abstract\": \"The dominant sequence transduction models are based on complex recurrent...\",\n      \"status\": \"ready\",\n      \"progress\": 1.0,\n      \"page_count\": 15,\n      \"chunk_count\": 312,\n      \"file_size_mb\": 1.42,\n      \"error_message\": null,\n      \"created_at\": \"2026-03-02T10:01:00.000000\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Paper",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers", "{{paper_id}}"]
+            },
+            "description": "Retrieve a single paper by UUID.\n\nUse this to **poll processing status** when not using WebSocket. Check `status` and `progress` (0.0–1.0) to track progress.\n\n**Errors:** `404 Not Found` if the paper does not exist."
+          },
+          "response": [
+            {
+              "name": "200 OK — processing",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n  \"session_id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n  \"filename\": \"attention_is_all_you_need.pdf\",\n  \"title\": \"Attention Is All You Need\",\n  \"authors\": \"Vaswani, A.; Shazeer, N.; Parmar, N.\",\n  \"year\": 2017,\n  \"abstract\": \"The dominant sequence transduction models are based on complex recurrent...\",\n  \"status\": \"processing\",\n  \"progress\": 0.55,\n  \"page_count\": 15,\n  \"chunk_count\": null,\n  \"file_size_mb\": 1.42,\n  \"error_message\": null,\n  \"created_at\": \"2026-03-02T10:01:00.000000\"\n}"
+            },
+            {
+              "name": "200 OK — ready",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n  \"session_id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n  \"filename\": \"attention_is_all_you_need.pdf\",\n  \"title\": \"Attention Is All You Need\",\n  \"authors\": \"Vaswani, A.; Shazeer, N.; Parmar, N.\",\n  \"year\": 2017,\n  \"abstract\": \"The dominant sequence transduction models are based on complex recurrent...\",\n  \"status\": \"ready\",\n  \"progress\": 1.0,\n  \"page_count\": 15,\n  \"chunk_count\": 312,\n  \"file_size_mb\": 1.42,\n  \"error_message\": null,\n  \"created_at\": \"2026-03-02T10:01:00.000000\"\n}"
+            },
+            {
+              "name": "200 OK — failed",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n  \"session_id\": \"ca86d21e-eb4a-49a3-9beb-073a47ae7cf4\",\n  \"filename\": \"attention_is_all_you_need.pdf\",\n  \"title\": \"Attention Is All You Need\",\n  \"authors\": \"Vaswani, A.; Shazeer, N.; Parmar, N.\",\n  \"year\": 2017,\n  \"abstract\": \"The dominant sequence transduction models are based on complex recurrent...\",\n  \"status\": \"failed\",\n  \"progress\": 0.0,\n  \"page_count\": 15,\n  \"chunk_count\": null,\n  \"file_size_mb\": 1.42,\n  \"error_message\": \"PDF is password-protected\",\n  \"created_at\": \"2026-03-02T10:01:00.000000\"\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Paper a1b2c3d4-0000-0000-0000-111111111111 not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Paper",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/papers/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "papers", "{{paper_id}}"]
+            },
+            "description": "Delete a paper and its associated data: sentence chunks and FAISS vectors.\n\n⚠️ Deleted papers no longer contribute to chat, comparison, or analysis.\n\n**Response:** `204 No Content`"
+          },
+          "response": [
+            {
+              "name": "204 No Content",
+              "status": "No Content",
+              "code": 204,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "💬 Chat",
+      "description": "RAG-based question answering over uploaded papers. Every response sentence passes the HAVF verification pipeline and is tagged HIGH / MEDIUM / LOW confidence.",
+      "item": [
+        {
+          "name": "Send Message (Sync)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the main contributions of the uploaded papers?\",\n  \"stream\": false,\n  \"keywords\": [\"attention\", \"transformer\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat"]
+            },
+            "description": "Send a natural-language query and receive a verified, cited answer as a single JSON response.\n\n**Pipeline per request:**\n1. Query is embedded → top-k sentence chunks retrieved from FAISS\n2. If `keywords` provided, chunks are post-filtered to only those containing at least one keyword\n3. Context assembled → sent to LLM (Gemini → Groq → Ollama fallback)\n4. LLM must cite every sentence with `[P#]` paragraph tags\n5. Citation IDs validated against indexed paragraphs\n6. Each sentence passes HAVF (embedding similarity + optional cross-encoder)\n7. Message persisted to session chat history\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `query` | string | **Yes** | 1–5000 chars |\n| `stream` | bool | No | `false` for sync JSON (default) |\n| `keywords` | string[] | No | Max 10 items. Post-filter retrieved chunks to only those containing a keyword. |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `content` | string | Full answer with `[P#]` citation tags |\n| `provider` | string | LLM used: `gemini` \\| `groq` \\| `ollama` |\n| `havf_results` | array | Per-sentence verification (see below) |\n| `token_count` | int | Tokens consumed by LLM |\n| `latency_ms` | float | End-to-end latency in ms |\n\n**HAVF result fields per sentence:**\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The verified sentence |\n| `confidence` | string | `HIGH` \\| `MEDIUM` \\| `LOW` |\n| `score` | float | Best cosine similarity score 0.0–1.0 |\n| `source_sentence` | string\\|null | Most similar source sentence |\n| `paragraph_id` | string\\|null | Cited paragraph ID, e.g. `P5` |\n| `paper_id` | string\\|null | Source paper UUID for cross-paper attribution |\n| `sentence_key` | string\\|null | Internal sentence identifier |\n| `verification_method` | string\\|null | `EMBEDDING_SIMILARITY` \\| `CROSS_ENCODER_RERANK` \\| `SKIPPED` |\n\n> Requires at least one paper with `status = ready`."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"content\": \"Transformer models rely on self-attention to process sequences in parallel [P1]. BERT introduced bidirectional pre-training to improve contextual representations [P3].\",\n  \"provider\": \"gemini\",\n  \"havf_results\": [\n    {\n      \"claim\": \"Transformer models rely on self-attention to process sequences in parallel [P1].\",\n      \"confidence\": \"HIGH\",\n      \"score\": 0.92,\n      \"source_sentence\": \"We propose a model architecture relying entirely on an attention mechanism.\",\n      \"paragraph_id\": \"P1\",\n      \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n      \"sentence_key\": \"paper_a1b2c3d4_P1_S2\",\n      \"verification_method\": \"EMBEDDING_SIMILARITY\"\n    },\n    {\n      \"claim\": \"BERT introduced bidirectional pre-training to improve contextual representations [P3].\",\n      \"confidence\": \"HIGH\",\n      \"score\": 0.89,\n      \"source_sentence\": \"BERT is designed to pre-train deep bidirectional representations.\",\n      \"paragraph_id\": \"P3\",\n      \"paper_id\": \"a1b2c3d4-0000-0000-0000-222222222222\",\n      \"sentence_key\": \"paper_a1b2c3d4_P3_S1\",\n      \"verification_method\": \"EMBEDDING_SIMILARITY\"\n    }\n  ],\n  \"token_count\": 312,\n  \"latency_ms\": 1842.5\n}"
+            },
+            {
+              "name": "400 No Ready Papers",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"No papers are ready for querying in session ca86d21e-eb4a-49a3-9beb-073a47ae7cf4. Upload and wait for processing to complete.\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Send Message (Stream / SSE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Summarize the key findings across all papers.\",\n  \"keywords\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat/stream",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat", "stream"]
+            },
+            "description": "Streaming variant of Send Message. Uses a **dedicated /chat/stream endpoint** and returns **Server-Sent Events (SSE)**.\n\n**SSE event types:**\n\n| Event | Description |\n|---|---|\n| `query_type` | Query classification (SIMPLE_QA, COMPARISON, etc.) |\n| `sources` | Retrieved source chunks |\n| `token` | Incremental LLM text chunk |\n| `havf` | HAVF verification results after all tokens |\n| `done` | Final event: provider, full text, token count, latency |\n| `error` | Unrecoverable error |\n\n**SSE format example:**\n\n```\ndata: {\"type\": \"query_type\", \"query_type\": \"SIMPLE_QA\"}\ndata: {\"type\": \"sources\", \"sources\": [...]}\ndata: {\"type\": \"token\", \"content\": \"Transformer\"}\ndata: {\"type\": \"token\", \"content\": \" models\"}\n...\ndata: {\"type\": \"havf\", \"havf_results\": [...]}\ndata: {\"type\": \"done\", \"provider\": \"gemini\", \"token_count\": 312, \"latency_ms\": 1842.5}\n```\n\n> ⚠️ Postman HTTP runner has limited SSE support. Use the browser `EventSource` API or `curl --no-buffer` for best results."
+          },
+          "response": [
+            {
+              "name": "200 OK (SSE stream)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "text",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "text/event-stream"
+                }
+              ],
+              "body": "data: {\"type\": \"query_type\", \"query_type\": \"SIMPLE_QA\"}\n\ndata: {\"type\": \"sources\", \"sources\": [{\"paragraph_id\": \"P1\", \"text\": \"We propose a model...\"}]}\n\ndata: {\"type\": \"token\", \"content\": \"Transformer\"}\n\ndata: {\"type\": \"token\", \"content\": \" models rely on self-attention [P1].\"}\n\ndata: {\"type\": \"havf\", \"havf_results\": [{\"claim\": \"Transformer models rely on self-attention [P1].\", \"confidence\": \"HIGH\", \"score\": 0.92, \"paragraph_id\": \"P1\", \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\", \"verification_method\": \"EMBEDDING_SIMILARITY\"}]}\n\ndata: {\"type\": \"done\", \"provider\": \"gemini\", \"token_count\": 298, \"latency_ms\": 1540.2}"
+            }
+          ]
+        },
+        {
+          "name": "Get Chat History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/chat/messages?limit=50&offset=0",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "chat", "messages"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of messages to return. Omit for all messages."
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Number of messages to skip (for pagination). Defaults to 0."
+                }
+              ]
+            },
+            "description": "Retrieve the message history for a session in chronological order. Supports optional pagination via `limit` and `offset` query parameters.\n\nBoth user queries and assistant responses are returned.\n\n**Query parameters:**\n\n| Param | Type | Required | Default | Description |\n|---|---|---|---|---|\n| `limit` | int | No | all | Max messages to return |\n| `offset` | int | No | 0 | Messages to skip |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `messages` | array | Array of message objects |\n| `total` | int\\|null | Total messages in session (when paginating) |\n| `limit` | int\\|null | Echo of limit param |\n| `offset` | int\\|null | Echo of offset param |\n\n**Message fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `id` | string | Message UUID |\n| `role` | string | `user` \\| `assistant` |\n| `content` | string | Message text |\n| `provider` | string\\|null | LLM provider (assistant only) |\n| `havf_results` | array\\|null | HAVF per-sentence results (assistant only) |\n| `token_count` | int\\|null | Tokens used (assistant only) |\n| `latency_ms` | float\\|null | Latency ms (assistant only) |\n| `created_at` | string | ISO-8601 timestamp |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "X-Request-ID",
+                  "value": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+                }
+              ],
+              "body": "{\n  \"messages\": [\n    {\n      \"id\": \"msg-uuid-001\",\n      \"role\": \"user\",\n      \"content\": \"What are the main contributions?\",\n      \"provider\": null,\n      \"havf_results\": null,\n      \"token_count\": null,\n      \"latency_ms\": null,\n      \"created_at\": \"2026-03-02T10:10:00.000000\"\n    },\n    {\n      \"id\": \"msg-uuid-002\",\n      \"role\": \"assistant\",\n      \"content\": \"Transformer models rely on self-attention [P1].\",\n      \"provider\": \"gemini\",\n      \"havf_results\": [\n        {\n          \"claim\": \"Transformer models rely on self-attention to process sequences in parallel [P1].\",\n          \"confidence\": \"HIGH\",\n          \"score\": 0.92,\n          \"source_sentence\": \"We propose a model architecture relying entirely on an attention mechanism.\",\n          \"paragraph_id\": \"P1\",\n          \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n          \"sentence_key\": \"paper_a1b2c3d4_P1_S2\",\n          \"verification_method\": \"EMBEDDING_SIMILARITY\"\n        }\n      ],\n      \"token_count\": 312,\n      \"latency_ms\": 1842.5,\n      \"created_at\": \"2026-03-02T10:10:03.000000\"\n    }\n  ],\n  \"total\": 2,\n  \"limit\": 50,\n  \"offset\": 0\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🔬 Comparison",
+      "description": "Side-by-side comparison of 2–7 papers. Identifies methodological differences, finds alignment, and extracts structured per-paper contributions.",
+      "item": [
+        {
+          "name": "Compare Papers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paper_ids\": [\n    \"{{paper_id}}\",\n    \"{{second_paper_id}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/compare",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "compare"]
+            },
+            "description": "Generate a structured side-by-side comparison of 2–7 papers.\n\nThe LLM analyses each paper (token budget: 5000 tokens per paper, max_tokens: 4096) and produces a comparative narrative covering objectives, methodology, findings, datasets, and limitations.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `paper_ids` | string[] | **Yes** | 2–7 UUIDs of `ready` papers |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `comparison` | string | Full comparison text (markdown) |\n| `paper_ids` | string[] | Input paper UUIDs |\n| `paper_titles` | string[] | Resolved paper titles |\n| `provider` | string | LLM provider used |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"comparison\": \"## Paper Comparison\\n\\n### Objectives\\n- **Attention Is All You Need**: Removes recurrence entirely.\\n- **BERT**: Bidirectional pre-training for NLP tasks.\\n\\n### Methodology\\n...\",\n  \"paper_ids\": [\n    \"a1b2c3d4-0000-0000-0000-111111111111\",\n    \"a1b2c3d4-0000-0000-0000-222222222222\"\n  ],\n  \"paper_titles\": [\n    \"Attention Is All You Need\",\n    \"BERT: Pre-training of Deep Bidirectional Transformers\"\n  ],\n  \"provider\": \"gemini\"\n}"
+            },
+            {
+              "name": "400 Not Enough Papers",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"At least 2 papers are required for comparison\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Paper Contributions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/compare/contributions/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "compare",
+                "contributions",
+                "{{paper_id}}"
+              ]
+            },
+            "description": "Extract structured contributions from a single paper.\n\n**Path parameters:**\n- `session_id` — session UUID\n- `paper_id` — paper UUID (must be `status = ready`)\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_id` | string | Paper UUID |\n| `title` | string | Paper title |\n| `contributions` | object | Keys: `objectives`, `methods`, `findings`, `datasets`, `limitations` |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n  \"title\": \"Attention Is All You Need\",\n  \"contributions\": {\n    \"objectives\": [\n      \"Replace recurrent layers with self-attention in seq2seq models\"\n    ],\n    \"methods\": [\n      \"Multi-head self-attention\",\n      \"Positional encoding\",\n      \"Encoder-decoder architecture\"\n    ],\n    \"findings\": [\n      \"BLEU 28.4 on WMT 2014 EN-DE\",\n      \"Parallelisable training reduces time\"\n    ],\n    \"datasets\": [\n      \"WMT 2014 English-German\",\n      \"WMT 2014 English-French\"\n    ],\n    \"limitations\": [\n      \"Quadratic complexity with sequence length\"\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "📤 Export",
+      "description": "Export chat history or comparison results to PDF, Excel, Word, LaTeX, or BibTeX. Files are stored server-side and retrieved via a separate download endpoint.",
+      "item": [
+        {
+          "name": "Export Session Chat (PDF)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export the session chat history (all messages with citations and HAVF data) to a **PDF** document.\n\n**Request body:**\n\n| Field | Type | Required | Values |\n|---|---|---|---|\n| `format` | string | **Yes** | `\"pdf\"` \\| `\"excel\"` \\| `\"bibtex\"` \\| `\"docx\"` \\| `\"latex\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment.\n> Maximum export file size: 100 MB."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.pdf\",\n  \"filename\": \"export_2026-03-02_ca86d21e.pdf\",\n  \"format\": \"pdf\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export Session Chat (Excel)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"excel\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export the session chat history to an **Excel (.xlsx)** spreadsheet.\n\nEach row contains: role, message content, cited paragraph IDs, HAVF confidence per sentence, provider, and latency.\n\n> See **Export Session Chat (PDF)** for full field documentation."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.xlsx\",\n  \"filename\": \"export_2026-03-02_ca86d21e.xlsx\",\n  \"format\": \"excel\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export Session Chat (Word / DOCX)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"docx\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export the session chat history to a **Word (.docx)** document with HAVF confidence color-coding.\n\nHIGH confidence sentences are green, MEDIUM yellow, LOW red.\n\n> See **Export Session Chat (PDF)** for full field documentation."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.docx\",\n  \"filename\": \"export_2026-03-02_ca86d21e.docx\",\n  \"format\": \"docx\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export Session Chat (LaTeX)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"latex\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export the session chat history to a **LaTeX (.tex)** document with xcolor-based HAVF confidence highlighting.\n\nCompiles with any standard LaTeX distribution (pdflatex, xelatex, lualatex).\n\n> See **Export Session Chat (PDF)** for full field documentation."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.tex\",\n  \"filename\": \"export_2026-03-02_ca86d21e.tex\",\n  \"format\": \"latex\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export Session Chat (BibTeX)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"format\": \"bibtex\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export"]
+            },
+            "description": "Export cited papers as a **BibTeX (.bib)** bibliography file.\n\nExtracts metadata (title, authors, year) from all cited papers in the session.\n\n> See **Export Session Chat (PDF)** for full field documentation."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/export_2026-03-02_ca86d21e.bib\",\n  \"filename\": \"export_2026-03-02_ca86d21e.bib\",\n  \"format\": \"bibtex\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export Comparison (PDF or Excel)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.environment.set(\"export_filename\", body.filename);",
+                  "    console.log(\"✅ export_filename →\", body.filename);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paper_ids\": [\n    \"{{paper_id}}\",\n    \"{{second_paper_id}}\"\n  ],\n  \"format\": \"pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export/comparison",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "export", "comparison"]
+            },
+            "description": "Run a paper comparison and export the result to a file in one combined request.\n\nEquivalent to `POST /compare` followed by `POST /export` but in a single call.\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `paper_ids` | string[] | **Yes** | 2–7 UUIDs of `ready` papers |\n| `format` | string | No | `\"pdf\"` (default) \\| `\"excel\"` \\| `\"bibtex\"` \\| `\"docx\"` \\| `\"latex\"` |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `download_url` | string | Relative URL to download the file |\n| `filename` | string | Generated filename |\n| `format` | string | Echo of requested format |\n\n> Use the **Download Exported File** request to retrieve the binary.\n> The test script stores `export_filename` in the environment.\n> Maximum export file size: 100 MB."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"download_url\": \"/api/v1/sessions/ca86d21e-eb4a-49a3-9beb-073a47ae7cf4/export/download/comparison_2026-03-02_ca86d21e.pdf\",\n  \"filename\": \"comparison_2026-03-02_ca86d21e.pdf\",\n  \"format\": \"pdf\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Download Exported File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/export/download/{{export_filename}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "export",
+                "download",
+                "{{export_filename}}"
+              ]
+            },
+            "description": "Download a previously generated export file by filename.\n\nSet `export_filename` in the environment first — the export requests do this automatically via their test scripts.\n\n**Path parameters:**\n- `session_id` — owning session UUID\n- `filename` — filename from the export response\n\n**Response:**\n- PDF → `Content-Type: application/pdf`\n- Excel → `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`\n- Word → `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`\n- LaTeX → `Content-Type: application/x-tex`\n- BibTeX → `Content-Type: application/x-bibtex`\n- Body is the **raw binary file**\n\n**Errors:** `404 Not Found` if the file was not found on disk."
+          },
+          "response": [
+            {
+              "name": "200 OK (PDF binary)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "text",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/pdf"
+                }
+              ],
+              "body": "<binary PDF content>"
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Export file export_2026-03-02_ca86d21e.pdf not found\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "📊 Analysis",
+      "description": "Higher-level analysis across papers: keyword extraction, research gap detection, and automatic literature review generation.",
+      "item": [
+        {
+          "name": "Get Paper Keywords",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/keywords/{{paper_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "analysis",
+                "keywords",
+                "{{paper_id}}"
+              ]
+            },
+            "description": "Extract the most significant keywords from a single paper with relevance scores.\n\nKeywords are derived from TF-IDF scoring over indexed sentence chunks.\n\n**Path parameters:**\n- `session_id` — session UUID\n- `paper_id` — paper UUID (must be `status = ready`)\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_id` | string | Paper UUID |\n| `keywords` | array | `{keyword, score}` objects ordered by relevance (desc) |\n\n**Keyword object:**\n\n| Field | Type | Description |\n|---|---|---|\n| `keyword` | string | Extracted keyword or keyphrase |\n| `score` | float | Relevance score 0.0–1.0 |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n  \"keywords\": [\n    {\n      \"keyword\": \"self-attention\",\n      \"score\": 0.95\n    },\n    {\n      \"keyword\": \"transformer\",\n      \"score\": 0.93\n    },\n    {\n      \"keyword\": \"encoder-decoder\",\n      \"score\": 0.87\n    },\n    {\n      \"keyword\": \"multi-head attention\",\n      \"score\": 0.84\n    },\n    {\n      \"keyword\": \"positional encoding\",\n      \"score\": 0.81\n    },\n    {\n      \"keyword\": \"sequence transduction\",\n      \"score\": 0.78\n    },\n    {\n      \"keyword\": \"BLEU score\",\n      \"score\": 0.74\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Gap Analysis",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/gaps",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "analysis", "gaps"]
+            },
+            "description": "Analyse all ready papers in the session to identify research themes and highlight underexplored areas (gaps).\n\n**Algorithm:**\n1. Aggregate keywords from all ready papers\n2. Cluster into high-level themes\n3. Compute per-theme coverage ratio (fraction of papers addressing it)\n4. Flag low-coverage themes as potential research gaps\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `themes` | array | All detected themes with coverage data |\n| `underexplored` | array | Subset: low-coverage themes (gaps) |\n\n**Theme object:**\n\n| Field | Type | Description |\n|---|---|---|\n| `label` | string | Theme name |\n| `keywords` | string[] | Representative keywords |\n| `papers_covering` | string[]\\|null | Paper UUIDs that address this theme |\n| `coverage_ratio` | float | 0.0–1.0 fraction of papers covering this theme |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"themes\": [\n    {\n      \"label\": \"Attention Mechanisms\",\n      \"keywords\": [\n        \"self-attention\",\n        \"multi-head attention\"\n      ],\n      \"papers_covering\": [\n        \"a1b2c3d4-0000-0000-0000-111111111111\",\n        \"a1b2c3d4-0000-0000-0000-222222222222\"\n      ],\n      \"coverage_ratio\": 1.0\n    },\n    {\n      \"label\": \"Interpretability\",\n      \"keywords\": [\n        \"attention visualization\",\n        \"explainability\",\n        \"saliency\"\n      ],\n      \"papers_covering\": [\n        \"a1b2c3d4-0000-0000-0000-111111111111\"\n      ],\n      \"coverage_ratio\": 0.5\n    }\n  ],\n  \"underexplored\": [\n    {\n      \"label\": \"Interpretability\",\n      \"keywords\": [\n        \"attention visualization\",\n        \"explainability\",\n        \"saliency\"\n      ],\n      \"papers_covering\": [\n        \"a1b2c3d4-0000-0000-0000-111111111111\"\n      ],\n      \"coverage_ratio\": 0.5\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Literature Review",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/review",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["sessions", "{{session_id}}", "analysis", "review"]
+            },
+            "description": "Generate a structured literature review synthesising all ready papers in the session.\n\nThe LLM receives each paper's indexed chunks and produces a formal academic review covering: introduction, thematic analysis, comparative discussion, and synthesis of open questions.\n\nUses a dedicated literature-review prompt template (distinct from gap analysis).\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `review` | string | Full literature review text (markdown) |\n| `paper_count` | int | Number of papers included |\n| `provider` | string | LLM provider used |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"review\": \"## Literature Review\\n\\n### Introduction\\nRecent advances in NLP have been driven by attention-based architectures...\\n\\n### Thematic Analysis\\nThe reviewed papers cluster into two major themes: self-attention mechanisms (Vaswani et al., 2017) [P1] and bidirectional pre-training (Devlin et al., 2018) [P3]...\\n\\n### Comparative Discussion\\nBoth approaches demonstrate that attention is the critical driver; however they differ on directionality...\\n\\n### Synthesis\\nInterpretability of attention heads and scaling laws remain underexplored...\",\n  \"paper_count\": 2,\n  \"provider\": \"gemini\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Literature Review (Stream / SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/review/stream",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "analysis",
+                "review",
+                "stream"
+              ]
+            },
+            "description": "Streaming variant of the Literature Review endpoint. Returns **Server-Sent Events (SSE)** so the frontend can render the review incrementally as it is generated.\n\n**SSE event types:**\n\n| Event | Description |\n|---|---|\n| `token` | Incremental LLM text chunk |\n| `done` | Final event: provider used, completion signal |\n| `error` | Unrecoverable error |\n\n**SSE format example:**\n\n```\ndata: {\"type\": \"token\", \"content\": \"## Literature\"}\ndata: {\"type\": \"token\", \"content\": \" Review\"}\ndata: {\"type\": \"token\", \"content\": \"\\n\\n### Introduction\"}\n...\ndata: {\"type\": \"done\", \"provider\": \"gemini\"}\n```\n\n> ⚠️ Postman HTTP runner has limited SSE support. Use the browser `EventSource` API or `curl --no-buffer` for best results.\n\n> Requires at least one paper with `status = ready`."
+          },
+          "response": [
+            {
+              "name": "200 OK (SSE stream)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "text",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "text/event-stream"
+                }
+              ],
+              "body": "data: {\"type\": \"token\", \"content\": \"## Literature Review\"}\n\ndata: {\"type\": \"token\", \"content\": \"\\n\\n### Introduction\"}\n\ndata: {\"type\": \"token\", \"content\": \"\\nRecent advances in NLP...\"}\n\ndata: {\"type\": \"done\", \"provider\": \"gemini\"}"
+            },
+            {
+              "name": "404 No Completed Papers",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"No completed papers found in this session. Upload and process papers first.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Paper Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sessions/{{session_id}}/analysis/summary/{{paper_id}}?question=Provide a structured summary of this paper.",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": [
+                "sessions",
+                "{{session_id}}",
+                "analysis",
+                "summary",
+                "{{paper_id}}"
+              ],
+              "query": [
+                {
+                  "key": "question",
+                  "value": "Provide a structured summary of this paper.",
+                  "description": "Optional custom question. Defaults to 'Provide a structured summary of this paper.' Max 500 chars."
+                }
+              ]
+            },
+            "description": "Generate an on-demand structured summary of a single paper.\n\nThe LLM analyses the paper's indexed chunks and produces a concise summary. Chunks are selected using a smart priority algorithm that favours abstract, introduction, conclusion, results, and methodology sections (up to 25 chunks total: 15 priority + 10 body). Optionally pass a custom `question` query parameter to focus the summary.\n\n**Path parameters:**\n- `session_id` — session UUID\n- `paper_id` — paper UUID (must be `status = ready`)\n\n**Query parameters:**\n\n| Param | Type | Required | Default | Constraints |\n|---|---|---|---|---|\n| `question` | string | No | `\"Provide a structured summary of this paper.\"` | max 500 chars |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `paper_id` | string | Paper UUID |\n| `title` | string\\|null | Paper title |\n| `summary` | string | Generated summary text |\n| `provider` | string | LLM provider used |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n  \"title\": \"Attention Is All You Need\",\n  \"summary\": \"This paper introduces the Transformer architecture, a novel sequence transduction model based entirely on self-attention mechanisms. The model eschews recurrence and convolutions while achieving state-of-the-art results on WMT 2014 English-German (28.4 BLEU) and English-French (41.0 BLEU) translation benchmarks. Key innovations include multi-head attention, positional encoding, and a scalable encoder-decoder structure that enables significantly more parallelisation during training.\",\n  \"provider\": \"gemini\"\n}"
+            },
+            {
+              "name": "404 Paper Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": \"Paper a1b2c3d4-0000-0000-0000-111111111111 not found\"\n}"
+            },
+            {
+              "name": "503 All Providers Unavailable",
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Retry-After",
+                  "value": "60"
+                }
+              ],
+              "body": "{\n  \"detail\": \"All AI providers are temporarily unavailable. Please try again in 60 seconds.\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "✅ Verification",
+      "description": "Standalone HAVF verification. Check arbitrary text (your notes, external summaries, or LLM outputs from other tools) against indexed papers for sentence-level attribution confidence.",
+      "item": [
+        {
+          "name": "Verify Text Against Papers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Transformer models have significantly improved NLP tasks by using self-attention mechanisms. BERT introduced bidirectional pre-training for language understanding.\",\n  \"paper_ids\": [\n    \"{{paper_id}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/verify/{{session_id}}",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["verify", "{{session_id}}"]
+            },
+            "description": "Verify arbitrary text against one or more indexed papers using the HAVF pipeline.\n\n**Path parameters:**\n- `session_id` — session UUID (validates paper ownership)\n\nEach sentence in `text` is independently evaluated.\n\n**HAVF algorithm:**\n\n**Level 1 (~5ms, handles ~89% of cases):**\n- Embed sentence → cosine similarity vs all source sentences in indexed papers\n- Score >= 0.85 → `HIGH` (return immediately)\n- Score 0.65–0.84 → proceed to Level 2\n- Score < 0.65 → `LOW` (return immediately)\n\n**Level 2 (~40ms, uncertain cases only):**\n- Cross-encoder reranking of top candidate source sentences\n- Score >= 0.75 → `MEDIUM`\n- Score < 0.75 → `LOW`\n\n**Request body:**\n\n| Field | Type | Required | Constraints |\n|---|---|---|---|\n| `text` | string | **Yes** | 1–10000 chars. One or more sentences. |\n| `paper_ids` | string[] | **Yes** | 1+ UUIDs of `ready` papers |\n\n**Response:** Array of `VerificationItem`:\n\n**HAVF result fields per sentence:**\n\n| Field | Type | Description |\n|---|---|---|\n| `claim` | string | The verified sentence |\n| `confidence` | string | `HIGH` \\| `MEDIUM` \\| `LOW` |\n| `score` | float | Best cosine similarity score 0.0–1.0 |\n| `source_sentence` | string\\|null | Most similar source sentence |\n| `paragraph_id` | string\\|null | Cited paragraph ID, e.g. `P5` |\n| `paper_id` | string\\|null | Source paper UUID for cross-paper attribution |\n| `sentence_key` | string\\|null | Internal sentence identifier |\\n| `verification_method` | string\\|null | `EMBEDDING_SIMILARITY` \\\\| `CROSS_ENCODER_RERANK` \\\\| `SKIPPED` |"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"results\": [\n    {\n      \"claim\": \"Transformer models have significantly improved NLP tasks by using self-attention mechanisms.\",\n      \"confidence\": \"HIGH\",\n      \"score\": 0.91,\n      \"source_sentence\": \"We propose a new simple network architecture, the Transformer, based solely on attention mechanisms.\",\n      \"paragraph_id\": \"P1\",\n      \"paper_id\": \"a1b2c3d4-0000-0000-0000-111111111111\",\n      \"sentence_key\": \"paper_a1b2c3d4_P1_S1\",\n      \"verification_method\": \"EMBEDDING_SIMILARITY\"\n    },\n    {\n      \"claim\": \"BERT introduced bidirectional pre-training for language understanding.\",\n      \"confidence\": \"HIGH\",\n      \"score\": 0.88,\n      \"source_sentence\": \"BERT is designed to pre-train deep bidirectional representations from unlabeled text.\",\n      \"paragraph_id\": \"P3\",\n      \"paper_id\": \"a1b2c3d4-0000-0000-0000-222222222222\",\n      \"sentence_key\": \"paper_a1b2c3d4_P3_S1\",\n      \"verification_method\": \"EMBEDDING_SIMILARITY\"\n    },\n    {\n      \"claim\": \"The sky is green.\",\n      \"confidence\": \"LOW\",\n      \"score\": 0.21,\n      \"source_sentence\": null,\n      \"paragraph_id\": null,\n      \"paper_id\": null,\n      \"sentence_key\": null,\n      \"verification_method\": \"SKIPPED\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "422 Validation Error",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": [\n    {\n      \"loc\": [\n        \"body\",\n        \"paper_ids\"\n      ],\n      \"msg\": \"ensure this value has at least 1 items\",\n      \"type\": \"value_error.list.min_items\"\n    }\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🔌 WebSocket",
+      "description": "Real-time paper processing progress. Use Postman's WebSocket tab (New > WebSocket Request) to connect — standard HTTP requests cannot upgrade to WebSocket.\n\n**Connection limit:** Maximum 10 concurrent WebSocket connections per session. Connections beyond the cap are closed with code `4029`.",
+      "item": [
+        {
+          "name": "Paper Processing Progress (WS)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{ws_base_url}}/ws/{{session_id}}",
+              "host": ["{{ws_base_url}}"],
+              "path": ["ws", "{{session_id}}"]
+            },
+            "description": "WebSocket endpoint for real-time paper processing progress updates.\n\n**⚠️ This is a WebSocket URL. Open Postman → New → WebSocket Request.**\n\nThe WebSocket is mounted at the app root (`/ws`), **not** under `/api/v1`.\n\n---\n\n## Connection Steps\n\n1. Call `GET /sessions/{session_id}/ws-url` to get the exact URL\n2. Open Postman → **New → WebSocket Request**\n3. Paste the returned `websocket_url` and click **Connect**\n\nOr use: `{{ws_base_url}}/ws/{{session_id}}`\n\n---\n\n## Incoming Events\n\n**Connected:**\n```json\n{ \"type\": \"connected\", \"connection_id\": \"...\" }\n```\n\n**Progress update:**\n```json\n{ \"type\": \"paper_progress\", \"paper_id\": \"...\", \"progress\": 0.3, \"stage\": \"analyzing_figures\", \"eta_seconds\": 30 }\n```\n\nValid stage values: `extracting` → `analyzing_figures` → `chunking` → `embedding` → `completed` | `failed`\n\n**Paper ready:**\n```json\n{ \"type\": \"paper_completed\", \"paper_id\": \"...\" }\n```\n\n**Paper failed:**\n```json\n{ \"type\": \"paper_failed\", \"paper_id\": \"...\", \"error\": \"PDF is password-protected\" }\n```\n\n**Batch complete (all papers in upload batch finished):**\n```json\n{ \"type\": \"upload_batch_complete\", \"paper_ids\": [\"...\", \"...\"], \"total\": 2, \"completed\": 2, \"failed\": 0 }\n```\n\n**Paper deleted:**\n```json\n{ \"type\": \"paper_deleted\", \"paper_id\": \"...\", \"session_id\": \"...\" }\n```\n\n**Session deleted:**\n```json\n{ \"type\": \"session_deleted\", \"session_id\": \"...\" }\n```\n\n---\n\n## Session Validation\n\nThe server validates the `session_id` before accepting the connection. If the session does not exist, the connection is closed immediately with close code **4004** and reason `Session not found`.\n\n**Connection limit:** Maximum 10 concurrent WebSocket connections per session. Extra connections are closed with code **4029**.\n\n---\n\n## Heartbeat\n\nThe server sends a `ping` event every 30 seconds. Send the text message `ping` — the server replies with a JSON `pong`.\n\n---\n\n## Processing Stages\n\n| Stage | Progress | Description |\n|---|---|---|\n| `extracting` | 0.1–0.25 | PDF layout extraction (pymupdf4llm) |\n| `analyzing_figures` | 0.3 | Gemini vision analysis of charts/figures |\n| `chunking` | 0.45 | Sentence-aware paragraph chunking |\n| `embedding` | 0.6–1.0 | Generating embeddings + FAISS indexing |\n| `completed` | 1.0 | Vectors written to FAISS index |"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "⚙️ Settings",
+      "description": "Runtime configuration endpoints. Changes persist only for the lifetime of the running server — they do NOT modify the `.env` file.",
+      "item": [
+        {
+          "name": "Get Ollama Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/ollama",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["settings", "ollama"]
+            },
+            "description": "Return the current Ollama-first (local LLM) toggle state and active provider order.\n\nWhen `use_local_llm` is `true`, the provider chain is Ollama → Gemini → Groq.\nWhen `false`, it is Gemini → Groq → Ollama (default).\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `use_local_llm` | bool | Whether Ollama-first mode is active |\n| `provider_order` | string[] | Current LLM fallback order |"
+          },
+          "response": [
+            {
+              "name": "200 OK — default (cloud first)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": false,\n  \"provider_order\": [\n    \"gemini\",\n    \"groq\",\n    \"ollama\"\n  ]\n}"
+            },
+            {
+              "name": "200 OK — local first",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": true,\n  \"provider_order\": [\n    \"ollama\",\n    \"gemini\",\n    \"groq\"\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Toggle Ollama Priority",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"use_local_llm\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/ollama",
+              "host": ["{{base_url}}{{api_prefix}}"],
+              "path": ["settings", "ollama"]
+            },
+            "description": "Toggle local-first (Ollama) mode at runtime.\n\nWhen `use_local_llm` is `true`, the provider fallback order becomes:\n**Ollama → Gemini → Groq**\n\nWhen `false`, it reverts to the default:\n**Gemini → Groq → Ollama**\n\nThe change persists only for the lifetime of the running server; it does NOT modify the `.env` file.\n\n**Request body:**\n\n| Field | Type | Required | Description |\n|---|---|---|---|\n| `use_local_llm` | bool | **Yes** | `true` for Ollama-first, `false` for cloud-first |\n\n**Response fields:**\n\n| Field | Type | Description |\n|---|---|---|\n| `use_local_llm` | bool | Updated toggle state |\n| `provider_order` | string[] | New LLM fallback order |"
+          },
+          "response": [
+            {
+              "name": "200 OK — toggled to local",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": true,\n  \"provider_order\": [\n    \"ollama\",\n    \"gemini\",\n    \"groq\"\n  ]\n}"
+            },
+            {
+              "name": "200 OK — toggled to cloud",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"use_local_llm\": false,\n  \"provider_order\": [\n    \"gemini\",\n    \"groq\",\n    \"ollama\"\n  ]\n}"
+            },
+            {
+              "name": "422 Validation Error",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"detail\": [\n    {\n      \"loc\": [\n        \"body\",\n        \"use_local_llm\"\n      ],\n      \"msg\": \"field required\",\n      \"type\": \"value_error.missing\"\n    }\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

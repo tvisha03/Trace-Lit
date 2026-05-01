@@ -1,37 +1,52 @@
 /** TraceLit — Chat Interface with SSE streaming */
-import { useState, useRef, useEffect, useCallback } from 'react';
-import MessageBubble from './MessageBubble';
-import useChatStore from '../../stores/chatStore';
-import usePaperStore from '../../stores/paperStore';
-import { chatApi } from '../../api/client';
-import { uid } from '../../utils/helpers';
+import { useState, useRef, useEffect, useCallback } from "react";
+import MessageBubble from "./MessageBubble";
+import StreamingMessage from "./StreamingMessage";
+import useChatStore from "../../stores/chatStore";
+import usePaperStore from "../../stores/paperStore";
+import { chatApi } from "../../api/client";
+import { uid } from "../../utils/helpers";
 
-export default function ChatInterface({ session, sessionError, onRetrySession, onCitationClick }) {
-  const [input, setInput] = useState('');
-  const [streamingText, setStreamingText] = useState('');
+export default function ChatInterface({
+  session,
+  sessionError,
+  onRetrySession,
+  onCitationClick,
+}) {
+  const [input, setInput] = useState("");
+  const [streamingText, setStreamingText] = useState("");
+  const [streamingHavf, setStreamingHavf] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const cancelStreamRef = useRef(null);
 
-  const { messages, loading, error, clearError } = useChatStore();
+  const { messages, loading, error, clearError, loadHistory, addMessage } =
+    useChatStore();
   const papers = usePaperStore((s) => s.papers);
 
-  // Collect IDs of all ready papers to pass with each chat request
+  // Backend uses uppercase enum values: COMPLETED, QUEUED, EXTRACTING, CHUNKING, EMBEDDING, FAILED
   const readyPaperIds = papers
-    .filter((p) => p.status === 'ready')
+    .filter((p) => p.status?.toUpperCase() === "COMPLETED")
     .map((p) => p.id);
+
+  // Load chat history whenever the active session changes
+  useEffect(() => {
+    if (session?.id) {
+      loadHistory(session.id);
+    }
+  }, [session?.id, loadHistory]);
 
   // Auto-scroll to latest message
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingText]);
 
   // Auto-resize textarea height
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = 'auto';
+    el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
@@ -39,59 +54,65 @@ export default function ChatInterface({ session, sessionError, onRetrySession, o
     const query = input.trim();
     if (!query || isStreaming || loading || !session) return;
 
-    setInput('');
-    setStreamingText('');
+    setInput("");
+    setStreamingText("");
 
     // Optimistically add user message
-    useChatStore.setState((state) => ({
-      messages: [...state.messages, { id: uid(), role: 'user', content: query }],
-    }));
+    addMessage({ id: uid(), role: "user", content: query });
 
     setIsStreaming(true);
-    let accumulated = '';
+    let accumulated = "";
+    // Capture HAVF results that arrive before `done` event
+    let capturedHavf = [];
 
     const cancel = chatApi.queryStream(
+      session.id,
+      { query },
       {
-        query,
-        session_id: session.id,
-        active_paper_ids: readyPaperIds.length > 0 ? readyPaperIds : null,
-      },
-      {
-        onChunk: (text) => {
-          accumulated += text;
+        onToken: (token) => {
+          accumulated += token;
           setStreamingText(accumulated);
         },
-        onDone: (metadata) => {
-          setStreamingText('');
+        onHavf: (havfResults) => {
+          // Arrives before done; stash to attach to final message
+          // Also update streaming state so citations render progressively
+          capturedHavf = Array.isArray(havfResults) ? havfResults : [];
+          setStreamingHavf(capturedHavf);
+        },
+        onDone: ({ provider, fullText }) => {
+          setStreamingText("");
+          setStreamingHavf([]);
           setIsStreaming(false);
-          useChatStore.setState((state) => ({
-            messages: [
-              ...state.messages,
-              {
-                id: metadata?.message_id || uid(),
-                role: 'assistant',
-                content: accumulated,
-                sentences: metadata?.sentences || [],
-                confidence: metadata?.overall_confidence,
-                provider: metadata?.provider,
-              },
-            ],
-            loading: false,
-          }));
+          // Prefer full_text from backend; fall back to accumulated tokens
+          const content = fullText || accumulated;
+          addMessage({
+            id: uid(),
+            role: "assistant",
+            content,
+            provider: provider ?? null,
+            havf_results: capturedHavf,
+          });
+          useChatStore.setState({ loading: false });
+          capturedHavf = [];
+          accumulated = "";
         },
         onError: (err) => {
-          setStreamingText('');
+          setStreamingText("");
+          setStreamingHavf([]);
           setIsStreaming(false);
-          useChatStore.setState({ error: err.message || 'Failed to get response', loading: false });
+          useChatStore.setState({
+            error: err.message || "Failed to get response",
+            loading: false,
+          });
         },
-      }
+      },
     );
 
     cancelStreamRef.current = cancel;
-  }, [input, isStreaming, loading, session, readyPaperIds]);
+  }, [input, isStreaming, loading, session, addMessage]);
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
@@ -102,12 +123,16 @@ export default function ChatInterface({ session, sessionError, onRetrySession, o
   const isEmpty = messages.length === 0 && !isStreaming;
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-tl-s2">
       {/* Panel header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 flex-shrink-0">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Chat</span>
+      <div className="flex items-center justify-between px-4 py-2 bg-tl-s1 border-b border-tl-b1 flex-shrink-0">
+        <span className="font-mono text-xs text-tl-t3 uppercase tracking-wider">
+          Chat
+        </span>
         {session && (
-          <span className="text-xs text-slate-400 truncate max-w-[180px]">{session.name}</span>
+          <span className="font-mono text-xs text-tl-t4 truncate max-w-[180px]">
+            {session.title ?? session.name}
+          </span>
         )}
       </div>
 
@@ -115,34 +140,41 @@ export default function ChatInterface({ session, sessionError, onRetrySession, o
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {isEmpty && (
           <div className="flex flex-col items-center justify-center h-full text-center px-8 space-y-1">
-            <p className="text-slate-400 text-sm">Upload a paper, then ask a question.</p>
-            <p className="text-slate-300 text-xs">Citations are verified automatically with HAVF.</p>
+            <p className="text-tl-t3 text-sm font-mono">
+              Upload a paper, then ask a question.
+            </p>
+            <p className="text-tl-t4 text-xs font-mono">
+              Citations verified automatically with HAVF.
+            </p>
           </div>
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} onCitationClick={onCitationClick} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            onCitationClick={onCitationClick}
+          />
         ))}
 
-        {/* Streaming response */}
+        {/* Streaming response in progress */}
         {isStreaming && streamingText && (
-          <div className="flex justify-start mb-3">
-            <div className="max-w-[85%] px-4 py-3 rounded-2xl bg-slate-100 text-slate-800 text-sm">
-              <span className="whitespace-pre-wrap">{streamingText}</span>
-              <span className="inline-block w-1.5 h-3.5 bg-blue-500 animate-pulse ml-0.5 align-text-bottom" />
-            </div>
-          </div>
+          <StreamingMessage
+            text={streamingText}
+            havfResults={streamingHavf}
+            onCitationClick={onCitationClick}
+          />
         )}
 
-        {/* Typing indicator before first chunk */}
+        {/* Waiting for first token */}
         {isStreaming && !streamingText && (
           <div className="flex justify-start mb-3">
-            <div className="px-4 py-3 rounded-2xl bg-slate-100">
+            <div className="px-4 py-3 rounded-2xl bg-tl-s2">
               <div className="flex gap-1 items-center h-4">
                 {[0, 150, 300].map((delay) => (
                   <span
                     key={delay}
-                    className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
+                    className="w-2 h-2 bg-tl-t3 rounded-full animate-bounce"
                     style={{ animationDelay: `${delay}ms` }}
                   />
                 ))}
@@ -156,28 +188,35 @@ export default function ChatInterface({ session, sessionError, onRetrySession, o
 
       {/* Error banner */}
       {error && (
-        <div className="mx-4 mb-2 px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-center justify-between flex-shrink-0">
+        <div className="mx-4 mb-2 px-3 py-2 bg-tl-low/10 border border-tl-low/30 rounded text-xs text-tl-low font-mono flex items-center justify-between flex-shrink-0">
           <span>{error}</span>
-          <button onClick={clearError} className="ml-2 font-medium hover:underline flex-shrink-0">
+          <button
+            onClick={clearError}
+            className="ml-2 font-semibold hover:underline flex-shrink-0"
+          >
             Dismiss
           </button>
         </div>
       )}
 
       {/* Input bar */}
-      <div className="px-4 py-3 border-t border-slate-200 flex-shrink-0">
+      <div className="px-4 py-3 border-t border-tl-b1 bg-tl-s1 flex-shrink-0">
         {!session && !sessionError && (
           <div className="flex items-center gap-2 mb-2">
-            <span className="inline-block w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs text-amber-600">Initialising session…</p>
+            <span className="inline-block w-3 h-3 border-2 border-tl-gold border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs text-tl-t3 font-mono">
+              Initialising session…
+            </p>
           </div>
         )}
         {!session && sessionError && (
           <div className="flex items-center gap-2 mb-2">
-            <p className="text-xs text-red-600">Session failed to load.</p>
+            <p className="text-xs text-tl-low font-mono">
+              Session failed to load.
+            </p>
             <button
               onClick={onRetrySession}
-              className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+              className="text-xs font-mono font-semibold text-tl-gold hover:underline"
             >
               Retry
             </button>
@@ -192,12 +231,12 @@ export default function ChatInterface({ session, sessionError, onRetrySession, o
             placeholder="Ask about your papers… (Enter to send, Shift+Enter for new line)"
             disabled={isBusy || !session}
             rows={1}
-            className="flex-1 resize-none px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:bg-slate-50 transition-colors"
+            className="flex-1 resize-none px-3 py-2 text-sm font-mono bg-tl-s2 border border-tl-b2 rounded-lg text-tl-t1 placeholder-tl-t4 focus:outline-none focus:border-tl-gold disabled:opacity-50 transition-colors"
           />
           <button
             onClick={handleSend}
             disabled={!canSend}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+            className="px-4 py-2 text-sm font-mono font-semibold text-tl-bg bg-tl-gold rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex-shrink-0"
           >
             Send
           </button>

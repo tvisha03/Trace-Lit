@@ -1,111 +1,111 @@
-"""TraceLit — Custom Exception Hierarchy.
-
-The system must NEVER crash. Every error is caught, logged, and handled gracefully.
-Every error path must produce a user-friendly result.
-"""
-
-
 class TraceLitError(Exception):
-    """Base exception for all TraceLit errors."""
 
-    def __init__(self, message: str, code: str, details: dict = None):
+    def __init__(self, message: str = "An unexpected error occurred", status_code: int = 500):
         self.message = message
-        self.code = code
-        self.details = details or {}
-        super().__init__(message)
+        self.status_code = status_code
+        super().__init__(self.message)
 
+class RateLimitError(TraceLitError):
 
-class ProviderError(TraceLitError):
-    """LLM provider error (rate limit, timeout, etc.)."""
-    pass
-
-
-class RateLimitError(ProviderError):
-    """Specific rate limit error — triggers provider fallback."""
-
-    def __init__(self, provider: str, retry_after: int = 60):
+    def __init__(self, provider: str):
         super().__init__(
-            message=f"{provider} rate limit exceeded",
-            code="RATE_LIMIT",
-            details={"provider": provider, "retry_after": retry_after},
+            message=f"Rate limit reached for {provider}",
+            status_code=429,
         )
+        self.provider = provider
 
+class ProviderTimeoutError(TraceLitError):
+
+    def __init__(self, provider: str, timeout_seconds: float):
+        super().__init__(
+            message=f"{provider} timed out after {timeout_seconds}s",
+            status_code=504,
+        )
+        self.provider = provider
 
 class AllProvidersFailedError(TraceLitError):
-    """All LLM providers exhausted — no response possible."""
 
-    def __init__(self, errors: list):
+    def __init__(self) -> None:
         super().__init__(
-            message="All LLM providers failed",
-            code="ALL_PROVIDERS_FAILED",
-            details={"errors": errors},
+            message="All AI providers are temporarily unavailable. Please try again in 60 seconds.",
+            status_code=503,
         )
 
+class EmptyResponseError(TraceLitError):
+
+    def __init__(self, provider: str):
+        super().__init__(
+            message=f"{provider} returned an empty response",
+            status_code=502,
+        )
+        self.provider = provider
 
 class InvalidCitationError(TraceLitError):
-    """LLM response missing proper citation format."""
 
-    def __init__(self, message: str = "LLM response lacks citation format"):
+    def __init__(self, paragraph_id: str):
         super().__init__(
-            message=message,
-            code="INVALID_CITATION",
+            message=f"Citation references unknown paragraph: {paragraph_id}",
+            status_code=422,
+        )
+        self.paragraph_id = paragraph_id
+
+class PDFExtractionError(TraceLitError):
+
+    def __init__(self, filename: str, reason: str = "extraction failed"):
+        super().__init__(
+            message=f"Failed to process '{filename}': {reason}",
+            status_code=422,
+        )
+        self.filename = filename
+
+class VectorStoreError(TraceLitError):
+
+    def __init__(self, detail: str = "vector store error"):
+        super().__init__(
+            message=f"Vector store error: {detail}",
+            status_code=500,
         )
 
+class FileValidationError(TraceLitError):
 
-class ExtractionError(TraceLitError):
-    """PDF extraction failed."""
+    def __init__(self, detail: str):
+        super().__init__(message=detail, status_code=400)
 
-    def __init__(self, message: str, paper_id: str = ""):
+class InsufficientDataError(TraceLitError):
+
+    def __init__(self, detail: str):
+        super().__init__(message=detail, status_code=400)
+
+class PDFExportError(TraceLitError):
+
+    def __init__(self, detail: str = "PDF export unavailable"):
         super().__init__(
-            message=message,
-            code="EXTRACTION_FAILED",
-            details={"paper_id": paper_id},
+            message=f"PDF export is currently unavailable: {detail}. "
+                   f"Please contact system administrator or try exporting to a different format.",
+            status_code=503,
         )
 
+class NotFoundError(TraceLitError):
 
-class PaperNotReadyError(TraceLitError):
-    """Paper still processing, not yet queryable."""
-
-    def __init__(self, paper_id: str):
+    def __init__(self, resource: str, resource_id: str):
         super().__init__(
-            message=f"Paper {paper_id} is still processing",
-            code="PAPER_NOT_READY",
-            details={"paper_id": paper_id},
+            message=f"{resource} '{resource_id}' not found",
+            status_code=404,
         )
 
+class ForbiddenError(TraceLitError):
 
-class PaperLimitError(TraceLitError):
-    """Maximum number of papers per session exceeded."""
-
-    def __init__(self, limit: int):
+    def __init__(self, resource: str, resource_id: str):
         super().__init__(
-            message=f"Maximum of {limit} papers per session",
-            code="PAPER_LIMIT_EXCEEDED",
-            details={"limit": limit},
+            message=f"Access to {resource} '{resource_id}' is forbidden",
+            status_code=403,
         )
 
+class FigureAnalysisError(TraceLitError):
 
-class FileTooLargeError(TraceLitError):
-    """Uploaded file exceeds size limit."""
-
-    def __init__(self, filename: str, size_mb: float, limit_mb: int):
+    def __init__(self, detail: str = "figure analysis failed"):
         super().__init__(
-            message=f"File '{filename}' is {size_mb:.1f}MB (limit: {limit_mb}MB)",
-            code="FILE_TOO_LARGE",
-            details={
-                "filename": filename,
-                "size_mb": size_mb,
-                "limit_mb": limit_mb,
-            },
+            message=f"Figure analysis error: {detail}",
+            status_code=500,
         )
 
-
-class InvalidFileError(TraceLitError):
-    """Uploaded file is not a valid PDF."""
-
-    def __init__(self, filename: str, reason: str = "Not a valid PDF"):
-        super().__init__(
-            message=f"Invalid file '{filename}': {reason}",
-            code="INVALID_FILE",
-            details={"filename": filename, "reason": reason},
-        )

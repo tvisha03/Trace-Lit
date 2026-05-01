@@ -1,59 +1,52 @@
-"""TraceLit — Paper, Section, and Contribution ORM models."""
 
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import String, Integer, Float, DateTime, Text, Enum as SAEnum, ForeignKey, Index
+from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.database import Base
+from shared.enums import PaperStatus
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 class Paper(Base):
-    """Uploaded research paper metadata."""
-
     __tablename__ = "papers"
 
-    id = Column(String, primary_key=True)          # UUID
-    title = Column(String, nullable=False)
-    authors = Column(Text)                          # JSON array: ["Author 1", ...]
-    year = Column(Integer)
-    pages = Column(Integer)
-    file_path = Column(String)
-    upload_date = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="processing")  # processing | ready | failed
-    error_message = Column(Text)
-    keywords = Column(Text)                         # JSON array (Phase 2)
-    summary = Column(Text)                          # On-demand summary (Phase 2)
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    session_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    authors: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
+    doi: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    status: Mapped[str] = mapped_column(
+        SAEnum(PaperStatus), default=PaperStatus.REGISTERED, index=True
+    )
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_path: Mapped[str] = mapped_column(String(1024))
+    file_size_mb: Mapped[float] = mapped_column(Float, default=0.0)
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True,
+        comment="SHA-256 hex digest of the raw PDF bytes for duplicate detection.",
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
+    __table_args__ = (
+        Index("ix_papers_session_status", "session_id", "status"),
+    )
 
-class Section(Base):
-    """Detected section within a paper."""
-
-    __tablename__ = "sections"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    paper_id = Column(String, ForeignKey("papers.id", ondelete="CASCADE"))
-    title = Column(String)
-    page_start = Column(Integer)
-    order = Column(Integer)
-
-
-class Contribution(Base):
-    """Structured comparison table entry per paper.
-
-    Each text field has a source paragraph_id for full traceability.
-    """
-
-    __tablename__ = "contributions"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    paper_id = Column(String, ForeignKey("papers.id", ondelete="CASCADE"), unique=True)
-    problem = Column(Text)
-    problem_source = Column(String)
-    method = Column(Text)
-    method_source = Column(String)
-    dataset = Column(Text)
-    dataset_source = Column(String)
-    metrics = Column(Text)
-    metrics_source = Column(String)
-    results = Column(Text)
-    results_source = Column(String)

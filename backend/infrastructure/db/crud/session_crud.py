@@ -1,46 +1,37 @@
-"""TraceLit — Session CRUD operations."""
 
-import json
-from datetime import datetime
-from typing import List, Optional
-
-from sqlalchemy.orm import Session as DBSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.session import Session
 
+async def create_session(db: AsyncSession, **kwargs) -> Session:
+    session_obj = Session(**kwargs)
+    db.add(session_obj)
+    await db.flush()
+    return session_obj
 
-def get_session(db: DBSession, session_id: str) -> Optional[Session]:
-    return db.query(Session).filter(Session.id == session_id).first()
+async def get_session(db: AsyncSession, session_id: str) -> Session | None:
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    return result.scalar_one_or_none()
 
+async def list_sessions(db: AsyncSession) -> list[Session]:
+    result = await db.execute(select(Session).order_by(Session.updated_at.desc()))
+    return list(result.scalars().all())
 
-def get_all_sessions(db: DBSession) -> List[Session]:
-    return db.query(Session).order_by(Session.updated_at.desc()).all()
+async def rename_session(db: AsyncSession, session_id: str, title: str) -> Session | None:
+    session_obj = await get_session(db, session_id)
+    if not session_obj:
+        return None
+    session_obj.title = title
+    await db.flush()
+    await db.refresh(session_obj)
+    return session_obj
 
+async def delete_session(db: AsyncSession, session_id: str) -> bool:
+    session_obj = await get_session(db, session_id)
+    if session_obj:
+        await db.delete(session_obj)
+        await db.flush()
+        return True
+    return False
 
-def create_session(db: DBSession, session: Session) -> Session:
-    db.add(session)
-    db.flush()
-    return session
-
-
-def update_session_name(db: DBSession, session_id: str, name: str) -> Optional[Session]:
-    session = get_session(db, session_id)
-    if session:
-        session.name = name
-        session.updated_at = datetime.utcnow()
-        db.flush()
-    return session
-
-
-def touch_session(db: DBSession, session_id: str) -> None:
-    """Update the updated_at timestamp."""
-    session = get_session(db, session_id)
-    if session:
-        session.updated_at = datetime.utcnow()
-        db.flush()
-
-
-def delete_session(db: DBSession, session_id: str) -> None:
-    session = get_session(db, session_id)
-    if session:
-        db.delete(session)

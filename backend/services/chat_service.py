@@ -1,251 +1,221 @@
-"""TraceLit — Chat Service (Business Logic).
+import re
+from sqlalchemy.ext.asyncio import AsyncSession
 
-Extracted from the v1 chat router for reusability.
-Handles context retrieval, LLM generation, HAVF verification, and message persistence.
-"""
+from domain.generation.chat_engine import generate_response, ChatResponse
+from domain.generation.streaming import stream_chat_response
+from infrastructure.db.crud.message_crud import create_message, get_recent_messages
+from infrastructure.db.crud.paper_crud import get_papers_by_session
+from infrastructure.db.crud.session_crud import get_session
+from infrastructure.llm.fallback_chain import FallbackChain
+from infrastructure.vector_store.faiss_store import FAISSStore
+from shared.enums import PaperStatus, MessageRole
+from shared.errors import NotFoundError
+from shared.logger import get_logger
+from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_ids
 
-import json
-import uuid
-from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Optional
-
-from loguru import logger
-from sqlalchemy.orm import Session as DBSession
-
-from api.v1.schemas import ChatQueryRequest, ChatResponse, SentenceVerification
-from domain.generation.chat_engine import classify_query_type
-from domain.retrieval.retriever import retrieve_context_paragraphs
-from domain.verification.runner import run_havf_verification
-from infrastructure.db.models.message import Message
-from infrastructure.db.models.paper import Paper
-from infrastructure.db.models.session import Session as SessionModel
-from shared.errors import PaperNotReadyError
+logger = get_logger(__name__)
 
 
-def _save_message(
-    db: DBSession,
+async def validate_response_has_citations(
+    response: str,
+    context: list[dict],
+    retrieved_paragraph_ids: list[str] | None = None,
+) -> tuple[str, bool]:
+    citation_pattern = r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]"
+    citations_found = re.findall(citation_pattern, response)
+    citations_stripped = False
+
+    if not citations_found:
+        if not context:
+            return (
+                "I couldn't find any relevant information in the provided papers to answer your question. Please try a different query or upload relevant papers.",
+                True,
+            )
+        # LLM produced an answer but without traceable citations — surface the
+        # answer rather than hiding it behind an opaque apology.  The disclaimer
+        # lets the user know they should verify the content themselves.
+        logger.warning(
+            "validate_response_has_citations: LLM response contains no traceable "
+            "paragraph citations. Returning the answer with an unverified disclaimer."
+        )
+        disclaimer = (
+            "\n\n---\n"
+            "_⚠️ Note: This response could not be automatically attributed to specific "
+            "sections of the uploaded papers. Please verify the information independently._"
+        )
+        return (response.strip() + disclaimer, True)
+
+    if retrieved_paragraph_ids:
+        raw_cited = set(extract_paragraph_ids(response))
+        valid_ids = set(retrieved_paragraph_ids)
+
+        cited_ids, short_to_long = normalize_paragraph_ids(raw_cited, valid_ids)
+        for short_id, long_id in short_to_long.items():
+            response = response.replace(f"[{short_id}]", f"[{long_id}]")
+
+        invalid_ids = cited_ids - valid_ids
+        if invalid_ids:
+            citations_stripped = True
+            logger.warning(
+                f"Stripping citations referencing non-existent paragraphs: {invalid_ids}. "
+                f"Valid IDs: {valid_ids}"
+            )
+            for bad_id in invalid_ids:
+                response = response.replace(f"[{bad_id}]", "")
+            response = re.sub(r"  +", " ", response).strip()
+
+    return response, citations_stripped
+
+
+async def _format_havf_data(response: ChatResponse) -> list[dict]:
+    return [
+        {
+            "claim": r.claim,
+            "confidence": r.confidence.value,
+            "score": r.score,
+            "source_sentence": r.source_sentence,
+            "paragraph_id": r.paragraph_id,
+            "paper_id": r.paper_id,
+            "sentence_key": r.sentence_key,
+            "verification_method": r.verification_method.value
+            if r.verification_method
+            else None,
+            "chunk_type": r.chunk_type,
+            "citation_ref": r.citation_ref,
+            "page_number": r.page_number,
+        }
+        for r in response.havf_results
+    ]
+
+
+async def _validate_and_update_response_content(
+    response: ChatResponse,
+    paper_ids: list[str],
+) -> None:
+    retrieved_para_ids = [
+        str(r.paragraph_id) for r in (response.retrieved_chunks or []) if r.paragraph_id
+    ]
+    validated_content, citations_stripped = await validate_response_has_citations(
+        response.content,
+        [{"paper_id": pid} for pid in paper_ids],
+        retrieved_paragraph_ids=retrieved_para_ids or None,
+    )
+    response.content = validated_content
+    if citations_stripped:
+        # This fires when either (a) no citations were found and a disclaimer was
+        # appended, or (b) some citations referenced non-existent paragraphs and
+        # were stripped.  Both cases degrade attribution quality.
+        logger.info(
+            "Citation validation: response modified — citations absent or referencing unknown paragraphs"
+        )
+
+
+async def _process_and_save_response(
+    response: ChatResponse,
     session_id: str,
-    role: str,
-    content: str,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> str:
-    message_id = str(uuid.uuid4())
-    msg = Message(
-        id=message_id,
-        session_id=session_id,
-        role=role,
-        content=content,
-        timestamp=datetime.utcnow(),
-        metadata_=json.dumps(metadata) if metadata else None,
-    )
-    db.add(msg)
-    db.commit()
-    return message_id
+    paper_ids: list[str],
+    db: AsyncSession,
+) -> None:
+    is_metadata = not response.retrieved_chunks and not response.havf_results
+    if not is_metadata:
+        await _validate_and_update_response_content(response, paper_ids)
 
-
-def _overall_confidence(sentences: List[SentenceVerification]) -> float:
-    if not sentences:
-        return 0.0
-    return round(sum(s.confidence for s in sentences) / len(sentences), 3)
-
-
-def _resolve_paper_ids(request: ChatQueryRequest, session: SessionModel, db: DBSession) -> List[str]:
-    """Resolve which paper IDs to use for context retrieval.
-
-    Priority: request.active_paper_ids > session.paper_ids > all ready papers.
-    """
-    if request.active_paper_ids:
-        return request.active_paper_ids
-
-    if session.paper_ids:
-        try:
-            ids = json.loads(session.paper_ids)
-            if ids:
-                return ids
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Fallback: use ALL ready papers so the user always gets context
-    ready_papers = db.query(Paper).filter(Paper.status == "ready").all()
-    if ready_papers:
-        ids = [p.id for p in ready_papers]
-        logger.info("No paper IDs on request/session — falling back to {} ready papers", len(ids))
-        return ids
-
-    return []
-
-
-async def handle_chat_query(
-    request: ChatQueryRequest,
-    session: SessionModel,
-    db: DBSession,
-) -> ChatResponse:
-    """Business logic for the non-streaming chat endpoint."""
-    from infrastructure.llm.fallback_chain import get_llm
-
-    active_paper_ids = _resolve_paper_ids(request, session, db)
-
-    for pid in active_paper_ids:
-        paper = db.query(Paper).filter(Paper.id == pid).first()
-        if paper and paper.status != "ready":
-            raise PaperNotReadyError(paper_id=pid)
-
-    context_paragraphs = retrieve_context_paragraphs(
-        db=db, paper_ids=active_paper_ids, query=request.query
-    )
-
-    logger.info(
-        "Chat query: paper_ids={}, context_paragraphs={}",
-        len(active_paper_ids), len(context_paragraphs),
-    )
-
-    _save_message(db, request.session_id, "user", request.query)
-
-    query_type = classify_query_type(request.query)
-    is_comparison = query_type == "comparison"
-
-    llm = get_llm()
-    result = await llm.generate(
-        query=request.query,
-        context_paragraphs=context_paragraphs,
-        session_id=request.session_id,
-        active_paper_ids=active_paper_ids,
-        is_comparison=is_comparison,
-    )
-
-    response_text: str = result["text"]
-    provider: str = result["provider"]
-    warning: Optional[str] = result.get("warning")
-
-    verified_sentences = await run_havf_verification(response_text, context_paragraphs)
-    overall_conf = _overall_confidence(verified_sentences)
-
-    message_id = _save_message(
+    await create_message(
         db,
-        request.session_id,
-        "assistant",
-        response_text,
-        metadata={
-            "provider": provider,
-            "overall_confidence": overall_conf,
-            "query_type": query_type,
-            "warning": warning,
-            "sentence_count": len(verified_sentences),
-        },
-    )
-
-    session.updated_at = datetime.utcnow()
-    db.commit()
-
-    return ChatResponse(
-        message_id=message_id,
-        query=request.query,
-        text=response_text,
-        sentences=verified_sentences,
-        overall_confidence=overall_conf,
-        provider=provider,
-        warning=warning,
-        metadata={
-            "query_type": query_type,
-            "context_paragraphs_used": len(context_paragraphs),
-        },
+        session_id=session_id,
+        role=MessageRole.ASSISTANT,
+        content=response.content,
+        provider=response.provider.value,
+        havf_results=await _format_havf_data(response),
+        token_count=response.token_count,
+        latency_ms=response.latency_ms,
     )
 
 
-async def stream_chat_query(
-    request: ChatQueryRequest,
-    session: SessionModel,
-    db: DBSession,
-) -> AsyncIterator[str]:
-    """Business logic for the SSE streaming chat endpoint.
+async def _prepare_chat_context(
+    session_id: str, db: AsyncSession
+) -> tuple[list[str], list]:
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
 
-    Yields raw SSE event strings.
-    """
-    from infrastructure.llm.fallback_chain import get_llm
-    from shared.errors import AllProvidersFailedError
+    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+    if not papers:
+        all_papers = await get_papers_by_session(db, session_id)
+        if not all_papers:
+            raise NotFoundError(
+                "Papers",
+                f"no papers uploaded in session {session_id}",
+            )
+        raise NotFoundError(
+            "Papers",
+            f"no completed papers in session {session_id} "
+            f"({len(all_papers)} paper(s) still processing or failed)",
+        )
 
-    active_paper_ids = _resolve_paper_ids(request, session, db)
+    paper_ids = [str(p.id) for p in papers]
+    history = await get_recent_messages(db, session_id, max_turns=4)
+    return paper_ids, history
 
-    context_paragraphs = retrieve_context_paragraphs(
-        db=db, paper_ids=active_paper_ids, query=request.query
+
+async def chat(
+    session_id: str,
+    query: str,
+    db: AsyncSession,
+    faiss_store: FAISSStore,
+    llm: FallbackChain,
+    keywords: list[str] | None = None,
+) -> ChatResponse:
+    paper_ids, history = await _prepare_chat_context(session_id, db)
+    await create_message(
+        db,
+        session_id=session_id,
+        role=MessageRole.USER,
+        content=query,
     )
-
-    logger.info(
-        "Stream chat: paper_ids={}, context_paragraphs={}",
-        len(active_paper_ids), len(context_paragraphs),
+    await db.commit()
+    response = await generate_response(
+        query=query,
+        paper_ids=paper_ids,
+        history=history,
+        faiss_store=faiss_store,
+        llm=llm,
+        db_session=db,
+        keywords=keywords,
     )
+    await _process_and_save_response(response, session_id, paper_ids, db)
+    return response
 
-    _save_message(db, request.session_id, "user", request.query)
 
-    query_type = classify_query_type(request.query)
-    is_comparison = query_type == "comparison"
-    llm = get_llm()
-
-    full_text = ""
-    provider = "unknown"
-
+async def chat_stream(
+    session_id: str,
+    query: str,
+    db: AsyncSession,
+    faiss_store: FAISSStore,
+    llm: FallbackChain,
+    keywords: list[str] | None = None,
+):
     try:
-        async for chunk in llm.stream_with_fallback(
-            query=request.query,
-            context_paragraphs=context_paragraphs,
-            session_id=request.session_id,
-            active_paper_ids=active_paper_ids,
-            is_comparison=is_comparison,
-        ):
-            full_text += chunk
-            yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+        paper_ids, history = await _prepare_chat_context(session_id, db)
 
-        state = llm.get_session_state(request.session_id)
-        provider = state.last_provider or "unknown"
-
-        havf_results = await run_havf_verification(full_text, context_paragraphs)
-        overall_conf = _overall_confidence(havf_results)
-
-        havf_data = [
-            {
-                "text": s.text,
-                "citations": s.citations,
-                "confidence": s.confidence,
-                "level": s.level,
-                "method": s.method,
-                "sources": [
-                    {
-                        "paragraph_id": src.paragraph_id,
-                        "sentence_id": src.sentence_id,
-                        "paper_id": src.paper_id,
-                        "paper_title": src.paper_title,
-                        "section": src.section,
-                        "page": src.page,
-                        "matched_text": src.matched_text,
-                    }
-                    for src in s.sources
-                ],
-            }
-            for s in havf_results
-        ]
-
-        message_id = _save_message(
+        await create_message(
             db,
-            request.session_id,
-            "assistant",
-            full_text,
-            metadata={
-                "provider": provider,
-                "query_type": query_type,
-                "overall_confidence": overall_conf,
-                "sentence_count": len(havf_results),
-            },
+            session_id=session_id,
+            role=MessageRole.USER,
+            content=query,
         )
+        await db.commit()
 
-        session.updated_at = datetime.utcnow()
-        db.commit()
-
-        yield (
-            f"data: {json.dumps({'type': 'done', 'metadata': {'message_id': message_id, 'provider': provider, 'overall_confidence': overall_conf, 'sentences': havf_data}})}\n\n"
+        return stream_chat_response(
+            query=query,
+            paper_ids=paper_ids,
+            history=history,
+            faiss_store=faiss_store,
+            llm=llm,
+            db_session=db,
+            session_id=session_id,
+            keywords=keywords,
         )
-
-    except AllProvidersFailedError as exc:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
     except Exception as exc:
-        logger.error("Stream error: {}", exc, exc_info=True)
-        yield f"data: {json.dumps({'type': 'error', 'message': 'An error occurred'})}\n\n"
+        logger.error(f"Error during chat stream setup: {exc}")
+        raise

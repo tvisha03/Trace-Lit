@@ -1,53 +1,53 @@
-"""TraceLit — Database Engine & Session Management.
+from typing import Any
 
-SQLite with WAL mode and foreign keys enabled.
-Single writer with async-compatible session factory.
-"""
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase
 
-from sqlalchemy import event, create_engine
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
+from app.config import get_settings
 
-from app.config import settings
+settings = get_settings()
 
+_SQLITE_BUSY_TIMEOUT_MS = settings.SQLITE_BUSY_TIMEOUT_MS
+_POOL_CHECKOUT_TIMEOUT_S = 60
 
-class Base(DeclarativeBase):
-    """Base class for all ORM models."""
-    pass
-
-
-@event.listens_for(Engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    """Configure SQLite pragmas for performance and correctness."""
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA cache_size=-64000")  # 64 MB page cache
-    cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.execute("PRAGMA temp_store=MEMORY")
-    cursor.close()
-
-
-engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False},
-    echo=False,
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=settings.DEBUG,
+    future=True,
+    pool_size=10,
+    max_overflow=5,
+    pool_timeout=_POOL_CHECKOUT_TIMEOUT_S,
+    pool_recycle=1800,
+    connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_MS / 1000, "check_same_thread": False},
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-def get_db() -> Session:
-    """FastAPI dependency — yields a database session, auto-closes on exit."""
-    db = SessionLocal()
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragmas(dbapi_conn: Any, _connection_record: Any) -> None:
+    cursor = dbapi_conn.cursor()
     try:
-        yield db
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS};")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
     finally:
-        db.close()
+        cursor.close()
 
+async_session_factory = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
-def init_db() -> None:
-    """Create all tables if they don't exist. Called at startup."""
-    from infrastructure.db.models import Paper, Section, Paragraph, Session as SessionModel, Message, Contribution
-    Base.metadata.create_all(bind=engine)
+class Base(DeclarativeBase):
+    pass
+
+async def init_db() -> None:
+    from infrastructure.db.models import Paper, Chunk, Session, Message  # noqa: F401
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+

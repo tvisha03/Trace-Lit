@@ -65,12 +65,12 @@ export default function PaperUpload() {
         onDragLeave={onDragLeave}
         className={`flex flex-col items-center justify-center p-3 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
           isDragOver
-            ? 'border-blue-400 bg-blue-50'
-            : 'border-slate-300 hover:border-blue-300 hover:bg-slate-50'
+            ? 'border-tl-gold bg-tl-gold/5'
+            : 'border-tl-b2 hover:border-tl-gold/50 hover:bg-tl-s3'
         }`}
       >
         <svg
-          className="w-5 h-5 text-slate-400 mb-1"
+          className="w-5 h-5 text-tl-t3 mb-1"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -82,8 +82,8 @@ export default function PaperUpload() {
             d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
           />
         </svg>
-        <span className="text-xs text-slate-500 font-medium">Drop PDFs or click to upload</span>
-        <span className="text-xs text-slate-400">PDF · max 50 MB</span>
+        <span className="text-xs text-tl-t2 font-mono">Drop PDFs or click to upload</span>
+        <span className="text-xs text-tl-t3 font-mono">PDF · max 50 MB</span>
         <input
           ref={inputRef}
           type="file"
@@ -100,15 +100,30 @@ export default function PaperUpload() {
           {queue.map((item, i) => (
             <li
               key={i}
-              className="flex items-center justify-between text-xs px-2 py-1 bg-slate-50 rounded border border-slate-100"
+              className="px-2 py-1.5 bg-tl-s2 rounded border border-tl-b1 space-y-1"
             >
               <span
-                className="truncate text-slate-600 flex-1 mr-2"
+                className="block truncate text-[11px] font-mono text-tl-t2"
                 title={item.name}
               >
                 {item.name}
               </span>
-              <ProcessingProgress status={item.status} />
+              <ProcessingProgress
+                progress={
+                  item.status === 'ready'
+                    ? 1
+                    : item.status === 'failed'
+                    ? 0
+                    : 0.02 // uploading — show a sliver so the bar is visible
+                }
+                stage={
+                  item.status === 'ready'
+                    ? 'completed'
+                    : item.status === 'failed'
+                    ? 'failed'
+                    : 'extracting'
+                }
+              />
             </li>
           ))}
         </ul>

@@ -1,75 +1,157 @@
-"""TraceLit — Application Configuration.
+from functools import lru_cache
+from urllib.parse import urlparse
 
-All configuration via environment variables + Pydantic BaseSettings.
-Rule: Never hardcode API keys, thresholds, or paths. Always use settings.xyz.
-"""
-
-from pathlib import Path
-from typing import Optional
-
+import psutil
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
+def _detect_max_parallel_papers() -> int:
+    """Set parallelism based on available system RAM."""
+    try:
+        total_gb = psutil.virtual_memory().total / (1024**3)
+    except Exception:
+        return 2
+    if total_gb <= 8:
+        return 1
+    if total_gb <= 12:
+        return 2
+    return 3
+
+
+def _detect_figure_concurrency() -> int:
+    """Reduce figure analysis concurrency on low-RAM systems."""
+    try:
+        total_gb = psutil.virtual_memory().total / (1024**3)
+    except Exception:
+        return 3
+    if total_gb <= 8:
+        return 2
+    return 3
+
+
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables and .env file."""
+    APP_NAME: str = "TraceLit"
+    APP_VERSION: str = "1.0.0"
+    DEBUG: bool = False
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
-    # === LLM API Keys ===
-    gemini_api_key: str = ""
-    groq_api_key: str = ""
+    DATABASE_URL: str = "sqlite+aiosqlite:///./data/tracelit.db"
+    SQLITE_BUSY_TIMEOUT_MS: int = 30_000
 
-    # === LLM Models ===
-    gemini_model: str = "gemini-2.5-flash"
-    groq_model: str = "llama-3.3-70b-versatile"
+    GEMINI_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
+    USE_LOCAL_LLM: bool = True
+    OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_VISION_MODEL: str = "qwen2.5vl:3b"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_API_KEY: str = ""
+    OLLAMA_CLOUD_MODEL: str = "qwen3.5:397b"
+    OLLAMA_CLOUD_VISION_MODEL: str = "qwen3-vl:235b"
+    OLLAMA_CLOUD_TIMEOUT: int = 120
+    OLLAMA_CLOUD_MAX_TOKENS: int = 4096
+    OLLAMA_CLOUD_NUM_CTX: int = 8192
 
-    # === Database ===
-    database_url: str = "sqlite:///./data/tracelit.db"
+    @field_validator("OLLAMA_BASE_URL")
+    @classmethod
+    def _validate_ollama_url(cls, v: str) -> str:  # noqa: N805
+        import ipaddress
 
-    # === ML Models ===
-    embedding_model: str = "all-MiniLM-L6-v2"
-    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"OLLAMA_BASE_URL must be an http:// or https:// URL, got: {v}"
+            )
+        if not parsed.hostname:
+            raise ValueError(f"OLLAMA_BASE_URL must include a hostname, got: {v}")
+        try:
+            hostname = parsed.hostname
+            if hostname.startswith("[") and hostname.endswith("]"):
+                hostname = hostname[1:-1]
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            pass
+        return v.rstrip("/")
 
-    # === HAVF Thresholds ===
-    high_confidence_threshold: float = 0.85
-    medium_confidence_threshold: float = 0.65
+    LLM_TIMEOUT: int = 60
+    OLLAMA_TIMEOUT: int = 600
+    OLLAMA_KEEP_ALIVE: str = "0s"
+    OLLAMA_NUM_CTX: int = 4096
+    OLLAMA_NUM_THREADS: int = 0
+    OLLAMA_MAX_TOKENS: int = 2048
+    COMPARISON_MAX_TOKENS: int = 4096
+    LLM_MAX_RETRIES: int = 1
+    LLM_RETRY_DELAY_BASE: float = 1.0
+    LLM_RATE_LIMIT_COOLDOWN_SECONDS: int = 60
+    LLM_TEMPERATURE: float = 0.3
+    REQUEST_TIMEOUT: float = 300.0
 
-    # === Application Limits ===
-    max_papers: int = 7
-    max_upload_size_mb: int = 50
-    max_concurrent_papers: int = 3
-    llm_timeout: int = 30
-    llm_temperature: float = 0.3
-    max_conversation_turns: int = 5
+    UPLOADS_DIR: str = "data/uploads"
+    EXPORTS_DIR: str = "data/exports"
+    FAISS_INDEX_DIR: str = "data/faiss_indexes"
 
-    # === Logging ===
-    log_level: str = "INFO"
-    log_file: str = "./data/logs/tracelit.log"
+    MAX_UPLOAD_FILES: int = 7
+    MAX_FILE_SIZE_MB: int = 50
+    MAX_PAPERS_PER_SESSION: int = 20
+    MAX_SESSIONS: int = 50
+    MAX_PARALLEL_PAPERS: int = Field(default_factory=_detect_max_parallel_papers)
+    ADAPTIVE_FIGURE_CONCURRENCY: int = Field(default_factory=_detect_figure_concurrency)
+    # Set FIGURE_ANALYSIS_ENABLED=false to skip vision LLM calls during paper processing.
+    # Useful when papers have many figures (>30) and fast ingestion matters more than
+    # enriching figure chunks — figures that fall back to local Ollama moondream
+    # typically return 'unknown' anyway, adding little RAG value.
+    FIGURE_ANALYSIS_ENABLED: bool = True
+    # Hard cap (seconds) for the entire figure-analysis phase per paper.
+    # Raised from 180 s to 300 s to accommodate Gemini 60-s rate-limit cooldowns.
+    FIGURE_VISION_TIMEOUT_SECONDS: int = 300
+    MAX_EXPORT_FILE_SIZE_MB: int = 100
+    MIN_DISK_SPACE_MB: int = 500
+    MEMORY_PRESSURE_THRESHOLD: float = 0.80
+    PAPER_PROCESSING_TIMEOUT_SECONDS: int = 600
+    COMPARISON_TIMEOUT_SECONDS: int = 600
 
-    # === Paths ===
-    upload_dir: str = "./data/uploads"
-    export_dir: str = "./data/exports"
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_DIMENSIONS: int = 384
+    KEYBERT_MODEL: str = "all-mpnet-base-v2"
 
-    # === FAISS / Vector Store ===
-    faiss_index_dir: str = "./data/faiss_indexes"
-
-    # === (Legacy alias — chroma_persist_dir now points at faiss_indexes) ===
-    chroma_persist_dir: str = "./data/faiss_indexes"
-    chroma_collection_name: str = "tracelit_papers"
+    HAVF_HIGH_THRESHOLD: float = 0.85
+    HAVF_MEDIUM_THRESHOLD: float = 0.65
+    HAVF_CROSS_ENCODER_THRESHOLD: float = 0.75
+    HAVF_SHORT_SENTENCE_WORDS: int = 5
+    CROSS_ENCODER_MODEL: str = "BAAI/bge-reranker-base"
 
     model_config = {
-        "env_file": [".env", "../.env"],  # check backend/.env then project root/.env
+        "env_file": ".env",
         "env_file_encoding": "utf-8",
-        "extra": "ignore",
+        "case_sensitive": True,
     }
 
-    def ensure_directories(self) -> None:
-        """Create all required data directories if they don't exist."""
-        for dir_path in [
-            self.upload_dir,
-            self.export_dir,
-            Path(self.log_file).parent,
-            self.faiss_index_dir,
-        ]:
-            Path(dir_path).mkdir(parents=True, exist_ok=True)
+    @property
+    def MAX_FILE_SIZE_BYTES(self) -> int:
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    def validate_keys(self) -> list[str]:
+        if self.USE_LOCAL_LLM:
+            return []
+        missing = []
+        if not self.GEMINI_API_KEY:
+            missing.append("GEMINI_API_KEY")
+        if not self.GROQ_API_KEY:
+            missing.append("GROQ_API_KEY")
+        return missing
+
+    def has_llm_provider(self) -> bool:
+        return (
+            bool(self.GEMINI_API_KEY)
+            or bool(self.GROQ_API_KEY)
+            or bool(self.OLLAMA_API_KEY)
+            or self.USE_LOCAL_LLM
+        )
 
 
-settings = Settings()
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()

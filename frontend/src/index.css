@@ -2,14 +2,197 @@
 @tailwind components;
 @tailwind utilities;
 
+/* TraceLit — Dark Academic Design System */
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  /* Backgrounds */
+  --bg:       #080808;
+  --s1:       #0f0f0f;
+  --s2:       #141414;
+  --s3:       #1a1a1a;
+  --s4:       #212121;
+  --s5:       #2a2a2a;
+
+  /* Borders */
+  --b1:       #222222;
+  --b2:       #2e2e2e;
+  --b3:       #3a3a3a;
+
+  /* Text */
+  --t1:       #ececec;
+  --t2:       #aaaaaa;
+  --t3:       #666666;
+  --t4:       #444444;
+
+  /* Gold accent — citations, active states */
+  --gold:         #c9a96e;
+  --gold-dim:     rgba(201,169,110,0.12);
+  --gold-glow:    rgba(201,169,110,0.06);
+
+  /* Confidence colours */
+  --hi:       #34d399;   /* HIGH  ≥85% */
+  --hi-dim:   rgba(52,211,153,0.12);
+  --med:      #fbbf24;   /* MEDIUM 65-84% */
+  --low:      #f87171;   /* LOW  <65% */
+  --info:     #60a5fa;
+
+  font-family: 'DM Sans', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
+  color: var(--t1);
+  background-color: var(--bg);
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background-color: var(--bg);
+  color: var(--t1);
+}
+
+/* Custom scrollbars to match dark theme */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: var(--s1); }
+::-webkit-scrollbar-thumb  { background: var(--s5); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--b3); }
+
+/* Gold citation links */
+.citation-link {
+  color: var(--gold);
+  font-family: 'DM Mono', monospace;
+  font-size: 0.8em;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 1px solid var(--gold);
+  transition: background 0.15s;
+}
+.citation-link:hover { background: var(--gold-dim); }
+
+/* Confidence underlines */
+.conf-high   { border-bottom: 2px solid var(--hi); }
+.conf-medium { border-bottom: 2px solid var(--med); opacity: 0.9; }
+.conf-low    { border-bottom: 2px solid var(--low); opacity: 0.8; }
+
+/* Status dot breathe animation */
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.45; transform: scale(0.75); }
+}
+.breathe { animation: breathe 3s ease-in-out infinite; }
+
+/* Sentence highlight pulse animation */
+@keyframes sentencePulse {
+  0%   { background: rgba(201,169,110,0.35); }
+  60%  { background: rgba(201,169,110,0.18); }
+  100% { background: transparent; }
+}
+.sentence-highlight { animation: sentencePulse 3s ease-out forwards; }
+
+/* PDF text layer highlight pulse and fade while staying visible after 3s */
+@keyframes pdfHighlightPulse {
+  0% {
+    background-color: rgba(255, 230, 0, 0.7);
+    box-shadow: 0 0 10px rgba(255, 230, 0, 0.8);
+  }
+  30% {
+    background-color: rgba(255, 230, 0, 0.3);
+    box-shadow: 0 0 3px rgba(255, 230, 0, 0.3);
+  }
+  60% {
+    background-color: rgba(255, 230, 0, 0.6);
+    box-shadow: 0 0 8px rgba(255, 230, 0, 0.6);
+  }
+  100% {
+    background-color: rgba(255, 230, 0, 0.35);
+    box-shadow: 0 0 4px rgba(255, 230, 0, 0.2);
+  }
+}
+
+.react-pdf__Page__textContent mark.pdf-highlight,
+mark.pdf-highlight {
+  background-color: rgba(255, 230, 0, 0.35);
+  border-radius: 2px;
+  box-shadow: 0 0 4px rgba(255, 230, 0, 0.2);
+  color: inherit;
+  animation: pdfHighlightPulse 3s ease-out;
+}
+
+.pdf-highlight-fallback {
+  background-color: rgba(255, 230, 0, 0.15);
+  border-bottom: 1px dashed rgba(255, 230, 0, 0.8);
+  color: inherit;
+  animation: pdfHighlightPulse 3s ease-out;
+}
+
+/* Markdown Rendering Styles */
+.markdown-body-summary, 
+.markdown-body-source {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--t1);
+}
+
+.markdown-body-summary h1, .markdown-body-summary h2 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 18px;
+  color: var(--t1);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  border-left: 3px solid var(--gold);
+  padding-left: 0.75rem;
+}
+
+.markdown-body-summary h3 {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gold);
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-body-summary p, .markdown-body-source p {
+  margin-bottom: 1rem;
+}
+
+.markdown-body-summary table, .markdown-body-source table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 11px;
+  border: 1px solid var(--b1);
+  background: var(--s2);
+}
+
+.markdown-body-summary th, .markdown-body-source th {
+  background: var(--s3);
+  color: var(--gold);
+  font-weight: 700;
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--b1);
+}
+
+.markdown-body-summary td, .markdown-body-source td {
+  padding: 8px 12px;
+  border: 1px solid var(--b1);
+  color: var(--t2);
+  vertical-align: top;
+}
+
+.markdown-body-summary ul, .markdown-body-summary ol {
+  margin-bottom: 1rem;
+  padding-left: 1.25rem;
+}
+
+.markdown-body-summary li {
+  margin-bottom: 0.5rem;
+  list-style-type: square;
+  color: var(--t2);
+}
+
+.markdown-body-summary li::marker {
+  color: var(--gold);
 }

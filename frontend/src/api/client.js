@@ -1,132 +1,173 @@
 /**
  * TraceLit — API Client.
- * Centralized fetch wrapper for all backend API calls.
+ * All routes mirror the FastAPI backend at /api/v1.
  */
 
-const API_BASE = '/api';
+const API_BASE = '/api/v1';
 
-/**
- * Make a fetch request with JSON handling and error normalization.
- */
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const config = {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
   };
-
-  // Don't set Content-Type for FormData (file uploads)
   if (options.body instanceof FormData) {
     delete config.headers['Content-Type'];
   }
-
   const response = await fetch(url, config);
-
   if (!response.ok) {
-    const error = await response.json().catch(() => ({
-      error: { message: response.statusText, code: 'UNKNOWN' },
-    }));
-    throw new ApiError(response.status, error);
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(response.status, body);
   }
-
-  // 204 No Content
   if (response.status === 204) return null;
-
   return response.json();
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(status, body) {
-    super(body?.error?.message || 'Request failed');
+    // Backend error shape: { detail: "..." } or { error: { message: "..." } }
+    const msg =
+      body?.detail ||
+      body?.error?.message ||
+      `Request failed with status ${status}`;
+    super(msg);
     this.status = status;
     this.code = body?.error?.code || 'UNKNOWN';
     this.details = body?.error?.details || {};
   }
 }
 
-// ---- Papers ----
+/** Build a session-scoped path. */
+const sp = (sessionId, path) => `/sessions/${sessionId}${path}`;
+
+/**
+ * Parse a fetch() response body as a named SSE stream.
+ * Backend format:
+ *   event: <name>\ndata: <json or string>\n\n
+ *
+ * Calls eventHandlers[name](parsedData) for each event.
+ */
+async function consumeSseStream(res, eventHandlers) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const dispatchBlock = (block) => {
+    if (!block.trim()) return;
+    const lines = block.split('\n');
+    let eventName = 'message';
+    let dataStr = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) eventName = line.slice(7).trim();
+      else if (line.startsWith('data: ')) dataStr = line.slice(6);
+    }
+    if (!dataStr) return;
+    let data;
+    try { data = JSON.parse(dataStr); } catch { data = dataStr; }
+    eventHandlers[eventName]?.(data);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split('\n\n');
+    buffer = blocks.pop() ?? '';
+    for (const block of blocks) dispatchBlock(block);
+  }
+  if (buffer.trim()) dispatchBlock(buffer);
+}
+
+// ─── Papers ──────────────────────────────────────────────────────────────────
 export const papersApi = {
-  upload: (files) => {
-    const formData = new FormData();
-    files.forEach((f) => formData.append('files', f));
-    return request('/papers/upload', { method: 'POST', body: formData });
+  upload: (sessionId, files) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f));
+    return request(sp(sessionId, '/papers'), { method: 'POST', body: fd });
+    // Returns: { paper_ids: string[], message: string }
   },
-  list: () => request('/papers'),
-  get: (id) => request(`/papers/${id}`),
-  content: (id) => request(`/papers/${id}/content`),
-  delete: (id) => request(`/papers/${id}`, { method: 'DELETE' }),
+  list: (sessionId) =>
+    request(sp(sessionId, '/papers')).then((r) => r.papers ?? r),
+    // Returns: PaperResponse[] — each has { id, session_id, filename, title, authors,
+    //   year, abstract, status ("QUEUED"|"EXTRACTING"|"CHUNKING"|"EMBEDDING"|"COMPLETED"|"FAILED"),
+    //   progress, page_count, chunk_count, file_size_mb, error_message, created_at }
+  get: (sessionId, id) => request(sp(sessionId, `/papers/${id}`)),
+  delete: (sessionId, id) =>
+    request(sp(sessionId, `/papers/${id}`), { method: 'DELETE' }),
+  getChunks: (sessionId, paperId) =>
+    request(sp(sessionId, `/papers/${paperId}/chunks`)),
+  /** Returns a URL string suitable for window.open() — browser streams the PDF directly. */
+  getPdfUrl: (sessionId, paperId) =>
+    `${API_BASE}${sp(sessionId, `/papers/${paperId}/pdf`)}`,
 };
 
-// ---- Sessions ----
+// ─── Sessions ─────────────────────────────────────────────────────────────────
 export const sessionsApi = {
-  list: () => request('/sessions'),
+  list: () => request('/sessions').then((r) => r.sessions ?? r),
+  // Returns: SessionResponse[] — each { id, title, description, created_at, updated_at }
   create: (data) => request('/sessions', { method: 'POST', body: JSON.stringify(data) }),
+  // Body: { title?: string, description?: string }
   get: (id) => request(`/sessions/${id}`),
-  update: (id, data) => request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  getWebsocketUrl: (id) => request(`/sessions/${id}/ws-url`),
+  update: (id, data) =>
+    request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),
 };
 
-// ---- Chat ----
+// ─── Chat ─────────────────────────────────────────────────────────────────────
 export const chatApi = {
-  query: (data) => request('/chat/query', { method: 'POST', body: JSON.stringify(data) }),
+  // Non-streaming query — returns ChatResponse { content, provider, havf_results, token_count, latency_ms }
+  query: (sessionId, data) =>
+    request(sp(sessionId, '/chat'), { method: 'POST', body: JSON.stringify(data) }),
+
+  // Fetch message history — returns { messages: MessageResponse[], total, limit, offset }
+  getMessages: (sessionId, { limit, offset } = {}) => {
+    const params = new URLSearchParams();
+    if (limit != null) params.set('limit', limit);
+    if (offset != null) params.set('offset', offset);
+    const qs = params.toString();
+    return request(sp(sessionId, `/chat/messages${qs ? `?${qs}` : ''}`));
+  },
 
   /**
-   * Stream a cited response via SSE.
-   * SSE events: { type: 'chunk', text } | { type: 'done', metadata } | { type: 'error', message }
-   * Returns a cancel function.
+   * Stream a response via SSE.
+   * Backend events (event: <name> / data: <json>):
+   *   query_type  → { type: "chat"|"comparison"|"summary" }
+   *   sources     → [{ paragraph_id, paper_id, score }]
+   *   token       → { token: string }
+   *   warning     → { detail: string }
+   *   havf        → [VerificationItem]
+   *   done        → { provider: string, full_text: string }
+   *   error       → "error message string"
+   *
+   * Handlers: { onToken, onSources, onHavf, onDone, onError, onWarning }
+   * Returns: cancel function.
    */
-  queryStream: (data, { onChunk, onDone, onError } = {}) => {
+  queryStream: (sessionId, data, handlers = {}) => {
     const ctrl = new AbortController();
+    const { onToken, onSources, onHavf, onDone, onError, onWarning } = handlers;
 
-    fetch(`${API_BASE}/chat/query/stream`, {
+    fetch(`${API_BASE}${sp(sessionId, '/chat/stream')}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      // Backend ChatRequest: { query, keywords? } — stream field not needed for /stream route
+      body: JSON.stringify({ query: data.query, keywords: data.keywords ?? undefined }),
       signal: ctrl.signal,
     })
       .then(async (res) => {
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-          onError?.(new ApiError(res.status, err));
+          const body = await res.json().catch(() => ({}));
+          onError?.(new ApiError(res.status, body));
           return;
         }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === 'chunk') onChunk?.(event.text);
-              else if (event.type === 'done') onDone?.(event.metadata);
-              else if (event.type === 'error') onError?.(new Error(event.message));
-            } catch {
-              // ignore malformed SSE lines
-            }
-          }
-        }
-
-        // Process any remaining buffer after stream ends
-        if (buffer.trim()) {
-          const remaining = buffer.split('\n');
-          for (const line of remaining) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === 'chunk') onChunk?.(event.text);
-              else if (event.type === 'done') onDone?.(event.metadata);
-              else if (event.type === 'error') onError?.(new Error(event.message));
-            } catch { /* ignore */ }
-          }
-        }
+        await consumeSseStream(res, {
+          token: (d) => onToken?.(typeof d === 'string' ? d : d.token ?? ''),
+          sources: (d) => onSources?.(Array.isArray(d) ? d : []),
+          havf: (d) => onHavf?.(Array.isArray(d) ? d : []),
+          done: (d) => onDone?.({ provider: d.provider, fullText: d.full_text }),
+          warning: (d) => onWarning?.(typeof d === 'string' ? d : d.detail),
+          error: (d) => onError?.(new Error(typeof d === 'string' ? d : JSON.stringify(d))),
+        });
       })
       .catch((err) => {
         if (err.name !== 'AbortError') onError?.(err);
@@ -136,54 +177,141 @@ export const chatApi = {
   },
 };
 
-// ---- Comparison ----
+// ─── Comparison ───────────────────────────────────────────────────────────────
 export const compareApi = {
-  get: (sessionId) => request(`/compare/${sessionId}`),
-  generate: (sessionId) => request(`/compare/${sessionId}/generate`, { method: 'POST' }),
+  // Body: { paper_ids: string[] } (min 2)
+  // Returns: { comparison, comparison_table: [{dimension, cells: [{paper_id, paper_title, content}], synthesis}],
+  //            paper_ids, paper_titles, provider }
+  generate: (sessionId, paperIds) =>
+    request(sp(sessionId, '/compare'), {
+      method: 'POST',
+      body: JSON.stringify({ paper_ids: paperIds }),
+    }),
+  // Returns: { paper_id, title, contributions: object }
+  contributions: (sessionId, paperId) =>
+    request(sp(sessionId, `/compare/contributions/${paperId}`)),
 };
 
-// ---- Export ----
+// ─── Analysis ─────────────────────────────────────────────────────────────────
+export const analysisApi = {
+  // GET → { paper_id, keywords: [{ keyword: string, score: float }] }
+  keywords: (sessionId, paperId) =>
+    request(sp(sessionId, `/analysis/keywords/${paperId}`)),
+
+  // GET → { themes: ThemeItem[], underexplored: ThemeItem[], narrative, provider }
+  //        ThemeItem: { label, keywords: string[], papers_covering?: string[], coverage_ratio: float }
+  gaps: (sessionId) => request(sp(sessionId, '/analysis/gaps')),
+
+  // GET → { paper_id, title, summary, provider }
+  // Optional `question` focuses the summary (e.g. "What methodology is used?")
+  summary: (sessionId, paperId, question) => {
+    const qs = question ? `?question=${encodeURIComponent(question)}` : '';
+    return request(sp(sessionId, `/analysis/summary/${paperId}${qs}`));
+  },
+
+  // GET → { review: string, paper_count: int, provider: string }
+  review: (sessionId) => request(sp(sessionId, '/analysis/review')),
+
+  /** Stream literature review. Events: token → {token}, done → {provider, full_text} */
+  reviewStream: (sessionId, handlers = {}) => {
+    const ctrl = new AbortController();
+    const { onToken, onDone, onError } = handlers;
+
+    fetch(`${API_BASE}${sp(sessionId, '/analysis/review/stream')}`, {
+      method: 'GET',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) { onError?.(new Error(`HTTP ${res.status}`)); return; }
+        await consumeSseStream(res, {
+          token: (d) => onToken?.(typeof d === 'string' ? d : d.token ?? ''),
+          done: (d) => onDone?.(d),
+          error: (d) => onError?.(new Error(typeof d === 'string' ? d : JSON.stringify(d))),
+        });
+      })
+      .catch((err) => { if (err.name !== 'AbortError') onError?.(err); });
+
+    return () => ctrl.abort();
+  },
+
+  /** Stream paper summary. Events: token → {token}, done → {provider, full_text, title, paper_id} */
+  summaryStream: (sessionId, paperId, question, handlers = {}) => {
+    const ctrl = new AbortController();
+    const { onToken, onDone, onError } = handlers;
+    const qs = question ? `?question=${encodeURIComponent(question)}` : '';
+
+    fetch(`${API_BASE}${sp(sessionId, `/analysis/summary/${paperId}/stream${qs}`)}`, {
+      method: 'GET',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) { onError?.(new Error(`HTTP ${res.status}`)); return; }
+        await consumeSseStream(res, {
+          token: (d) => onToken?.(typeof d === 'string' ? d : d.token ?? ''),
+          done: (d) => onDone?.(d),
+          error: (d) => onError?.(new Error(typeof d === 'string' ? d : JSON.stringify(d))),
+        });
+      })
+      .catch((err) => { if (err.name !== 'AbortError') onError?.(err); });
+
+    return () => ctrl.abort();
+  },
+};
+
+// ─── Export ───────────────────────────────────────────────────────────────────
 export const exportApi = {
-  pdf: async (sessionId) => {
-    const res = await fetch(`${API_BASE}/export/pdf`, {
+  /**
+   * Export session chat as PDF or Excel.
+   * 1) POST /export with {format} → {download_url, filename, format}
+   * 2) GET download_url → triggers browser download
+   */
+  export: async (sessionId, format) => {
+    const meta = await request(sp(sessionId, '/export'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify({ format }),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-      throw new ApiError(res.status, err);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    // meta.download_url is absolute path like /api/v1/sessions/{id}/export/download/{filename}
+    const downloadUrl = `${meta.download_url}`;
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `tracelit_export_${sessionId}.pdf`;
+    a.href = downloadUrl;
+    a.download = meta.filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    return meta;
   },
-  excel: async (sessionId) => {
-    const res = await fetch(`${API_BASE}/export/excel`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: { message: res.statusText } }));
-      throw new ApiError(res.status, err);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `tracelit_export_${sessionId}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  },
+
+  // Convenience wrappers kept for backward compat
+  pdf: (sessionId) => exportApi.export(sessionId, 'pdf'),
+  excel: (sessionId) => exportApi.export(sessionId, 'excel'),
+
+  // List available exports for session
+  list: (sessionId) => request(sp(sessionId, '/export')),
 };
 
-export { ApiError };
+// ─── Verification ─────────────────────────────────────────────────────────────
+export const verifyApi = {
+  /**
+   * Verify a text claim against uploaded papers.
+   * POST /api/v1/verify/{session_id}
+   * Body: { text: string, paper_ids: string[] }
+   * Returns: { results: VerificationItem[] }
+   */
+  verify: (sessionId, text, paperIds) =>
+    request(`/verify/${sessionId}`, {
+      method: 'POST',
+      body: JSON.stringify({ text, paper_ids: paperIds }),
+    }),
+};
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+export const settingsApi = {
+  // GET → { use_local_llm: bool, provider_order: string[] }
+  getOllama: () => request('/settings/ollama'),
+  // PUT body: { use_local_llm: bool } → { use_local_llm: bool, provider_order: string[] }
+  setOllama: (useLocal) =>
+    request('/settings/ollama', {
+      method: 'PUT',
+      body: JSON.stringify({ use_local_llm: useLocal }),
+    }),
+};

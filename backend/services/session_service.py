@@ -1,133 +1,120 @@
-"""TraceLit — Session Service (Business Logic).
+from sqlalchemy.ext.asyncio import AsyncSession
 
-Thin facade over session CRUD — used by both v1 and legacy routers.
-"""
+from infrastructure.db.crud.session_crud import (
+    create_session,
+    get_session,
+    list_sessions,
+    rename_session,
+    delete_session as db_delete_session,
+)
+from infrastructure.db.crud.message_crud import delete_messages_by_session
+from infrastructure.db.crud.paper_crud import get_papers_by_session, delete_paper
+from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
+from infrastructure.storage.file_storage import FileStorage
+from infrastructure.vector_store.faiss_store import FAISSStore
+from shared.enums import PaperStatus
+from shared.errors import NotFoundError, TraceLitError
+from shared.logger import get_logger
 
-import json
-import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+logger = get_logger(__name__)
 
-from loguru import logger
-from sqlalchemy.orm import Session as DBSession
-
-from api.v1.schemas import SessionCreateRequest, SessionSchema, SessionUpdateRequest
-from infrastructure.db.models.message import Message
-from infrastructure.db.models.session import Session as SessionModel
-
-
-def _session_to_schema(session: SessionModel) -> SessionSchema:
-    paper_ids: List[str] = []
-    if session.paper_ids:
-        try:
-            paper_ids = json.loads(session.paper_ids)
-        except (json.JSONDecodeError, TypeError):
-            paper_ids = []
-
-    return SessionSchema(
-        id=session.id,
-        name=session.name or "Untitled Session",
-        created_at=session.created_at.isoformat() if session.created_at else "",
-        updated_at=session.updated_at.isoformat() if session.updated_at else None,
-        paper_ids=paper_ids,
+async def create_new_session(
+    db: AsyncSession,
+    title: str | None = None,
+    description: str | None = None,
+) -> dict:
+    session = await create_session(
+        db,
+        title=title or "New Session",
+        description=description,
     )
-
-
-async def list_sessions(db: DBSession) -> List[SessionSchema]:
-    sessions = (
-        db.query(SessionModel)
-        .order_by(SessionModel.updated_at.desc())
-        .all()
-    )
-    return [_session_to_schema(s) for s in sessions]
-
-
-async def create_session(request: SessionCreateRequest, db: DBSession) -> SessionSchema:
-    session_id = str(uuid.uuid4())
-    now = datetime.utcnow()
-
-    session = SessionModel(
-        id=session_id,
-        name=request.name or "Untitled Session",
-        created_at=now,
-        updated_at=now,
-        paper_ids=json.dumps(request.paper_ids) if request.paper_ids else "[]",
-    )
-    db.add(session)
-    db.commit()
-    db.refresh(session)
-    logger.info("Session created: {} ({})", session_id, session.name)
-    return _session_to_schema(session)
-
-
-async def get_session_with_history(
-    session_id: str,
-    db: DBSession,
-) -> Optional[Dict[str, Any]]:
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        return None
-
-    messages = (
-        db.query(Message)
-        .filter(Message.session_id == session_id)
-        .order_by(Message.timestamp.asc())
-        .all()
-    )
-
-    message_list = []
-    for msg in messages:
-        meta: Dict = {}
-        if msg.metadata_:
-            try:
-                meta = json.loads(msg.metadata_)
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
-        message_list.append({
-            "id": msg.id,
-            "role": msg.role,
-            "content": msg.content,
-            "timestamp": msg.timestamp.isoformat() if msg.timestamp else "",
-            "metadata": meta,
-        })
-
-    schema = _session_to_schema(session)
     return {
-        "id": schema.id,
-        "name": schema.name,
-        "created_at": schema.created_at,
-        "updated_at": schema.updated_at,
-        "paper_ids": schema.paper_ids,
-        "messages": message_list,
+        "id": str(session.id),
+        "title": session.title,
+        "description": session.description,
+        "created_at": session.created_at.isoformat(),
     }
 
+async def get_session_detail(db: AsyncSession, session_id: str) -> dict:
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
+    return {
+        "id": str(session.id),
+        "title": session.title,
+        "description": session.description,
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+    }
 
-async def update_session(
+async def list_all_sessions(db: AsyncSession) -> list[dict]:
+    sessions = await list_sessions(db)
+    return [
+        {
+            "id": str(s.id),
+            "title": s.title,
+            "created_at": s.created_at.isoformat(),
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        }
+        for s in sessions
+    ]
+
+async def update_session_title(db: AsyncSession, session_id: str, new_title: str) -> dict:
+    session = await rename_session(db, session_id, new_title)
+    if not session:
+        raise NotFoundError("Session", session_id)
+    return {
+        "id": str(session.id),
+        "title": session.title,
+        "description": session.description,
+        "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+    }
+
+async def delete_full_session(
+    db: AsyncSession,
     session_id: str,
-    request: SessionUpdateRequest,
-    db: DBSession,
-) -> Optional[SessionSchema]:
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        return None
+    faiss_store: FAISSStore,
+    file_storage: FileStorage,
+) -> list[str]:
+    papers = await get_papers_by_session(db, session_id)
+    paper_ids = [str(p.id) for p in papers]
 
-    if request.name is not None:
-        session.name = request.name
-    if request.paper_ids is not None:
-        session.paper_ids = json.dumps(request.paper_ids)
-    session.updated_at = datetime.utcnow()
-    db.commit()
-    db.refresh(session)
-    logger.info("Session updated: {} (name={}, papers={})", session_id, session.name, request.paper_ids)
-    return _session_to_schema(session)
+    _processing_statuses = {
+        PaperStatus.QUEUED,
+        PaperStatus.EXTRACTING,
+        PaperStatus.CHUNKING,
+        PaperStatus.EMBEDDING,
+    }
+    active_papers = [p for p in papers if p.status in _processing_statuses]
+    if active_papers:
+        active_ids = [str(p.id) for p in active_papers]
+        raise TraceLitError(
+            message=(
+                f"Cannot delete session '{session_id}': "
+                f"{len(active_papers)} paper(s) are still processing ({', '.join(active_ids)}). "
+                "Please wait for processing to complete or fail before deleting."
+            ),
+            status_code=409,
+        )
 
+    for paper in papers:
+        faiss_store.remove_paper(str(paper.id))
+        await delete_chunks_by_paper(db, str(paper.id))
+        await delete_paper(db, str(paper.id))
 
-async def delete_session(session_id: str, db: DBSession) -> bool:
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        return False
-    db.query(Message).filter(Message.session_id == session_id).delete()
-    db.delete(session)
-    db.commit()
-    logger.info("Session deleted: {}", session_id)
-    return True
+    await delete_messages_by_session(db, session_id)
+
+    deleted = await db_delete_session(db, session_id)
+    if not deleted:
+        raise NotFoundError("Session", session_id)
+
+    await db.commit()
+
+    faiss_store.save()
+    file_storage.delete_session_uploads(session_id)
+    file_storage.delete_session_exports(session_id)
+
+    logger.info(f"Deleted session {session_id} with {len(papers)} papers")
+    return paper_ids
+

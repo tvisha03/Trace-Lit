@@ -1,272 +1,547 @@
-"""TraceLit — HAVF (Hybrid Attribution Verification Framework). ⭐ CORE INNOVATION
-
-Two-stage verification pipeline:
-  Level 1: Fast embedding similarity (all-MiniLM-L6-v2) — handles ~89% of cases
-  Level 2: Cross-encoder reranking (ms-marco-MiniLM-L-6-v2) — uncertain cases only
-
-Confidence Levels:
-  HIGH   (≥0.85): Well-supported — green solid underline
-  MEDIUM (0.65–0.84): Partially supported — yellow dashed underline
-  LOW    (<0.65): Weakly supported — red dotted underline
-"""
-
-import json
+import asyncio
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from domain.verification.embedding_verifier import verify_claims_embedding
+from domain.verification.noise_filter import clean_source_text, is_noise_source
+from domain.verification.reranker import rerank_claims
+from app.config import get_settings
+from shared.enums import ConfidenceLevel, VerificationMethod
+from shared.utils.text_utils import split_into_sentences
+from shared.logger import get_logger
+from shared.utils.time_utils import timer
 
-import numpy as np
-from loguru import logger
+logger = get_logger(__name__)
 
-from app.config import settings
-from infrastructure.vector_store.embedder import MPSAcceleratedEmbedder, get_embedder
+# Standardized pattern: accepts 1-8 hex chars to match all valid citation formats
+_CITATION_ID_RE = re.compile(r"\[((?:[a-f0-9]{1,8}_)?[PTFE]\d+)\]")
+_MD_BOLD_RE = re.compile(r"\*{1,3}(.+?)\*{1,3}")
+_MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_MD_LIST_RE = re.compile(r"^[\s]*[-*+]\s+", re.MULTILINE)
+_MD_NUM_LIST_RE = re.compile(r"^[\s]*\d+\.\s+", re.MULTILINE)
+_NON_TEXT_PREFIXES = frozenset({"F", "T", "E"})
+
+_BRACKET_METADATA_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")
+_CAPTION_EXTRACT_RE = re.compile(r"\[Caption:\s*(.+?)\]")
+_TABLE_DESC_LINE_RE = re.compile(
+    r"This (?:table|figure) is from the paper\s*'.+?'\.\s*"
+    r"(?:It presents:.*?\.)?\s*"
+    r"(?:The table contains.*?columns\.)?\s*",
+    re.IGNORECASE,
+)
+_TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
+_MAX_DISPLAY_CHARS = 300
 
 
-HIGH_THRESHOLD = settings.high_confidence_threshold
-MEDIUM_THRESHOLD = settings.medium_confidence_threshold
-RERANK_THRESHOLD = 0.75
+def _clean_table_source(stripped: str, caption: str | None) -> str:
+    stripped = _TABLE_DESC_LINE_RE.sub("", stripped).strip()
+    if caption:
+        header_row = _find_first_table_header(stripped)
+        return f"{caption}\n{header_row}" if header_row else caption
+    lines = stripped.split("\n")
+    return lines[0].strip() if lines else stripped
 
 
-# ============================================================
-# Citation helpers (shared)
-# ============================================================
+def _clean_figure_source(stripped: str, caption: str | None) -> str:
+    if caption:
+        return _MD_BOLD_RE.sub(r"\1", caption)
+    # If no caption, try to return a cleaner first line or just a label
+    lines = stripped.split("\n")
+    first = lines[0].strip() if lines else ""
+    if "Figure" in first or "Fig." in first:
+        return first
+    return "Figure/Image Content"
 
-def parse_response_into_sentences(response_text: str) -> List[Dict[str, Any]]:
-    """Parse an LLM response into {text, citations} dicts."""
-    citation_pattern = re.compile(r"\[P(\d+)\]")
-    # Split on sentence endings
-    raw_sentences = re.split(r"(?<=[.!?])\s+", response_text.strip())
-    result = []
-    for sent in raw_sentences:
-        sent = sent.strip()
-        if not sent:
-            continue
-        citation_ids = [f"P{m}" for m in citation_pattern.findall(sent)]
-        result.append({"text": sent, "citations": citation_ids})
+
+def _clean_formula_source(stripped: str) -> str:
+    lines = stripped.split("\n")
+    meaningful = [
+        ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("##")
+    ]
+    return " ".join(meaningful[:2])
+
+
+_CHUNK_SOURCE_CLEANERS = {
+    "table": _clean_table_source,
+    "figure": _clean_figure_source,
+}
+
+
+def _clean_source_for_display(
+    source_text: str | None,
+    chunk_type: str | None,
+) -> str | None:
+    if not source_text:
+        return source_text
+
+    # Always strip system citation markers like [abc12345_P12] for display
+    source_text = _CITATION_ID_RE.sub("", source_text).strip()
+
+    if chunk_type == "text" or chunk_type is None:
+        return _truncate_display(source_text, source_text)
+
+    caption_match = _CAPTION_EXTRACT_RE.search(source_text)
+    caption = caption_match.group(1).strip() if caption_match else None
+    stripped = _BRACKET_METADATA_RE.sub("", source_text).strip()
+
+    cleaner = _CHUNK_SOURCE_CLEANERS.get(chunk_type)
+    if cleaner:
+        result = cleaner(stripped, caption)
+    elif chunk_type == "formula":
+        result = _clean_formula_source(stripped)
+    else:
+        result = stripped
+
+    return _truncate_display(result, source_text)
+
+
+def _truncate_display(result: str, fallback: str) -> str:
+    if not result:
+        return fallback
+    if len(result) > _MAX_DISPLAY_CHARS:
+        return result[:_MAX_DISPLAY_CHARS].rstrip() + "..."
     return result
 
 
-def build_cited_paragraphs_map(context_paragraphs: List[Dict]) -> Dict[str, Dict]:
-    """Build paragraph_id → paragraph dict lookup (handles paper-prefixed IDs)."""
-    para_map: Dict[str, Dict] = {}
-    for para in context_paragraphs:
-        pid = para.get("paragraph_id", "")
-        if pid:
-            para_map[pid] = para
-            # Also index by the short Pn key if the full key contains a paper_id prefix
-            parts = pid.split("_")
-            short_key = "_".join(p for p in parts if p.startswith("P"))
-            if short_key and short_key != pid:
-                para_map[short_key] = para
-    return para_map
+def _find_first_table_header(text: str) -> str | None:
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("|") and not _TABLE_SEPARATOR_RE.match(line):
+            return line
+    return None
 
 
-# ============================================================
-# HAVF Verifier
-# ============================================================
+def _postprocess_display_sources(
+    results: list["VerificationResult"],
+) -> list["VerificationResult"]:
+    return [
+        VerificationResult(
+            claim=r.claim,
+            confidence=r.confidence,
+            score=r.score,
+            source_sentence=_clean_source_for_display(
+                r.source_sentence,
+                r.chunk_type,
+            ),
+            paragraph_id=r.paragraph_id,
+            paper_id=r.paper_id,
+            sentence_key=r.sentence_key,
+            verification_method=r.verification_method,
+            chunk_type=r.chunk_type,
+            citation_ref=r.citation_ref,
+            page_number=r.page_number,
+            bbox=r.bbox,
+            full_context=r.full_context,
+        )
+        for r in results
+    ]
 
-class HAVFVerifier:
-    """Hybrid Attribution Verification Framework."""
 
-    def __init__(
-        self,
-        embedder: Optional[MPSAcceleratedEmbedder] = None,
-        high_threshold: float = HIGH_THRESHOLD,
-        medium_threshold: float = MEDIUM_THRESHOLD,
-        rerank_threshold: float = RERANK_THRESHOLD,
-    ) -> None:
-        self._embedder = embedder
-        self._cross_encoder = None
-        self._cross_encoder_model = settings.cross_encoder_model
-        self.high_threshold = high_threshold
-        self.medium_threshold = medium_threshold
-        self.rerank_threshold = rerank_threshold
+def _is_non_text_paragraph(paragraph_id: str | None) -> bool:
+    if not paragraph_id:
+        return False
+    # Check for IDs like paperid_P1, paperid_F3, etc.
+    if "_" in paragraph_id:
+        suffix = paragraph_id.split("_")[-1]
+        return suffix[:1] in _NON_TEXT_PREFIXES
+    return paragraph_id[:1] in _NON_TEXT_PREFIXES
 
-    @property
-    def embedder(self) -> MPSAcceleratedEmbedder:
-        if self._embedder is None:
-            self._embedder = get_embedder()
-        return self._embedder
 
-    def _ensure_cross_encoder(self) -> None:
-        if self._cross_encoder is None:
-            from sentence_transformers import CrossEncoder
-            logger.info("Loading cross-encoder: {}", self._cross_encoder_model)
-            self._cross_encoder = CrossEncoder(self._cross_encoder_model, max_length=512)
-            logger.info("Cross-encoder loaded")
+def _strip_markdown_for_claims(text: str) -> str:
+    text = _MD_BOLD_RE.sub(r"\1", text)
+    text = _MD_HEADING_RE.sub("", text)
+    text = _MD_LIST_RE.sub("", text)
+    text = _MD_NUM_LIST_RE.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
-    # ------------------------------------------------------------------
 
-    async def verify_response(
-        self,
-        response_sentences: List[Dict[str, Any]],
-        cited_paragraphs: Dict[str, Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Verify all sentences in a generated response."""
-        if not response_sentences:
-            return []
+def _split_into_verifiable_claims(text: str) -> list[str]:
+    cleaned = _strip_markdown_for_claims(text)
+    paragraphs = re.split(r"\n\s*\n", cleaned)
+    claims: list[str] = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        sentences = split_into_sentences(para)
+        claims.extend(sentences)
+    return [c for c in claims if c.strip()]
 
-        results: List[Any] = []
-        to_verify: List[Tuple[int, Dict, str]] = []
 
-        for sent in response_sentences:
-            text = sent.get("text", "").strip()
-            if len(text) < 20:
-                results.append(self._skip_result(sent, "skipped_short"))
+def _extract_cited_para_id(claim: str) -> str | None:
+    match = _CITATION_ID_RE.search(claim)
+    return match.group(1) if match else None
+
+
+def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
+    index: dict[str, dict] = {}
+    for src in source_sentences:
+        pid = src.get("paragraph_id")
+        if pid and pid not in index:
+            # Also handle the sentence-level key if needed, 
+            # but primary index is by paragraph_id for citation matching
+            index[pid] = src
+    return index
+
+
+def _apply_citation_correction(
+    results: list["VerificationResult"],
+    para_source_index: dict[str, dict],
+    ce_threshold: float | None = None,
+) -> list["VerificationResult"]:
+    # Use settings value if not provided
+    if ce_threshold is None:
+        ce_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
+    
+    from domain.retrieval.indexer import encode_texts
+    import numpy as np
+
+    corrected = []
+    for result in results:
+        cited_pid = _extract_cited_para_id(result.claim)
+        if cited_pid and cited_pid in para_source_index:
+            src = para_source_index[cited_pid]
+            
+            # If the current result already matched the cited PID, keep it
+            if result.paragraph_id == cited_pid:
+                corrected.append(result)
                 continue
-            citations = sent.get("citations", [])
-            if not citations:
-                results.append(self._skip_result(sent, "no_citation"))
-                continue
-            for cid in citations:
-                to_verify.append((len(results), sent, cid))
-            results.append(None)  # placeholder
 
-        if not to_verify:
-            return [r for r in results if r is not None]
+            # If it matched something ELSE, we must re-evaluate against the cited PID
+            # to ensure the 'Source' shown in UI actually matches the claim.
+            logger.debug(f"Citation correction: overriding match {result.paragraph_id} with cited {cited_pid}")
+            
+            # Simple embedding check for the corrected source
+            claim_vec = encode_texts([result.claim])
+            src_vec = encode_texts([src["text"]])
+            new_score = (claim_vec @ src_vec.T).item()
+            
+            settings = get_settings()
+            new_conf = ConfidenceLevel.LOW
+            if new_score >= settings.HAVF_HIGH_THRESHOLD:
+                new_conf = ConfidenceLevel.HIGH
+            elif new_score >= settings.HAVF_MEDIUM_THRESHOLD:
+                new_conf = ConfidenceLevel.MEDIUM
+            
+            corrected.append(VerificationResult(
+                claim=result.claim,
+                confidence=new_conf,
+                score=new_score,
+                source_sentence=src["text"],
+                paragraph_id=src["paragraph_id"],
+                paper_id=src["paper_id"],
+                sentence_key=src["sentence_key"],
+                verification_method=VerificationMethod.EMBEDDING_SIMILARITY,
+                chunk_type=_chunk_type_from_paragraph_id(src["paragraph_id"]),
+                citation_ref=cited_pid.split("_")[-1] if cited_pid else None,
+                page_number=src.get("page_number"),
+                bbox=src.get("bbox"),
+                full_context=src.get("full_context"),
+            ))
+        else:
+            corrected.append(result)
+    return corrected
 
-        # ── Level 1: Batch embedding similarity ──────────────────────
-        unique_texts = list({v[1]["text"] for v in to_verify})
-        text_to_idx = {t: i for i, t in enumerate(unique_texts)}
-        gen_embeddings = self.embedder.encode(unique_texts, batch_size=32)
 
-        needs_rerank: List[Tuple] = []
-        verification_map: Dict[int, Dict] = {}
+@dataclass
+class VerificationResult:
+    claim: str
+    confidence: ConfidenceLevel
+    score: float
+    source_sentence: str | None
+    paragraph_id: str | None
+    paper_id: str | None
+    sentence_key: str | None
+    verification_method: "VerificationMethod | None" = None
+    chunk_type: str | None = None
+    citation_ref: str | None = None
+    page_number: int | None = None
+    full_context: str | None = None
+    bbox: dict | None = None
 
-        for result_idx, sent, citation_id in to_verify:
-            paragraph = cited_paragraphs.get(citation_id)
-            if not paragraph:
-                candidate = self._missing_paragraph_result(sent, citation_id)
-                if result_idx not in verification_map or candidate["confidence"] > verification_map[result_idx]["confidence"]:
-                    verification_map[result_idx] = candidate
-                continue
 
-            para_sentences = self._get_paragraph_sentences(paragraph)
-            if not para_sentences:
-                candidate = self._missing_paragraph_result(sent, citation_id)
-                if result_idx not in verification_map or candidate["confidence"] > verification_map[result_idx]["confidence"]:
-                    verification_map[result_idx] = candidate
-                continue
+_PARAGRAPH_TYPE_MAP: dict[str, str] = {"F": "figure", "T": "table", "E": "formula"}
 
-            source_texts = [ps["text"] for ps in para_sentences]
-            source_embeddings = self.embedder.encode(source_texts, batch_size=32)
-            gen_embed = gen_embeddings[text_to_idx[sent["text"]]]
-            similarities = self.embedder.cosine_similarity(gen_embed, source_embeddings)
 
-            best_idx = int(np.argmax(similarities))
-            best_sim = float(similarities[best_idx])
+def _chunk_type_from_paragraph_id(paragraph_id: str | None) -> str:
+    if not paragraph_id:
+        return "text"
+    # Logic to map 'P'->text, 'F'->figure, 'T'->table, 'E'->formula
+    prefix = paragraph_id
+    if "_" in paragraph_id:
+        prefix = paragraph_id.split("_")[-1]
 
-            if best_sim >= self.high_threshold:
-                candidate = {
-                    "text": sent["text"],
-                    "paragraph_id": citation_id,
-                    "sentence_id": para_sentences[best_idx].get("sentence_id", f"{citation_id}_S{best_idx}"),
-                    "matched_text": para_sentences[best_idx]["text"],
-                    "confidence": best_sim,
-                    "level": "high",
-                    "method": "embedding_similarity",
+    indicator = prefix[:1]
+    return _PARAGRAPH_TYPE_MAP.get(indicator, "text")
+
+
+def _select_best_chunk_text(chunk) -> str:
+    full_text = getattr(chunk, "text", "") or ""
+    enriched_text = getattr(chunk, "enriched_text", "") or ""
+    if len(enriched_text) > len(full_text):
+        return enriched_text
+    return full_text
+
+
+def _should_add_source(cleaned: str, existing_texts: set[str]) -> bool:
+    return bool(
+        cleaned and cleaned not in existing_texts and not is_noise_source(cleaned)
+    )
+
+
+def _add_non_text_source(
+    sources: list[dict], chunk, para_id: str | None, paper_id: str | None
+) -> None:
+    if not _is_non_text_paragraph(para_id):
+        return
+    best_text = _select_best_chunk_text(chunk)
+    if len(best_text) <= 10:  # Reduced from 50 to 10 to catch short captions
+        return
+    cleaned = clean_source_text(best_text)
+    existing_texts = {s["text"] for s in sources}
+    if _should_add_source(cleaned, existing_texts):
+        sources.append(
+            {
+                "text": cleaned,
+                "paragraph_id": para_id,
+                "paper_id": paper_id,
+                "sentence_key": f"{para_id}_FULL" if para_id else None,
+                "page_number": getattr(chunk, "page_number", None),
+                "full_context": getattr(chunk, "text", ""),
+                "bbox": getattr(chunk, "bbox", None),
+            }
+        )
+
+
+def _extract_chunk_sources(chunk) -> list[dict]:
+    s_map = getattr(chunk, "sentence_map", {})
+    if not isinstance(s_map, dict):
+        s_map = {}
+    raw_paper_id = getattr(chunk, "paper_id", None)
+    paper_id = str(raw_paper_id) if raw_paper_id is not None else None
+    para_id = getattr(chunk, "paragraph_id", None)
+    sources = []
+    for s_key, info in s_map.items():
+        text = clean_source_text(info["text"])
+        if not is_noise_source(text):
+            sources.append(
+                {
+                    "text": text,
+                    "paragraph_id": para_id,
+                    "paper_id": paper_id,
+                    "sentence_key": s_key,
+                    "page_number": getattr(chunk, "page_number", None),
+                    "full_context": getattr(chunk, "text", ""),
+                    "bbox": getattr(chunk, "bbox", None),
                 }
-            elif best_sim >= self.medium_threshold:
-                needs_rerank.append((result_idx, sent, citation_id, paragraph, para_sentences, best_idx, best_sim))
-                candidate = {
-                    "text": sent["text"],
-                    "paragraph_id": citation_id,
-                    "sentence_id": para_sentences[best_idx].get("sentence_id", f"{citation_id}_S{best_idx}"),
-                    "matched_text": para_sentences[best_idx]["text"],
-                    "confidence": best_sim,
-                    "level": "medium",
-                    "method": "embedding_similarity",
-                }
-            else:
-                candidate = {
-                    "text": sent["text"],
-                    "paragraph_id": citation_id,
-                    "sentence_id": para_sentences[best_idx].get("sentence_id", f"{citation_id}_S{best_idx}"),
-                    "matched_text": para_sentences[best_idx]["text"],
-                    "confidence": best_sim,
-                    "level": "low",
-                    "method": "embedding_similarity",
-                }
-
-            if result_idx not in verification_map or candidate["confidence"] > verification_map[result_idx]["confidence"]:
-                verification_map[result_idx] = candidate
-
-        # ── Level 2: Cross-encoder reranking ─────────────────────────
-        if needs_rerank:
-            try:
-                self._ensure_cross_encoder()
-                pairs = [(item[1]["text"], item[4][item[5]]["text"]) for item in needs_rerank]
-                scores = self._cross_encoder.predict(pairs)
-
-                for (result_idx, sent, citation_id, paragraph, para_sentences, best_idx, _), score in zip(needs_rerank, scores):
-                    score = float(score)
-                    level = "medium" if score >= self.rerank_threshold else "low"
-                    candidate = {
-                        "text": sent["text"],
-                        "paragraph_id": citation_id,
-                        "sentence_id": para_sentences[best_idx].get("sentence_id", f"{citation_id}_S{best_idx}"),
-                        "matched_text": para_sentences[best_idx]["text"],
-                        "confidence": min(score, 1.0),
-                        "level": level,
-                        "method": "cross_encoder_rerank",
-                    }
-                    if result_idx not in verification_map or candidate["confidence"] > verification_map[result_idx]["confidence"]:
-                        verification_map[result_idx] = candidate
-            except Exception as e:
-                logger.error("Cross-encoder reranking failed: {}", e, exc_info=True)
-
-        # Fill results
-        for idx, result in enumerate(results):
-            if result is None:
-                results[idx] = verification_map.get(idx, self._skip_result({"text": ""}, "missing"))
-
-        return results
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _get_paragraph_sentences(self, paragraph: Dict) -> List[Dict]:
-        raw = paragraph.get("sentences", [])
-        if isinstance(raw, str):
-            try:
-                return json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                return [{"sentence_id": "S0", "text": paragraph.get("text", "")}]
-        if isinstance(raw, list) and raw:
-            return raw
-        # Fall back to full paragraph text as single sentence
-        text = paragraph.get("text", "")
-        return [{"sentence_id": "S0", "text": text}] if text else []
-
-    def _skip_result(self, sent: Dict, method: str) -> Dict:
-        return {
-            "text": sent.get("text", ""),
-            "paragraph_id": "",
-            "sentence_id": "",
-            "matched_text": "",
-            "confidence": 0.0,
-            "level": "low",
-            "method": method,
-        }
-
-    def _missing_paragraph_result(self, sent: Dict, citation_id: str) -> Dict:
-        return {
-            "text": sent.get("text", ""),
-            "paragraph_id": citation_id,
-            "sentence_id": "",
-            "matched_text": "",
-            "confidence": 0.3,
-            "level": "low",
-            "method": "missing_paragraph",
-        }
+            )
+    _add_non_text_source(sources, chunk, para_id, paper_id)
+    return sources
 
 
-# Module-level singleton
-_havf_instance: Optional[HAVFVerifier] = None
+def build_source_sentences(chunks: list) -> list[dict]:
+    sources = []
+    for chunk in chunks:
+        sources.extend(_extract_chunk_sources(chunk))
+    return sources
 
 
-def get_havf() -> HAVFVerifier:
-    global _havf_instance
-    if _havf_instance is None:
-        _havf_instance = HAVFVerifier()
-    return _havf_instance
+def _initialize_havf_thresholds(
+    high_threshold: float | None,
+    medium_threshold: float | None,
+    cross_encoder_threshold: float | None,
+    short_sentence_words: int | None,
+) -> tuple[float, float, float, int]:
+    settings = get_settings()
+    return (
+        high_threshold or settings.HAVF_HIGH_THRESHOLD,
+        medium_threshold or settings.HAVF_MEDIUM_THRESHOLD,
+        cross_encoder_threshold or settings.HAVF_CROSS_ENCODER_THRESHOLD,
+        short_sentence_words or settings.HAVF_SHORT_SENTENCE_WORDS,
+    )
+
+
+async def verify_response(
+    generated_text: str,
+    retrieved_chunks: list,
+    *,
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
+    cross_encoder_threshold: float | None = None,
+    short_sentence_words: int | None = None,
+) -> list[VerificationResult]:
+    with timer("HAVF verification"):
+        h_thresh, m_thresh, ce_thresh, short_words = _initialize_havf_thresholds(
+            high_threshold,
+            medium_threshold,
+            cross_encoder_threshold,
+            short_sentence_words,
+        )
+        claims = _split_into_verifiable_claims(generated_text)
+        source_sentences = build_source_sentences(retrieved_chunks)
+        if not claims or not source_sentences:
+            return _handle_missing_sources(claims)
+        short_claims, valid_claims = _filter_short_claims(claims, short_words)
+        short_results = _create_skipped_results(short_claims)
+        if not valid_claims:
+            return short_results
+        level1_results = await asyncio.to_thread(
+            verify_claims_embedding,
+            valid_claims,
+            source_sentences,
+            high_threshold=h_thresh,
+            medium_threshold=m_thresh,
+        )
+        results = await _process_verification_results(
+            level1_results, valid_claims, source_sentences, ce_thresh
+        )
+        all_results = short_results + results
+        para_index = _build_para_source_index(source_sentences)
+        all_results = _apply_citation_correction(all_results, para_index, ce_thresh)
+        all_results = _postprocess_display_sources(all_results)
+        _log_verification_summary(all_results)
+        return all_results
+
+
+def _filter_short_claims(
+    claims: list[str], short_sentence_threshold: int
+) -> tuple[list[str], list[str]]:
+    short_claims = []
+    valid_claims = []
+
+    for claim in claims:
+        word_count = len(claim.split())
+        has_citation = bool(_CITATION_ID_RE.search(claim))
+        
+        if word_count < short_sentence_threshold and not has_citation:
+            short_claims.append(claim)
+        else:
+            valid_claims.append(claim)
+
+    if short_claims:
+        logger.info(
+            f"HAVF: Skipped {len(short_claims)} short sentences "
+            f"(< {short_sentence_threshold} words) - marked as LOW confidence"
+        )
+
+    return short_claims, valid_claims
+
+
+def _create_skipped_results(claims: list[str]) -> list[VerificationResult]:
+    return [
+        VerificationResult(
+            claim=c,
+            confidence=ConfidenceLevel.LOW,
+            score=0.0,
+            source_sentence=None,
+            paragraph_id=None,
+            paper_id=None,
+            sentence_key=None,
+            verification_method=VerificationMethod.SKIPPED,
+        )
+        for c in claims
+    ]
+
+
+def _handle_missing_sources(claims: list[str]) -> list[VerificationResult]:
+    if not claims:
+        return []
+
+    logger.warning(
+        "HAVF: No source sentences found in retrieved chunks or sentences too short. "
+        "All claims will be marked LOW confidence — citations "
+        "may reference non-existent paragraphs or be transitional phrases."
+    )
+    return [
+        VerificationResult(
+            claim=c,
+            confidence=ConfidenceLevel.LOW,
+            score=0.0,
+            source_sentence=None,
+            paragraph_id=None,
+            paper_id=None,
+            sentence_key=None,
+            verification_method=VerificationMethod.SKIPPED,
+        )
+        for c in claims
+    ]
+
+
+async def _process_verification_results(
+    level1_results: list,
+    claims: list[str],
+    source_sentences: list[dict],
+    cross_encoder_threshold: float,
+) -> list[VerificationResult]:
+    uncertain = [r for r in level1_results if r.get("needs_reranking")]
+    resolved = [r for r in level1_results if not r.get("needs_reranking")]
+
+    if uncertain:
+        reranked = await asyncio.to_thread(
+            rerank_claims,
+            uncertain,
+            source_sentences=source_sentences,
+            cross_encoder_threshold=cross_encoder_threshold,
+        )
+        resolved.extend(reranked)
+
+    return _build_final_results(claims, resolved, uncertain)
+
+
+def _build_final_results(
+    claims: list[str], resolved: list, uncertain: list
+) -> list[VerificationResult]:
+    result_map = {r["claim"]: r for r in resolved}
+    uncertain_claims = {r["claim"] for r in uncertain}
+
+    final = []
+    for claim in claims:
+        r = result_map.get(claim, {})
+        method = _determine_verification_method(claim, r, uncertain_claims)
+        p_id = r.get("paragraph_id")
+        final.append(
+            VerificationResult(
+                claim=claim,
+                confidence=r.get("confidence", ConfidenceLevel.LOW),
+                score=min(1.0, max(0.0, float(r.get("best_score", 0.0)))),
+                source_sentence=r.get("source_sentence"),
+                paragraph_id=p_id,
+                paper_id=r.get("paper_id"),
+                sentence_key=r.get("sentence_key"),
+                verification_method=method,
+                chunk_type=_chunk_type_from_paragraph_id(p_id),
+                citation_ref=p_id.split("_")[-1] if p_id else None,
+                page_number=r.get("page_number"),
+                bbox=r.get("bbox"),
+                full_context=r.get("full_context"),
+            )
+        )
+    return final
+
+
+def _determine_verification_method(
+    claim: str, result: dict, uncertain_claims: set
+) -> VerificationMethod:
+    if claim in uncertain_claims:
+        return VerificationMethod.CROSS_ENCODER_RERANK
+    elif result:
+        return VerificationMethod.EMBEDDING_SIMILARITY
+    else:
+        return VerificationMethod.SKIPPED
+
+
+def _log_verification_summary(results: list[VerificationResult]) -> None:
+    counts = {level: 0 for level in ConfidenceLevel}
+    for v in results:
+        counts[v.confidence] += 1
+    avg_score = sum(v.score for v in results) / len(results) if results else 0.0
+
+    logger.info(
+        f"HAVF complete: {len(results)} claims — "
+        f"HIGH={counts[ConfidenceLevel.HIGH]}, "
+        f"MEDIUM={counts[ConfidenceLevel.MEDIUM]}, "
+        f"LOW={counts[ConfidenceLevel.LOW]}, "
+        f"avg_score={avg_score:.3f}"
+    )

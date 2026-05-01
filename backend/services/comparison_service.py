@@ -1,243 +1,268 @@
-"""TraceLit — Comparison Service.
+import asyncio
+import csv
 
-Business logic for the comparison table: extraction, storage, retrieval, updates.
-"""
+from sqlalchemy.ext.asyncio import AsyncSession
 
-import json
-from typing import Any, Dict, List, Optional
+from app.config import get_settings
+from domain.generation.chat_engine import generate_comparison
+from domain.generation.prompts import build_context_block
+from domain.extraction.contribution_extractor import extract_contributions
+from infrastructure.db.crud.paper_crud import get_paper
+from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
+from infrastructure.llm.fallback_chain import FallbackChain
+from shared.enums import LLMProvider
+from shared.errors import NotFoundError
+from shared.logger import get_logger
+from shared.utils.export_text import build_export_blocks
+from shared.utils.text_utils import estimate_tokens
+from shared.constants import COMPARISON_TOKEN_BUDGET_PER_PAPER
 
-from loguru import logger
-from sqlalchemy.orm import Session as DBSession
+logger = get_logger(__name__)
 
-from domain.analysis.comparison_engine import (
-    extract_paper_contributions,
-    generate_comparison_table,
-)
-from infrastructure.db.models.paper import Contribution, Paper
+# Conservative budget to stay safely under Groq 12K TPM
+# Total prompt tokens for N papers ≈ N * per_paper_budget + ~1K system/template overhead
+_GROQ_SAFE_TOTAL_TOKENS = 8_000
+_FALLBACK_DIMENSION = "Comparison"
 
 
-async def get_comparison_for_session(
-    session_id: str,
-    db: DBSession,
-) -> Dict[str, Any]:
-    """Get existing comparison data for a session.
+def _adaptive_token_budget(paper_count: int) -> int:
+    """Scale per-paper token budget so the total prompt fits within rate limits."""
+    if paper_count <= 1:
+        return COMPARISON_TOKEN_BUDGET_PER_PAPER
 
-    Retrieves stored contributions for all papers in the session.
-    """
-    from infrastructure.db.models.session import Session as SessionModel
+    # Reserve ~2K tokens for system prompt + comparison template overhead
+    available = _GROQ_SAFE_TOTAL_TOKENS - 2_000
+    per_paper = available // paper_count
+    # Clamp between 500 and the configured maximum
+    return max(500, min(per_paper, COMPARISON_TOKEN_BUDGET_PER_PAPER))
 
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        return {"session_id": session_id, "contributions": [], "rows": []}
 
-    paper_ids = []
-    if session.paper_ids:
-        try:
-            paper_ids = json.loads(session.paper_ids)
-        except (json.JSONDecodeError, TypeError):
-            paper_ids = []
+async def _load_paper_context(
+    pid: str, db: AsyncSession, token_budget: int,
+) -> tuple[str, str, str]:
+    """Load a single paper's title and context within the given token budget."""
+    paper = await get_paper(db, pid)
+    if not paper:
+        raise NotFoundError("Paper", pid)
 
-    if not paper_ids:
-        return {"session_id": session_id, "contributions": [], "rows": []}
+    title = paper.title or paper.filename
+    chunks = await get_chunks_by_paper(db, pid)
 
-    # Fetch stored contributions
-    contributions = {}
-    papers_meta = []
+    selected: list = []
+    cumulative_tokens = 0
+    for chunk in chunks:
+        chunk_text = chunk.text if hasattr(chunk, "text") else str(chunk)
+        chunk_tokens = estimate_tokens(chunk_text)
+        if cumulative_tokens + chunk_tokens > token_budget:
+            break
+        selected.append(chunk)
+        cumulative_tokens += chunk_tokens
 
-    for pid in paper_ids:
-        paper = db.query(Paper).filter(Paper.id == pid).first()
-        if not paper:
+    context = build_context_block(selected or chunks[:10])
+    return pid, title, context
+
+
+async def _build_paper_maps(
+    paper_ids: list[str], db: AsyncSession, token_budget: int,
+) -> tuple[dict[str, str], list[str], dict[str, str]]:
+    results = await asyncio.gather(
+        *[_load_paper_context(pid, db, token_budget) for pid in paper_ids]
+    )
+    contexts: dict[str, str] = {}
+    titles: list[str] = []
+    title_map: dict[str, str] = {}
+    for pid, title, context in results:
+        titles.append(title)
+        title_map[pid] = title
+        contexts[pid] = context
+    return contexts, titles, title_map
+
+
+async def _run_comparison(
+    paper_ids: list[str],
+    paper_contexts: dict[str, str],
+    paper_title_map: dict[str, str],
+    llm: FallbackChain,
+    timeout: int,
+) -> tuple[str, LLMProvider]:
+    return await asyncio.wait_for(
+        generate_comparison(
+            paper_ids=paper_ids,
+            paper_contexts=paper_contexts,
+            llm=llm,
+            paper_titles=paper_title_map,
+        ),
+        timeout=timeout,
+    )
+
+
+def _normalize_cell_text(text: str) -> str:
+    return " ".join(part.strip() for part in (text or "").replace("<br>", "\n").splitlines() if part.strip())
+
+
+def _parse_delimited_rows(comparison_text: str, expected_columns: int) -> list[list[str]]:
+    lines = [line.strip() for line in (comparison_text or "").splitlines() if line.strip()]
+    candidate_lines = [line for line in lines if any(delim in line for delim in (",", "\t", ";"))]
+    if len(candidate_lines) < 2:
+        return []
+
+    sample = "\n".join(candidate_lines[: min(5, len(candidate_lines))])
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+
+    rows = [
+        [cell.strip().strip('"') for cell in row]
+        for row in csv.reader(candidate_lines, dialect)
+    ]
+    rows = [row for row in rows if any(cell for cell in row)]
+    if len(rows) < 2:
+        return []
+
+    column_count = max(len(row) for row in rows)
+    if column_count < expected_columns:
+        return []
+    return rows
+
+
+def _build_comparison_rows(
+    comparison_text: str,
+    paper_ids: list[str],
+    titles: list[str],
+) -> list[dict]:
+    # Replace <br> variants with a plain space BEFORE calling build_export_blocks.
+    # _normalize_source_text converts <br> to \n, which splits a single pipe-table
+    # row (whose cells use <br> for inline line breaks) into multiple fragment lines
+    # that the table parser cannot reassemble, causing misaligned or missing columns.
+    import re as _re
+    safe_text = _re.sub(r'<br\s*/?>', ' ', comparison_text, flags=_re.IGNORECASE)
+    for block in build_export_blocks(safe_text):
+        if block.kind != "table" or not block.rows:
             continue
 
-        papers_meta.append({
-            "id": pid,
-            "paper_id": pid,
-            "title": paper.title,
-            "authors": json.loads(paper.authors) if paper.authors else [],
-            "year": paper.year,
-        })
-
-        contrib = db.query(Contribution).filter(Contribution.paper_id == pid).first()
-        if contrib:
-            contributions[pid] = {
-                "problem": {"value": contrib.problem or "Not specified", "source": contrib.problem_source or ""},
-                "method": {"value": contrib.method or "Not specified", "source": contrib.method_source or ""},
-                "dataset": {"value": contrib.dataset or "Not specified", "source": contrib.dataset_source or ""},
-                "metrics": {"value": contrib.metrics or "Not specified", "source": contrib.metrics_source or ""},
-                "results": {"value": contrib.results or "Not specified", "source": contrib.results_source or ""},
-            }
-
-    # Generate row format
-    rows = await generate_comparison_table(contributions) if contributions else []
-
-    return {
-        "session_id": session_id,
-        "papers": papers_meta,
-        "contributions": contributions,
-        "rows": rows,
-    }
-
-
-async def generate_comparison_for_session(
-    session_id: str,
-    db: DBSession,
-) -> Dict[str, Any]:
-    """Generate comparison table via LLM extraction for all papers in a session.
-
-    Extracts contributions from each paper and stores them in the DB.
-    """
-    from infrastructure.db.models.session import Session as SessionModel
-    from infrastructure.db.models.chunk import Paragraph
-
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-    if not session:
-        raise ValueError(f"Session {session_id} not found")
-
-    paper_ids = []
-    if session.paper_ids:
-        try:
-            paper_ids = json.loads(session.paper_ids)
-        except (json.JSONDecodeError, TypeError):
-            paper_ids = []
-
-    if not paper_ids:
-        return {"session_id": session_id, "contributions": {}, "rows": []}
-
-    # Create an LLM generate function
-    async def _llm_generate(system_prompt: str, user_prompt: str) -> str:
-        from infrastructure.llm.fallback_chain import get_llm
-        llm = get_llm()
-        available = llm._get_available_providers()
-        for provider in available:
-            try:
-                return await provider.generate(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    temperature=0.2,
-                )
-            except Exception:
+        rows: list[dict] = []
+        for row in block.rows:
+            if not row:
                 continue
-        raise RuntimeError("All providers failed for comparison extraction")
+            dimension = _normalize_cell_text(row[0]) or _FALLBACK_DIMENSION
+            cells = []
+            for idx, paper_id in enumerate(paper_ids, start=1):
+                cell_text = _normalize_cell_text(row[idx] if idx < len(row) else "")
+                cells.append(
+                    {
+                        "paper_id": paper_id,
+                        "paper_title": titles[idx - 1],
+                        "content": cell_text,
+                    }
+                )
 
-    contributions = {}
-    papers_meta = []
+            synthesis_index = len(paper_ids) + 1
+            synthesis = _normalize_cell_text(row[synthesis_index] if synthesis_index < len(row) else "")
+            rows.append(
+                {
+                    "dimension": dimension,
+                    "cells": cells,
+                    "synthesis": synthesis,
+                }
+            )
+        if rows:
+            return rows
 
-    for pid in paper_ids:
-        paper = db.query(Paper).filter(Paper.id == pid).first()
-        if not paper or paper.status != "ready":
-            continue
+    parsed_rows = _parse_delimited_rows(safe_text, expected_columns=len(paper_ids) + 2)
+    if parsed_rows:
+        header, *data_rows = parsed_rows
+        rows: list[dict] = []
+        for row in data_rows:
+            if not row:
+                continue
+            dimension = _normalize_cell_text(row[0]) or _FALLBACK_DIMENSION
+            cells = []
+            for idx, paper_id in enumerate(paper_ids, start=1):
+                cell_text = _normalize_cell_text(row[idx] if idx < len(row) else "")
+                cells.append(
+                    {
+                        "paper_id": paper_id,
+                        "paper_title": titles[idx - 1],
+                        "content": cell_text,
+                    }
+                )
+            synthesis_index = len(paper_ids) + 1
+            rows.append(
+                {
+                    "dimension": dimension,
+                    "cells": cells,
+                    "synthesis": _normalize_cell_text(row[synthesis_index] if synthesis_index < len(row) else ""),
+                }
+            )
+        if rows:
+            return rows
 
-        papers_meta.append({
-            "id": pid,
-            "paper_id": pid,
-            "title": paper.title,
-            "authors": json.loads(paper.authors) if paper.authors else [],
-            "year": paper.year,
-        })
+    return [
+        {
+            "dimension": _FALLBACK_DIMENSION,
+            "cells": [
+                {
+                    "paper_id": paper_id,
+                    "paper_title": titles[idx],
+                    "content": "",
+                }
+                for idx, paper_id in enumerate(paper_ids)
+            ],
+            "synthesis": comparison_text.strip(),
+        }
+    ]
 
-        # Get paragraphs
-        paragraphs = db.query(Paragraph).filter(Paragraph.paper_id == pid).all()
-        para_dicts = []
-        for p in paragraphs:
-            section_title = "Unknown"
-            if p.section_id:
-                from infrastructure.db.models.paper import Section
-                section = db.query(Section).filter(Section.id == p.section_id).first()
-                if section:
-                    section_title = section.title
-            para_dicts.append({
-                "paragraph_id": p.id.replace(f"{pid}_", "") if p.id.startswith(pid) else p.id,
-                "text": p.text,
-                "section": section_title,
-                "page": p.page,
-            })
 
-        # Extract contributions via LLM
-        paper_contribs = await extract_paper_contributions(
-            paper_id=pid,
-            paragraphs=para_dicts,
-            llm_generate_fn=_llm_generate,
+async def compare_papers(
+    paper_ids: list[str],
+    db: AsyncSession,
+    llm: FallbackChain,
+) -> dict:
+    settings = get_settings()
+    budget = _adaptive_token_budget(len(paper_ids))
+    logger.info(f"Comparing {len(paper_ids)} papers ({budget} tokens/paper)")
+
+    contexts, titles, title_map = await _build_paper_maps(paper_ids, db, budget)
+
+    try:
+        text, provider = await _run_comparison(
+            paper_ids, contexts, title_map, llm, settings.COMPARISON_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        reduced = max(300, budget // 2)
+        logger.warning(f"Comparison timed out, retrying ({reduced} tok/paper)")
+        contexts, _, _ = await _build_paper_maps(paper_ids, db, reduced)
+        text, provider = await _run_comparison(
+            paper_ids, contexts, title_map, llm, settings.COMPARISON_TIMEOUT_SECONDS,
         )
 
-        contributions[pid] = paper_contribs
-
-        # Store in DB
-        existing = db.query(Contribution).filter(Contribution.paper_id == pid).first()
-        if existing:
-            existing.problem = paper_contribs["problem"]["value"]
-            existing.problem_source = paper_contribs["problem"]["source"]
-            existing.method = paper_contribs["method"]["value"]
-            existing.method_source = paper_contribs["method"]["source"]
-            existing.dataset = paper_contribs["dataset"]["value"]
-            existing.dataset_source = paper_contribs["dataset"]["source"]
-            existing.metrics = paper_contribs["metrics"]["value"]
-            existing.metrics_source = paper_contribs["metrics"]["source"]
-            existing.results = paper_contribs["results"]["value"]
-            existing.results_source = paper_contribs["results"]["source"]
-        else:
-            contrib = Contribution(
-                paper_id=pid,
-                problem=paper_contribs["problem"]["value"],
-                problem_source=paper_contribs["problem"]["source"],
-                method=paper_contribs["method"]["value"],
-                method_source=paper_contribs["method"]["source"],
-                dataset=paper_contribs["dataset"]["value"],
-                dataset_source=paper_contribs["dataset"]["source"],
-                metrics=paper_contribs["metrics"]["value"],
-                metrics_source=paper_contribs["metrics"]["source"],
-                results=paper_contribs["results"]["value"],
-                results_source=paper_contribs["results"]["source"],
-            )
-            db.add(contrib)
-
-    db.commit()
-
-    rows = await generate_comparison_table(contributions)
-
-    logger.info("Generated comparison for session {} ({} papers)", session_id, len(papers_meta))
+    logger.info(f"Compared {len(paper_ids)} papers using {provider.value}")
+    comparison_table = _build_comparison_rows(text, paper_ids, titles)
     return {
-        "session_id": session_id,
-        "papers": papers_meta,
-        "contributions": contributions,
-        "rows": rows,
+        "comparison": text,
+        "comparison_table": comparison_table,
+        "paper_ids": paper_ids,
+        "paper_titles": titles,
+        "provider": provider.value,
     }
 
-
-async def update_comparison_cell(
-    session_id: str,
+async def extract_paper_contributions(
     paper_id: str,
-    field: str,
-    value: str,
-    db: DBSession,
-) -> Dict[str, Any]:
-    """Update a single cell in the comparison table.
+    db: AsyncSession,
+    llm: FallbackChain,
+) -> dict:
+    paper = await get_paper(db, paper_id)
+    if not paper:
+        raise NotFoundError("Paper", paper_id)
 
-    Args:
-        session_id: Session identifier.
-        paper_id: Paper identifier.
-        field: Field name (problem, method, dataset, metrics, results).
-        value: New value.
-        db: Database session.
+    chunks = await get_chunks_by_paper(db, paper_id)
+    context = build_context_block(chunks[:15])
 
-    Returns:
-        Updated contribution data.
-    """
-    valid_fields = {"problem", "method", "dataset", "metrics", "results"}
-    if field not in valid_fields:
-        raise ValueError(f"Invalid field: {field}. Must be one of {valid_fields}")
-
-    contrib = db.query(Contribution).filter(Contribution.paper_id == paper_id).first()
-    if not contrib:
-        contrib = Contribution(paper_id=paper_id)
-        db.add(contrib)
-
-    setattr(contrib, field, value)
-    db.commit()
-
-    logger.info("Updated comparison cell: paper={}, field={}", paper_id, field)
+    contributions = await extract_contributions(context, llm)
     return {
         "paper_id": paper_id,
-        "field": field,
-        "value": value,
-        "updated": True,
+        "title": paper.title or paper.filename,
+        "contributions": contributions,
     }
+

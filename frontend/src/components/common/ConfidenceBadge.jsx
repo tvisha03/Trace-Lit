@@ -2,18 +2,37 @@
 import { confidenceLevel } from '../../utils/helpers';
 
 const colors = {
-  high: 'bg-green-100 text-green-700 border-green-200',
-  medium: 'bg-amber-100 text-amber-700 border-amber-200',
-  low: 'bg-red-100 text-red-700 border-red-200',
+  high: 'bg-tl-hi/10 text-tl-hi border-tl-hi/30',
+  medium: 'bg-tl-med/10 text-tl-med border-tl-med/30',
+  low: 'bg-tl-low/10 text-tl-low border-tl-low/30',
 };
 
-export default function ConfidenceBadge({ score }) {
-  const level = confidenceLevel(score);
+export default function ConfidenceBadge({ score, confidence }) {
+  let level = confidence?.toLowerCase();
+  let numericScore = typeof score === 'number' ? score : parseFloat(score);
+
+  if (!level && !isNaN(numericScore)) {
+    level = confidenceLevel(numericScore);
+  }
+  if (!level) {
+    level = 'low';
+  }
+
+  if (isNaN(numericScore) || score === undefined || score === null) {
+    return (
+      <span
+        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-mono border ${colors[level] || colors.low}`}
+      >
+        {level.toUpperCase()}
+      </span>
+    );
+  }
+
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${colors[level]}`}
+      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-mono border ${colors[level]}`}
     >
-      {level} ({(score * 100).toFixed(0)}%)
+      {level.toUpperCase()} {(numericScore * 100).toFixed(0)}%
     </span>
   );
 }

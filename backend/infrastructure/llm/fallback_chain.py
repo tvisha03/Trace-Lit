@@ -1,288 +1,401 @@
-"""TraceLit — Robust Multi-Provider LLM Fallback Chain.
 
-Automatic fallback: Gemini → Groq → Ollama.
-Handles rate limits, timeouts, and provider failures seamlessly.
-"""
+from __future__ import annotations
 
 import time
-from typing import AsyncIterator, Dict, List, Optional
+from typing import AsyncGenerator, Tuple, Optional, List
 
-from loguru import logger
-
-from app.config import settings
-from domain.generation.prompts import assemble_prompt, sanitize_user_input, validate_citations, remove_invalid_citations
 from infrastructure.llm.base import BaseLLMProvider
-from infrastructure.llm.factory import build_provider_chain
-from infrastructure.llm.session_state import SessionStateManager
-from shared.errors import AllProvidersFailedError, ProviderError, RateLimitError
+from infrastructure.llm.factory import create_provider
+from infrastructure.llm.rate_monitor import RateLimitMonitor
+from shared.enums import LLMProvider
+from shared.errors import (
+    RateLimitError,
+    ProviderTimeoutError,
+    EmptyResponseError,
+    AllProvidersFailedError,
+)
+from shared.logger import get_logger
+from app.config import get_settings
 
+logger = get_logger(__name__)
 
-# ============================================================
-# Robust Multi-Provider LLM
-# ============================================================
+class FallbackChain:
 
-class RobustMultiProviderLLM:
-    """Multi-provider LLM with automatic fallback and retry logic."""
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._max_retries = settings.LLM_MAX_RETRIES
+        self._retry_delay = settings.LLM_RETRY_DELAY_BASE
+        self._request_timeout = settings.REQUEST_TIMEOUT
+        self._providers = self._build_chain()
+        self._rate_monitor = RateLimitMonitor()
 
-    # AUTH_ERRORs needed in a row before a provider is permanently disabled.
-    # Free-tier keys can get transient 401/403 from safety blocks without being
-    # truly invalid, so we require 3 consecutive failures before giving up.
-    _AUTH_FAILURE_LIMIT = 3
+    @property
+    def rate_monitor(self) -> RateLimitMonitor:
+        return self._rate_monitor
 
-    def __init__(self, local_mode: bool = False):
-        self.local_mode = local_mode
-        self._providers: List[BaseLLMProvider] = build_provider_chain(local_mode)
-        self._disabled_providers: set = set()
-        self._rate_limit_until: Dict[str, float] = {}
-        self._session_states: Dict[str, SessionStateManager] = {}
-        # Consecutive AUTH_ERROR count per provider — reset on success
-        self._auth_failures: Dict[str, int] = {}
+    def _is_temporarily_unavailable(
+        self,
+        provider: BaseLLMProvider,
+    ) -> tuple[bool, float]:
+        cooldown_seconds = self._rate_monitor.cooldown_remaining(provider.provider)
+        return cooldown_seconds > 0.0, cooldown_seconds
 
-        provider_names = [p.name for p in self._providers]
-        logger.info(f"Multi-provider LLM: {provider_names} ({'local' if local_mode else 'cloud'} mode)")
+    def _mark_provider_rate_limited(self, provider: BaseLLMProvider) -> float:
+        return self._rate_monitor.mark_rate_limited(provider.provider)
 
-    def get_session_state(self, session_id: str) -> SessionStateManager:
-        if session_id not in self._session_states:
-            self._session_states[session_id] = SessionStateManager(max_turns=settings.max_conversation_turns)
-        return self._session_states[session_id]
+    def _build_chain(self, use_local_llm: bool | None = None) -> List[BaseLLMProvider]:
+        settings = get_settings()
+        if use_local_llm is None:
+            use_local_llm = settings.USE_LOCAL_LLM
 
-    def remove_session_state(self, session_id: str) -> None:
-        self._session_states.pop(session_id, None)
+        has_cloud = bool(settings.OLLAMA_API_KEY)
 
-    def _get_available_providers(self) -> List[BaseLLMProvider]:
-        now = time.time()
-        available = []
-        for provider in self._providers:
-            if provider.name in self._disabled_providers:
-                continue
-            if now < self._rate_limit_until.get(provider.name, 0):
-                continue
-            available.append(provider)
-        return available
+        if use_local_llm:
+            # Ollama Cloud → Gemini → Groq → Local Ollama
+            if has_cloud:
+                order = [
+                    LLMProvider.OLLAMA_CLOUD,
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                    LLMProvider.OLLAMA,
+                ]
+            else:
+                order = [
+                    LLMProvider.OLLAMA,
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                ]
+        else:
+            if has_cloud:
+                order = [
+                    LLMProvider.OLLAMA_CLOUD,
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                    LLMProvider.OLLAMA,
+                ]
+            else:
+                order = [
+                    LLMProvider.GEMINI,
+                    LLMProvider.GROQ,
+                    LLMProvider.OLLAMA,
+                ]
+
+        logger.info(f"Fallback chain: {' → '.join(p.value for p in order)}")
+        return [create_provider(p) for p in order]
+
+    @property
+    def providers(self) -> List[BaseLLMProvider]:
+        return self._providers
+
+    async def _try_provider(
+        self,
+        provider: BaseLLMProvider,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+        deadline: float,
+    ) -> Optional[Tuple[str, int]]:
+        retries = 0
+        while retries <= self._max_retries:
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    f"Aborting {provider.provider.value}: approaching request deadline"
+                )
+                return None
+
+            try:
+                text = await provider.generate(
+                    system_prompt, user_prompt, temperature, max_tokens
+                )
+                return text, retries
+
+            except RateLimitError:
+                cooldown_seconds = self._mark_provider_rate_limited(provider)
+                logger.warning(
+                    f"Rate limit on {provider.provider.value} — cooling down for "
+                    f"{cooldown_seconds:.1f}s and switching"
+                )
+                return None
+
+            except (ProviderTimeoutError, EmptyResponseError) as exc:
+                retries += 1
+                logger.warning(f"{provider.provider.value} attempt {retries}: {exc.message}")
+                if retries > self._max_retries:
+                    return None
+                import asyncio
+                await asyncio.sleep(self._retry_delay * retries)
+
+            except Exception as exc:
+                logger.error(f"{provider.provider.value} unexpected: {exc}")
+                return None
+        return None
 
     async def generate(
         self,
-        query: str,
-        context_paragraphs: List[Dict],
-        session_id: str,
-        active_paper_ids: Optional[List[str]] = None,
-        is_comparison: bool = False,
-    ) -> Dict:
-        """Generate a cited response with automatic provider fallback."""
-        from domain.generation.chat_engine import classify_query_type
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+        estimated_tokens: int = 4_000,
+    ) -> Tuple[str, LLMProvider, dict]:
+        errors: List[str] = []
+        deadline = time.monotonic() + self._request_timeout * 0.85
 
-        clean_query = sanitize_user_input(query)
-        state = self.get_session_state(session_id)
-        state.active_paper_ids = active_paper_ids or []
+        for provider in self._providers:
+            if time.monotonic() >= deadline:
+                logger.warning("Aborting fallback chain: approaching request deadline")
+                break
 
-        query_type = classify_query_type(clean_query)
-        state.last_query_type = query_type
-        is_comparison = is_comparison or query_type == "comparison"
-        valid_ids = {p.get("paragraph_id", "") for p in context_paragraphs}
-
-        available = self._get_available_providers()
-        if not available:
-            raise AllProvidersFailedError(errors=["No providers available"])
-
-        errors = []
-
-        for provider in available:
-            try:
-                logger.info(f"Trying provider: {provider.name}")
-
-                system_prompt, user_prompt = assemble_prompt(
-                    query=clean_query,
-                    context_paragraphs=context_paragraphs,
-                    conversation_history=state.get_history(),
-                    provider=provider.name,
-                    is_comparison=is_comparison,
-                    max_turns=settings.max_conversation_turns,
+            is_cooling_down, cooldown_seconds = self._is_temporarily_unavailable(provider)
+            if is_cooling_down:
+                logger.info(
+                    f"Skipping {provider.provider.value} — recent rate limit cooldown "
+                    f"({cooldown_seconds:.1f}s remaining)"
                 )
+                errors.append(f"{provider.provider.value}: cooling_down")
+                continue
 
-                response_text = await provider.generate(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    temperature=settings.llm_temperature,
+            if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                # Wait for rate limit to clear instead of immediately skipping
+                wait_secs = self._rate_monitor.seconds_until_available(
+                    provider.provider, estimated_tokens
                 )
-
-                state.last_provider = provider.name
-
-                validation = validate_citations(response_text, valid_ids)
-                warning = None
-
-                if validation["invalid_citations"]:
-                    response_text = remove_invalid_citations(response_text, validation["invalid_citations"])
-                    warning = "Some citations were automatically corrected."
-
-                # Fallback attribution when citation coverage is too low
-                from domain.generation.fallback_attribution import (
-                    needs_fallback_attribution,
-                    fallback_attribution,
-                )
-                if needs_fallback_attribution(
-                    validation["citation_coverage"],
-                    validation["uncited_factual_sentences"],
-                ):
-                    fb = fallback_attribution(
-                        response_text=response_text,
-                        context_paragraphs=context_paragraphs,
-                    )
-                    response_text = fb["text"]
-                    if fb["warning"]:
-                        warning = (warning + " " + fb["warning"]) if warning else fb["warning"]
+                if wait_secs > 0 and (time.monotonic() + wait_secs) < deadline:
                     logger.info(
-                        "Fallback attribution applied: {} auto-attributed, {} unverified",
-                        fb["auto_attributed_count"], fb["removed_count"],
+                        f"Waiting {wait_secs:.1f}s for {provider.provider.value} rate limit"
                     )
+                    import asyncio
+                    await asyncio.sleep(wait_secs)
+                    # Re-check after waiting
+                    if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                        logger.info(f"Skipping {provider.provider.value} — still over rate budget")
+                        errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                        continue
+                else:
+                    logger.info(f"Skipping {provider.provider.value} — over rate budget")
+                    errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                    continue
 
-                if validation["citation_coverage"] < 0.6 and not warning:
-                    warning = "Low citation coverage — some claims may need manual verification."
-
-                state.add_turn("user", clean_query)
-                state.add_turn("assistant", response_text)
-
-                # Reset any previous auth-failure count on success
-                self._auth_failures.pop(provider.name, None)
-
-                return {
-                    "text": response_text,
-                    "provider": provider.name,
-                    "warning": warning,
-                    "valid_paragraph_ids": valid_ids,
-                    "query_type": query_type,
-                    "citation_validation": validation,
-                }
-
-            except RateLimitError as e:
-                retry_after = e.details.get("retry_after", 60)
-                self._rate_limit_until[provider.name] = time.time() + retry_after
-                logger.warning(f"{provider.name} rate-limited, backing off {retry_after}s")
-                errors.append({"provider": provider.name, "error": "rate_limit"})
+            result = await self._try_provider(
+                provider, system_prompt, user_prompt, temperature, max_tokens,
+                deadline,
+            )
+            if result is None:
+                errors.append(f"{provider.provider.value}: failed")
                 continue
 
-            except ProviderError as e:
-                if e.code == "AUTH_ERROR":
-                    count = self._auth_failures.get(provider.name, 0) + 1
-                    self._auth_failures[provider.name] = count
-                    if count >= self._AUTH_FAILURE_LIMIT:
-                        self._disabled_providers.add(provider.name)
-                        logger.error(
-                            f"{provider.name} permanently disabled after "
-                            f"{count} consecutive AUTH_ERRORs"
-                        )
-                    else:
-                        logger.warning(
-                            f"{provider.name} AUTH_ERROR #{count}/{self._AUTH_FAILURE_LIMIT} "
-                            f"(not yet disabled): {e.message}"
-                        )
-                errors.append({"provider": provider.name, "error": e.code, "message": e.message})
-                continue
+            text, retries = result
+            from shared.utils.text_utils import estimate_tokens as _est
+            self._rate_monitor.track_usage(
+                provider.provider, _est(system_prompt + user_prompt + text),
+            )
+            logger.info(f"LLM response from {provider.provider.value}")
+            return text, provider.provider, {"retries": retries}
 
-            except Exception as e:
-                logger.error(f"Unexpected error from {provider.name}: {e}", exc_info=True)
-                errors.append({"provider": provider.name, "error": "unknown", "message": str(e)})
-                continue
+        logger.error(f"All providers failed: {errors}")
+        raise AllProvidersFailedError()
 
-        raise AllProvidersFailedError(errors=errors)
-
-    async def stream_with_fallback(
+    async def _stream_from_provider(
         self,
-        query: str,
-        context_paragraphs: List[Dict],
-        session_id: str,
-        active_paper_ids: Optional[List[str]] = None,
-        is_comparison: bool = False,
-    ) -> AsyncIterator[str]:
-        """Stream a response with automatic provider fallback."""
-        from domain.generation.chat_engine import classify_query_type
+        provider: BaseLLMProvider,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
+        full_text = ""
+        streamed_any = False
+        try:
+            stream = provider.generate_streaming(
+                system_prompt, user_prompt, temperature, max_tokens
+            )
+            async for token in stream:
+                streamed_any = True
+                full_text += token
+                yield (token, provider.provider)
 
-        clean_query = sanitize_user_input(query)
-        state = self.get_session_state(session_id)
-        query_type = classify_query_type(clean_query)
-        is_comparison = is_comparison or query_type == "comparison"
+        except RateLimitError:
+            cooldown_seconds = self._mark_provider_rate_limited(provider)
+            logger.warning(
+                f"Rate limit on {provider.provider.value} during stream — cooling down for "
+                f"{cooldown_seconds:.1f}s and switching"
+            )
 
-        available = self._get_available_providers()
-        if not available:
-            raise AllProvidersFailedError(errors=["No providers available"])
+        except (ProviderTimeoutError, EmptyResponseError) as exc:
+            logger.warning(f"Stream error on {provider.provider.value}: {exc.message} — switching")
 
-        for provider in available:
-            try:
-                system_prompt, user_prompt = assemble_prompt(
-                    query=clean_query,
-                    context_paragraphs=context_paragraphs,
-                    conversation_history=state.get_history(),
-                    provider=provider.name,
-                    is_comparison=is_comparison,
+        except Exception as exc:
+            logger.error(f"Stream unexpected on {provider.provider.value}: {exc}")
+
+        finally:
+            if streamed_any:
+                from shared.utils.text_utils import estimate_tokens as _est
+                input_tokens = _est(system_prompt + user_prompt)
+                output_tokens = _est(full_text) if full_text else 0
+                self._rate_monitor.track_usage(
+                    provider.provider, input_tokens + output_tokens,
                 )
 
-                buffer = ""
-                async for chunk in provider.stream(
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    temperature=settings.llm_temperature,
-                ):
-                    buffer += chunk
-                    if "[" in buffer and "]" not in buffer.split("[")[-1]:
+    async def generate_streaming(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+        estimated_tokens: int = 4_000,
+    ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
+        errors: list[str] = []
+
+        for provider in self._providers:
+            is_cooling_down, cooldown_seconds = self._is_temporarily_unavailable(provider)
+            if is_cooling_down:
+                logger.info(
+                    f"Skipping {provider.provider.value} stream — recent rate limit cooldown "
+                    f"({cooldown_seconds:.1f}s remaining)"
+                )
+                errors.append(f"{provider.provider.value}: cooling_down")
+                continue
+
+            if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                # Wait for rate limit to clear instead of immediately skipping
+                wait_secs = self._rate_monitor.seconds_until_available(
+                    provider.provider, estimated_tokens
+                )
+                if wait_secs > 0:
+                    logger.info(
+                        f"Waiting {wait_secs:.1f}s for {provider.provider.value} stream rate limit"
+                    )
+                    import asyncio
+                    await asyncio.sleep(wait_secs)
+                    if not self._rate_monitor.can_make_request(provider.provider, estimated_tokens):
+                        logger.info(f"Skipping {provider.provider.value} stream — still over rate budget")
+                        errors.append(f"{provider.provider.value}: rate_budget_exceeded")
                         continue
-                    yield buffer
-                    buffer = ""
+                else:
+                    logger.info(f"Skipping {provider.provider.value} stream — over rate budget")
+                    errors.append(f"{provider.provider.value}: rate_budget_exceeded")
+                    continue
 
-                if buffer:
-                    yield buffer
+            yielded_at_least_one = False
+            async for item in self._stream_from_provider(
+                provider, system_prompt, user_prompt, temperature, max_tokens
+            ):
+                yielded_at_least_one = True
+                yield item
 
-                state.last_provider = provider.name
-                # Reset any previous auth-failure count on success
-                self._auth_failures.pop(provider.name, None)
+            if yielded_at_least_one:
                 return
 
-            except RateLimitError as e:
-                retry_after = e.details.get("retry_after", 60)
-                logger.warning(f"Provider {provider.name} rate-limited, backing off {retry_after}s")
-                self._rate_limit_until[provider.name] = time.time() + retry_after
-                continue
+            logger.warning(
+                f"{provider.provider.value} stream yielded no tokens — trying next provider"
+            )
+            errors.append(f"{provider.provider.value}: stream_yielded_nothing")
 
-            except ProviderError as e:
-                logger.warning(f"Provider {provider.name} failed ({e.code}): {e.message}")
-                if e.code == "AUTH_ERROR":
-                    count = self._auth_failures.get(provider.name, 0) + 1
-                    self._auth_failures[provider.name] = count
-                    if count >= self._AUTH_FAILURE_LIMIT:
-                        self._disabled_providers.add(provider.name)
-                        logger.error(
-                            f"{provider.name} permanently disabled after "
-                            f"{count} consecutive AUTH_ERRORs"
-                        )
-                    else:
-                        logger.warning(
-                            f"{provider.name} AUTH_ERROR #{count}/{self._AUTH_FAILURE_LIMIT} "
-                            f"(not yet disabled): {e.message}"
-                        )
-                continue
+        logger.error(f"All providers failed for streaming: {errors}")
+        raise AllProvidersFailedError()
 
-            except Exception as e:
-                logger.error(f"Unexpected stream error from {provider.name}: {e}", exc_info=True)
-                continue
+    async def _should_retry_server_error(
+        self,
+        exc: Exception,
+        attempt: int,
+        max_retries: int,
+        base_backoff: int,
+        provider_name: str,
+    ) -> bool:
+        err_str = str(exc)
+        is_server_error = any(code in err_str for code in ("500", "502", "503", "504"))
+        if not is_server_error or attempt >= max_retries:
+            return False
+        wait = base_backoff * (2 ** attempt)
+        logger.warning(
+            f"{provider_name} server error (attempt {attempt + 1}) — retrying in {wait}s"
+        )
+        import asyncio
+        await asyncio.sleep(wait)
+        return True
 
-        raise AllProvidersFailedError(errors=["All providers failed during streaming"])
+    async def _try_vision_provider(
+        self,
+        provider: BaseLLMProvider,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float,
+        max_tokens: int,
+        errors: list[str],
+    ) -> str | None:
+        """Attempt image analysis on one provider with server-error retries.
 
-    async def shutdown(self) -> None:
+        Returns the raw text on success, or None if the provider must be skipped.
+        Appends a reason string to *errors* on every failure.
+        """
+        _SERVER_RETRIES = 2
+        _SERVER_BACKOFF_BASE = 3
+
+        for attempt in range(1 + _SERVER_RETRIES):
+            try:
+                result = await provider.analyze_image(
+                    image_data, mime_type, prompt, temperature, max_tokens,
+                )
+                return result
+
+            except NotImplementedError:
+                errors.append(f"{provider.provider.value}: no_vision_support")
+                return None  # vision not supported — skip this provider
+
+            except RateLimitError:
+                cooldown_seconds = self._mark_provider_rate_limited(provider)
+                logger.warning(
+                    f"Rate limit on {provider.provider.value} vision — cooling down for "
+                    f"{cooldown_seconds:.1f}s and switching"
+                )
+                errors.append(f"{provider.provider.value}: rate_limited")
+                return None  # rate-limited — skip this provider
+
+            except Exception as exc:
+                if await self._should_retry_server_error(
+                    exc, attempt, _SERVER_RETRIES, _SERVER_BACKOFF_BASE,
+                    provider.provider.value,
+                ):
+                    continue
+                errors.append(f"{provider.provider.value}: {exc}")
+                return None
+
+        return None  # exhausted retries
+
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        mime_type: str,
+        prompt: str,
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ) -> tuple[str, LLMProvider]:
+        """Analyze an image with the first vision-capable provider.
+
+        Vision pipeline: Ollama Cloud → Gemini → Local Ollama.
+        Groq is skipped automatically (raises NotImplementedError).
+        """
+        errors: list[str] = []
+
         for provider in self._providers:
-            if hasattr(provider, "close"):
-                try:
-                    await provider.close()
-                except Exception:
-                    pass
-        self._session_states.clear()
-        logger.info("Multi-provider LLM shut down")
+            is_cooling_down, cooldown_seconds = self._is_temporarily_unavailable(provider)
+            if is_cooling_down:
+                errors.append(f"{provider.provider.value}: cooling_down")
+                logger.info(
+                    f"Skipping {provider.provider.value} vision — recent rate limit cooldown "
+                    f"({cooldown_seconds:.1f}s remaining)"
+                )
+                continue
 
+            result = await self._try_vision_provider(
+                provider, image_data, mime_type, prompt, temperature, max_tokens, errors,
+            )
+            if result is not None:
+                logger.info(f"Image analysis from {provider.provider.value}")
+                return result, provider.provider
 
-# Module-level singleton
-_llm_instance: Optional[RobustMultiProviderLLM] = None
+        logger.error(f"All providers failed for image analysis: {errors}")
+        raise AllProvidersFailedError()
 
-
-def get_llm() -> RobustMultiProviderLLM:
-    """Get or create the global multi-provider LLM instance."""
-    global _llm_instance
-    if _llm_instance is None:
-        _llm_instance = RobustMultiProviderLLM()
-    return _llm_instance
