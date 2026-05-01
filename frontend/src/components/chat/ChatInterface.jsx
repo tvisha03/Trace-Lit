@@ -33,7 +33,6 @@ export default function ChatInterface({
   // Load chat history whenever the active session changes
   useEffect(() => {
     if (session?.id) {
-      useChatStore.getState().clearMessages();
       loadHistory(session.id);
     }
   }, [session?.id, loadHistory]);

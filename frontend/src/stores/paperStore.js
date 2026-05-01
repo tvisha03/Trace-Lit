@@ -9,6 +9,8 @@ const usePaperStore = create((set, get) => ({
   papers: [],
   loading: false,
   error: null,
+  websocketUrl: null,
+  websocketSessionId: null,
 
   // Live progress from WebSocket: { [paper_id]: { progress, stage, eta_seconds } }
   progressMap: {},
@@ -53,6 +55,9 @@ const usePaperStore = create((set, get) => ({
     set({ loading: true, error: null });
     try {
       const result = await papersApi.upload(sessionId, files);
+      if (result?.websocket_url) {
+        set({ websocketUrl: result.websocket_url, websocketSessionId: sessionId });
+      }
       // Refresh list after upload
       await get().fetchPapers();
       return result;
@@ -72,6 +77,9 @@ const usePaperStore = create((set, get) => ({
       set({ error: err.message });
     }
   },
+
+  setWebsocketConnection: (sessionId, websocketUrl) =>
+    set({ websocketSessionId: sessionId, websocketUrl }),
 
   clearError: () => set({ error: null }),
 }));

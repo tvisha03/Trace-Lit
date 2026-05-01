@@ -94,6 +94,8 @@ export const papersApi = {
   get: (sessionId, id) => request(sp(sessionId, `/papers/${id}`)),
   delete: (sessionId, id) =>
     request(sp(sessionId, `/papers/${id}`), { method: 'DELETE' }),
+  getChunks: (sessionId, paperId) =>
+    request(sp(sessionId, `/papers/${paperId}/chunks`)),
   /** Returns a URL string suitable for window.open() — browser streams the PDF directly. */
   getPdfUrl: (sessionId, paperId) =>
     `${API_BASE}${sp(sessionId, `/papers/${paperId}/pdf`)}`,
@@ -106,6 +108,7 @@ export const sessionsApi = {
   create: (data) => request('/sessions', { method: 'POST', body: JSON.stringify(data) }),
   // Body: { title?: string, description?: string }
   get: (id) => request(`/sessions/${id}`),
+  getWebsocketUrl: (id) => request(`/sessions/${id}/ws-url`),
   update: (id, data) =>
     request(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (id) => request(`/sessions/${id}`, { method: 'DELETE' }),

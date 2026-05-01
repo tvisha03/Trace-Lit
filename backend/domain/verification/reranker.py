@@ -42,19 +42,36 @@ def _build_candidate_pairs(
     """Build (claim, source_text) pairs for cross-encoder scoring."""
     all_candidates = []
     claim_map = []
+    
+    # Pre-build an index of source sentences by paragraph_id for fast lookup
+    source_index = {s["paragraph_id"]: s for s in (source_sentences or []) if s.get("paragraph_id")}
 
     for result in uncertain_results:
         claim = result["claim"]
         current_sources = source_sentences or []
-        if not current_sources and result.get("source_sentence"):
-            current_sources = [
+        
+        # Determine if there's an explicit citation in this claim
+        from domain.verification.havf import _extract_cited_para_id
+        cited_pid = _extract_cited_para_id(claim)
+        
+        # Filter candidate pool for this claim
+        candidates = current_sources[: top_k_sources * 3]
+        
+        # CRITICAL: Always include the explicitly cited paragraph if we have it,
+        # even if its embedding score was too low to be in the top candidates.
+        if cited_pid and cited_pid in source_index:
+            cited_src = source_index[cited_pid]
+            if cited_src not in candidates:
+                candidates.append(cited_src)
+
+        if not candidates and result.get("source_sentence"):
+            candidates = [
                 {
                     "text": result["source_sentence"],
                     "paragraph_id": result.get("paragraph_id"),
                 }
             ]
 
-        candidates = current_sources[: top_k_sources * 3]
         for src in candidates:
             all_candidates.append((claim, src["text"]))
             claim_map.append((result, src))
@@ -112,6 +129,8 @@ def _apply_rerank_results(
         result["paper_id"] = best_source.get("paper_id")
         result["sentence_key"] = best_source.get("sentence_key")
         result["page_number"] = best_source.get("page_number")
+    else:
+        result["confidence"] = ConfidenceLevel.LOW
     result["needs_reranking"] = False
 
 

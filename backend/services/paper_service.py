@@ -127,6 +127,7 @@ async def _persist_chunks_with_retry(db: AsyncSession, chunks, paper_id: str):
             "token_count": c.token_count,
             "chunk_type": c.chunk_type.value if hasattr(c.chunk_type, "value") else str(c.chunk_type),
             "image_path": getattr(c, "image_path", None),
+            "bbox": getattr(c, "bbox", None),
         }
         for c in chunks
     ]

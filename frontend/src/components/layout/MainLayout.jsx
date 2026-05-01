@@ -53,7 +53,7 @@ export default function MainLayout({ topbar, leftPanel, mainPanel, rightPanel })
   const rightPanelWithWidth = rightPanel ? React.cloneElement(rightPanel, { width: rightWidth }) : null;
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-tl-bg select-none">
+    <div className="flex flex-col h-screen overflow-hidden bg-tl-bg">
       {topbar}
       <div className="flex flex-1 min-h-0 overflow-hidden relative">
         {leftPanelWithWidth}

@@ -51,7 +51,7 @@ export default function CitationTooltip({ havfItem, refLabel }) {
       <div
         className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50
                    w-48 rounded-lg border border-tl-b2 bg-tl-s1 shadow-xl shadow-black/40
-                   text-left pointer-events-none select-none"
+                   text-left"
       >
         <div className="flex items-center gap-2 px-3 py-2 border-b border-tl-b1 rounded-t-lg bg-tl-s2 text-tl-t3">
           <span className="w-1.5 h-1.5 rounded-full bg-tl-low" />
@@ -78,7 +78,7 @@ export default function CitationTooltip({ havfItem, refLabel }) {
     <div
       className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50
                  w-72 rounded-lg border border-tl-b2 bg-tl-s1 shadow-xl shadow-black/40
-                 text-left pointer-events-none select-none"
+                 text-left"
     >
       {/* Header: citation ref + confidence */}
       <div

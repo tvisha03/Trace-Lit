@@ -52,6 +52,7 @@ class ExtractedFormula:
     formula_type: str
     equation_number: str | None = None
     context: str = ""
+    bbox: tuple[float, float, float, float] | None = None
 
 def _clean_formula(raw: str) -> str:
     cleaned = raw.strip()
@@ -320,6 +321,7 @@ def _extract_box_formulas(page) -> list[ExtractedFormula]:
             content=raw,
             page_number=page_num,
             formula_type="layout_box",
+            bbox=tuple(box.get("bbox")) if box.get("bbox") else None,
         ))
 
     return formulas
@@ -349,6 +351,16 @@ def extract_formulas_from_pages(
         key = f.content.strip()
         if key not in seen:
             seen.add(key)
+            if f.bbox and not isinstance(f.bbox, dict):
+                eq_num = getattr(f, "equation_number", "1") or "1"
+                f.bbox = {
+                    "source_type": "equation",
+                    "equation_id": f"eq_{f.page_number or 1}_{eq_num}",
+                    "page": f.page_number or 1,
+                    "equation_number": eq_num,
+                    "equation_bbox": f.bbox,
+                    "number_bbox": (f.bbox[2] - 30, f.bbox[1], f.bbox[2], f.bbox[3]),
+                }
             deduplicated.append(f)
 
     logger.info(f"Extracted {len(deduplicated)} unique formulas from {len(pages)} pages")

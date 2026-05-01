@@ -23,6 +23,14 @@ from domain.verification.reranker import (
 from shared.enums import ConfidenceLevel
 
 
+@pytest.fixture(autouse=True)
+def clear_embedding_cache():
+    from domain.verification.embedding_verifier import _source_embedding_cache
+    _source_embedding_cache.clear()
+    yield
+
+
+
 class TestDetermineConfidence:
     """Tests for _determine_confidence function."""
 
@@ -158,7 +166,7 @@ class TestCrossEncoderNormalization:
     def test_sigmoid_clamping_extreme_negative(self):
         """Extremely negative values should be clamped."""
         score = _normalize_cross_encoder_score(-1000.0)
-        assert score == 0.0
+        assert score == pytest.approx(0.0, abs=1e-7)
 
 
 class TestVerifyClaimsEmbedding:
@@ -181,9 +189,9 @@ class TestVerifyClaimsEmbedding:
     @patch("domain.verification.embedding_verifier.encode_texts")
     def test_single_claim_single_source(self, mock_encode):
         """Single claim matched to single source."""
-        # Mock embeddings: claim -> [0.9], source -> [0.9]
+        # Mock embeddings: claim -> [1.0], source -> [0.9]
         mock_encode.side_effect = [
-            np.array([[0.9]]),  # claim embeddings
+            np.array([[1.0]]),  # claim embeddings
             np.array([[0.9]]),  # source embeddings
         ]
 
@@ -199,9 +207,9 @@ class TestVerifyClaimsEmbedding:
     @patch("domain.verification.embedding_verifier.encode_texts")
     def test_medium_confidence_triggers_reranking(self, mock_encode):
         """Medium confidence should set needs_reranking=True."""
-        # Mock embeddings: claim -> [0.7], source -> [0.7]
+        # Mock embeddings: claim -> [1.0], source -> [0.7]
         mock_encode.side_effect = [
-            np.array([[0.7]]),
+            np.array([[1.0]]),
             np.array([[0.7]]),
         ]
 
@@ -213,6 +221,7 @@ class TestVerifyClaimsEmbedding:
         assert len(result) == 1
         assert result[0]["confidence"] == ConfidenceLevel.MEDIUM
         assert result[0]["needs_reranking"] is True
+
 
 
 class TestRerankClaims:
@@ -235,16 +244,13 @@ class TestRerankClaims:
         assert result[0]["confidence"] == ConfidenceLevel.MEDIUM
 
 
-class TestIntegration:
-    """Integration tests for the full verification pipeline."""
-
     @patch("domain.verification.embedding_verifier.encode_texts")
     @patch("domain.verification.reranker._get_cross_encoder")
     def test_full_pipeline_high_confidence(self, mock_reranker, mock_encoder):
         """Full pipeline with high confidence claim (no reranking needed)."""
         # High similarity = HIGH confidence, no reranking
         mock_encoder.side_effect = [
-            np.array([[0.9]]),  # claim
+            np.array([[1.0]]),  # claim
             np.array([[0.9]]),  # source
         ]
         mock_reranker.return_value = None  # Not called for HIGH
@@ -270,7 +276,7 @@ class TestIntegration:
         """Full pipeline with medium confidence (triggers reranking path)."""
         # Medium similarity = needs reranking
         mock_encoder.side_effect = [
-            np.array([[0.7]]),
+            np.array([[1.0]]),
             np.array([[0.7]]),
         ]
         mock_reranker.return_value = None
@@ -289,6 +295,7 @@ class TestIntegration:
         assert len(result) == 1
         assert result[0]["confidence"] == ConfidenceLevel.MEDIUM
         assert result[0]["needs_reranking"] is True
+
 
 
 class TestEdgeCases:

@@ -34,6 +34,24 @@ async def verify_text_against_papers(
         classification=forced,
     )
 
+    # AUGMENTATION: Ensure every cited paragraph ID is present in the context
+    from shared.utils.text_utils import extract_paragraph_ids
+    from infrastructure.db.crud.chunk_crud import get_chunk_by_paragraph_id
+    from domain.retrieval.retriever import _chunk_to_retrieved
+
+    cited_ids = set(extract_paragraph_ids(text))
+    existing_ids = {c.paragraph_id for c in chunks}
+    missing_ids = cited_ids - existing_ids
+
+    if missing_ids:
+        logger.info(f"HAVF Augmentation: Fetching {len(missing_ids)} missing cited paragraphs from DB")
+        for pid in missing_ids:
+            target_paper = next((p for p in paper_ids if pid.startswith(p[:8])), None)
+            if target_paper:
+                chunk = await get_chunk_by_paragraph_id(db_session, target_paper, pid)
+                if chunk:
+                    chunks.append(_chunk_to_retrieved(chunk, score=0.9))
+
     settings = get_settings()
     havf_results = await verify_response(
         text,

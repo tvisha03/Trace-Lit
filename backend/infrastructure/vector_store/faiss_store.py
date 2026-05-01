@@ -160,7 +160,7 @@ class FAISSStore:
             results_by_paper[paper_id].append({
                 "paper_id": paper_id,
                 "paragraph_id": paragraph_id,
-                "score": float(score),
+                "score": score.item(),
             })
 
     def remove_paper(self, paper_id: str) -> None:

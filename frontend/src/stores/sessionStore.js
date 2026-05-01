@@ -37,6 +37,9 @@ const useSessionStore = create((set, get) => ({
         }));
       }
       set({ activeSession: session });
+      if (session?.id) {
+        localStorage.setItem("tracelit_active_session_id", session.id);
+      }
       return session;
     } catch (err) {
       console.error("[sessionStore] createSession failed:", err);
@@ -45,7 +48,14 @@ const useSessionStore = create((set, get) => ({
     }
   },
 
-  setActiveSession: (session) => set({ activeSession: session }),
+  setActiveSession: (session) => {
+    if (session?.id) {
+      localStorage.setItem("tracelit_active_session_id", session.id);
+    } else {
+      localStorage.removeItem("tracelit_active_session_id");
+    }
+    set({ activeSession: session });
+  },
   clearError: () => set({ error: null }),
 
   deleteSession: async (id) => {

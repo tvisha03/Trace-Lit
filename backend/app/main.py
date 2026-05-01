@@ -73,7 +73,11 @@ class TimeoutMiddleware:
         except asyncio.TimeoutError:
             # We must send a response here if possible, but ASGI 'send' might have already started.
             # However, for pure middleware before any response started, this works:
-            pass
+            response = JSONResponse(
+                status_code=504,
+                content={"detail": "Request timed out. Please try again."},
+            )
+            await response(scope, receive, send)
             # Note: properly handling timeout in ASGI mid-request is complex.
             # For simplicity, if wait_for raises, we've already lost the response channel 
             # if the app started sending. But for the health/list routes, it works.

@@ -76,7 +76,7 @@ class GeminiProvider(BaseLLMProvider):
             max_output_tokens=max_tokens,
         )
         try:
-            async for chunk in client.aio.models.generate_content_stream(
+            async for chunk in await client.aio.models.generate_content_stream(
                 model=_MODEL,
                 contents=user_prompt,
                 config=config,

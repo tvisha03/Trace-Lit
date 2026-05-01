@@ -37,6 +37,17 @@ def _sanitize_user_text(value: str) -> str:
     return value
 
 
+def _validate_paper_ids(value: list[str]) -> list[str]:
+    for paper_id in value:
+        try:
+            _uuid.UUID(paper_id)
+        except ValueError:
+            raise ValueError(f"Invalid UUID format for paper_id: {paper_id}")
+    if len(set(value)) != len(value):
+        raise ValueError("Duplicate paper_ids are not allowed")
+    return value
+
+
 class SessionCreate(BaseModel):
     title: Optional[str] = Field(None, max_length=200)
     description: Optional[str] = Field(None, max_length=1000)
@@ -88,6 +99,21 @@ class PaperListResponse(BaseModel):
 class PaperUploadResponse(BaseModel):
     paper_ids: list[str]
     message: str
+    websocket_url: Optional[str] = None
+
+
+class ChunkResponse(BaseModel):
+    paragraph_id: str
+    text: str
+    section_title: Optional[str] = None
+    page_number: Optional[int] = None
+    chunk_type: str
+    sentence_map: dict = Field(default_factory=dict)
+
+
+class PaperChunksResponse(BaseModel):
+    paper_id: str
+    chunks: list[ChunkResponse]
 
 
 class ChatRequest(BaseModel):
@@ -118,6 +144,9 @@ class VerificationItem(BaseModel):
     chunk_type: Optional[str] = None
     citation_ref: Optional[str] = None
     page_number: Optional[int] = None
+    full_context: Optional[str] = None
+    bbox: Optional[list] = None
+
 
 
 class ChatResponse(BaseModel):
@@ -152,14 +181,7 @@ class CompareRequest(BaseModel):
     @field_validator("paper_ids")
     @classmethod
     def validate_paper_ids(cls, v: list[str]) -> list[str]:
-        for pid in v:
-            try:
-                _uuid.UUID(pid)
-            except ValueError:
-                raise ValueError(f"Invalid UUID format for paper_id: {pid}")
-        if len(set(v)) != len(v):
-            raise ValueError("Duplicate paper_ids are not allowed")
-        return v
+        return _validate_paper_ids(v)
 
 
 class ComparisonCell(BaseModel):
@@ -199,14 +221,7 @@ class ComparisonExportRequest(BaseModel):
     @field_validator("paper_ids")
     @classmethod
     def validate_paper_ids(cls, v: list[str]) -> list[str]:
-        for pid in v:
-            try:
-                _uuid.UUID(pid)
-            except ValueError:
-                raise ValueError(f"Invalid UUID format for paper_id: {pid}")
-        if len(set(v)) != len(v):
-            raise ValueError("Duplicate paper_ids are not allowed")
-        return v
+        return _validate_paper_ids(v)
 
 
 class ExportResponse(BaseModel):
@@ -274,14 +289,7 @@ class VerifyRequest(BaseModel):
     @field_validator("paper_ids")
     @classmethod
     def validate_paper_ids(cls, v: list[str]) -> list[str]:
-        for pid in v:
-            try:
-                _uuid.UUID(pid)
-            except ValueError:
-                raise ValueError(f"Invalid UUID format for paper_id: {pid}")
-        if len(set(v)) != len(v):
-            raise ValueError("Duplicate paper_ids are not allowed")
-        return v
+        return _validate_paper_ids(v)
 
 
 class VerifyResponse(BaseModel):

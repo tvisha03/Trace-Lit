@@ -1,4 +1,3 @@
-
 import time
 from dataclasses import dataclass
 
@@ -23,6 +22,131 @@ from shared.utils.time_utils import timer
 
 logger = get_logger(__name__)
 
+
+def format_evaluation_output(
+    data: dict,
+    paper_id_short: str = "",
+    paper_title: str = "",
+    skip_header: bool = False,
+) -> str:
+    """
+    Format evaluation metrics output according to the specification.
+    Returns structured, clean output with tables and source citations.
+
+    Args:
+        data: Dict with task, datasets, metrics, results, baselines, training_details
+        paper_id_short: Short paper ID for source citation
+        paper_title: Paper title to display
+        skip_header: If True, skip the main header/footer (for multi-paper context)
+    """
+    task = str(data.get("task") or "N/A")
+    datasets = data.get("datasets") or []
+    metrics = data.get("metrics") or []
+    results = data.get("results") or []
+    baselines = data.get("baselines") or []
+    training_details = str(data.get("training_details") or "N/A")
+
+    if isinstance(datasets, str):
+        datasets = [datasets]
+    if isinstance(metrics, str):
+        metrics = [metrics]
+    if isinstance(results, str):
+        results = [results]
+    if isinstance(baselines, str):
+        baselines = [baselines]
+
+    lines = []
+
+    # Header (skip in multi-paper context)
+    if not skip_header:
+        lines.append("📊 EVALUATION METRICS")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("")
+
+    # Paper title/header
+    if paper_title:
+        lines.append(f"**Paper:** {paper_title}")
+        lines.append(f"**ID:** {paper_id_short}")
+        lines.append("")
+
+    # Task
+    lines.append(f"**Task:** {task}")
+    lines.append("")
+
+    # Datasets
+    if datasets:
+        lines.append(f"**Datasets:** {', '.join(datasets)}")
+        lines.append("")
+
+    # Results table
+    if results:
+        lines.append("**Results:**")
+
+        # Build table - extract model names and values from results
+        # Expected format: results is list of dicts with model, metric, value, dataset
+        if isinstance(results, list) and len(results) > 0:
+            # Try to build a structured table
+            if isinstance(results[0], dict):
+                # Group by dataset
+                from collections import defaultdict
+
+                datasets_map = defaultdict(list)
+                for r in results:
+                    ds = r.get("dataset", "Unknown")
+                    datasets_map[ds].append(r)
+
+                for ds, items in datasets_map.items():
+                    # Table header
+                    lines.append(f"**Dataset: {ds}**")
+                    lines.append("")
+                    lines.append("┌" + "─" * 30 + "┬" + "─" * 15 + "┐")
+                    lines.append(f"│ Model{' ' * 26}│ Value{' ' * 10}│")
+                    lines.append("├" + "─" * 30 + "┼" + "─" * 15 + "┤")
+
+                    for item in items:
+                        model = item.get("model", "N/A")
+                        value = item.get("value", "N/A")
+                        metric = item.get("metric", "")
+                        metric_str = f" ({metric})" if metric else ""
+                        lines.append(
+                            f"│ {model}{' ' * (30 - len(model))}│ {value}{metric_str}{' ' * (15 - len(str(value)) - len(metric_str))}│"
+                        )
+
+                    lines.append("└" + "─" * 30 + "┴" + "─" * 15 + "┘")
+                    lines.append("")
+            else:
+                # Simple list of results
+                for r in results:
+                    lines.append(f"- {r}")
+                lines.append("")
+
+    # Metrics
+    if metrics:
+        lines.append(f"**Metrics:** {', '.join(metrics)}")
+        lines.append("")
+
+    # Baselines
+    if baselines:
+        lines.append(f"**Baselines:** {', '.join(map(str, baselines))}")
+        lines.append("")
+
+    # Training details
+    if training_details and training_details != "N/A":
+        lines.append(f"**Training:** {training_details}")
+        lines.append("")
+
+    # Source citation
+    cite = f"[{paper_id_short}]" if paper_id_short else "[P1]"
+    lines.append(f"**Source:** {cite}")
+    lines.append("")
+
+    # Footer (skip in multi-paper context)
+    if not skip_header:
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    return "\n".join(lines)
+
+
 @dataclass
 class ChatResponse:
     content: str
@@ -31,6 +155,7 @@ class ChatResponse:
     retrieved_chunks: list[RetrievedChunk]
     token_count: int
     latency_ms: float
+
 
 def _filter_chunks_by_keywords(
     chunks: list[RetrievedChunk],
@@ -43,6 +168,7 @@ def _filter_chunks_by_keywords(
     # If the filter eliminates all chunks (e.g. a placeholder keyword like "string"
     # sent from Swagger UI), ignore the filter so the LLM still gets context.
     return filtered if filtered else chunks
+
 
 def _build_user_prompt(
     query_type: QueryType,
@@ -70,6 +196,7 @@ def _build_user_prompt(
         question=query,
     )
 
+
 async def _retrieve_and_filter_chunks(
     query: str,
     paper_ids: list[str],
@@ -87,6 +214,7 @@ async def _retrieve_and_filter_chunks(
     )
     return _filter_chunks_by_keywords(chunks, keywords)
 
+
 async def _verify_response_with_settings(
     response_text: str,
     chunks: list[RetrievedChunk],
@@ -99,6 +227,7 @@ async def _verify_response_with_settings(
         medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
         cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
     )
+
 
 def _build_response(
     response_text: str,
@@ -116,6 +245,7 @@ def _build_response(
         latency_ms=latency_ms,
     )
 
+
 async def generate_response(
     query: str,
     paper_ids: list[str],
@@ -128,26 +258,296 @@ async def generate_response(
     start = time.perf_counter()
 
     classification = classify_query(
-        query, history=history, paper_count=len(paper_ids),
+        query,
+        history=history,
+        paper_count=len(paper_ids),
     )
 
     if classification.query_type == QueryType.METADATA:
         return await _handle_metadata_query(
-            query, paper_ids, history, llm, db_session, start,
+            query,
+            paper_ids,
+            history,
+            llm,
+            db_session,
+            start,
         )
 
+    EVAL_KEYWORDS = {
+        "accuracy",
+        "bleu",
+        "f1",
+        "precision",
+        "recall",
+        "perplexity",
+        "auc",
+        "rouge",
+        "benchmark",
+        "dataset",
+        "evaluation",
+        "performance",
+        "score",
+        "results",
+        "compared",
+        "achieved",
+    }
+    is_eval_query = any(kw in query.lower() for kw in EVAL_KEYWORDS)
+
+    if is_eval_query:
+        try:
+            from sqlalchemy import select
+            from infrastructure.db.models.evaluation import EvaluationCache
+
+            pids_str = ",".join(sorted(paper_ids))
+            stmt = select(EvaluationCache).where(
+                EvaluationCache.query == query, EvaluationCache.paper_ids == pids_str
+            )
+            res = await db_session.execute(stmt)
+            cache_item = res.scalars().first()
+
+            if cache_item:
+                logger.info(f"Using cached evaluation metrics for query: {query}")
+                chunks = await _retrieve_and_filter_chunks(
+                    query,
+                    paper_ids,
+                    faiss_store,
+                    db_session,
+                    classification,
+                    keywords,
+                )
+                havf_results = await _verify_response_with_settings(
+                    cache_item.results, chunks
+                )
+                return _build_response(
+                    cache_item.results,
+                    LLMProvider.OLLAMA,
+                    havf_results,
+                    chunks,
+                    (time.perf_counter() - start) * 1000,
+                )
+        except Exception as exc:
+            logger.warning(f"Error reading evaluation cache: {exc}")
+
     chunks = await _retrieve_and_filter_chunks(
-        query, paper_ids, faiss_store, db_session, classification, keywords,
+        query,
+        paper_ids,
+        faiss_store,
+        db_session,
+        classification,
+        keywords,
     )
 
+    if is_eval_query:
+        try:
+            # Build context from all papers
+            context_text = "\n\n---\n\n".join(
+                [
+                    f"[Paper {i + 1}: {paper_ids[i][:8]}]\n{c.text}"
+                    for i, c in enumerate(chunks)
+                ]
+            )
+
+            # Get all paper titles
+            paper_titles = {}
+            try:
+                from infrastructure.db.crud.paper_crud import get_paper
+
+                for pid in paper_ids:
+                    paper = await get_paper(db_session, pid)
+                    if paper and paper.title:
+                        paper_titles[pid] = paper.title
+            except Exception:
+                pass
+
+            extract_prompt = f"""You are an expert academic reviewer extracting experimental evaluation details.
+Analyze the following retrieved context from the paper(s):
+{context_text}
+
+For each paper, extract the following details as a JSON array:
+[
+  {{
+    "paper_id": "paper identifier like P1, P2",
+    "task": "What problem/task the paper evaluates.",
+    "datasets": ["dataset1", "dataset2"],
+    "metrics": ["metric1", "metric2"],
+    "results": [
+      {{"model": "model name", "metric": "BLEU", "dataset": "WMT14", "value": "27.3"}},
+      ...
+    ],
+    "baselines": ["baseline1", "baseline2"],
+    "training_details": "Training parameters, compute, or hardware."
+  }},
+  ...
+]
+
+Your response MUST be ONLY valid JSON array. Do NOT add extra text.
+"""
+            settings = get_settings()
+            res_text, provider, _ = await llm.generate(
+                system_prompt="You are a JSON extractor. Return ONLY valid JSON array.",
+                user_prompt=extract_prompt,
+                max_tokens=settings.OLLAMA_CLOUD_MAX_TOKENS,
+            )
+
+            import json
+            import re
+
+            match = re.search(r"\[.*\]", res_text, re.DOTALL)
+            if not match:
+                match = re.search(r"\{.*\}", res_text, re.DOTALL)
+            if match:
+                res_text = match.group(0)
+
+            papers_data = json.loads(res_text)
+            if isinstance(papers_data, dict):
+                papers_data = [papers_data]
+
+            # Format output for all papers
+            formatted_parts = []
+            formatted_parts.append("📊 EVALUATION METRICS ACROSS PAPERS")
+            formatted_parts.append(
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+            formatted_parts.append("")
+
+            for idx, data in enumerate(papers_data):
+                p_id = data.get("paper_id", f"P{idx + 1}")
+                p_short = p_id[:8] if len(p_id) > 8 else p_id
+                paper_title = ""
+                if idx < len(paper_ids):
+                    paper_title = paper_titles.get(paper_ids[idx], "")
+
+                # Paper header
+                formatted_parts.append(f"PAPER {idx + 1}: {paper_title or p_short}")
+                formatted_parts.append("─" * 40)
+
+                # Use format_evaluation_output for consistent formatting
+                single_paper_data = {
+                    "task": data.get("task", "N/A"),
+                    "datasets": data.get("datasets", []),
+                    "metrics": data.get("metrics", []),
+                    "results": data.get("results", []),
+                    "baselines": data.get("baselines", []),
+                    "training_details": data.get("training_details", "N/A"),
+                }
+                paper_output = format_evaluation_output(
+                    single_paper_data, p_short, paper_title, skip_header=True
+                )
+                formatted_parts.append(paper_output)
+                formatted_parts.append("")
+
+            # Cross-paper comparison
+            if len(papers_data) > 1:
+                formatted_parts.append("CROSS-PAPER COMPARISON")
+                formatted_parts.append("─" * 40)
+
+                # Check for common metrics/datasets
+                all_metrics_set = [set(data.get("metrics", [])) for data in papers_data]
+                all_datasets_set = [
+                    set(data.get("datasets", [])) for data in papers_data
+                ]
+
+                common_metrics = (
+                    set.intersection(*all_metrics_set) if all_metrics_set else set()
+                )
+                common_datasets = (
+                    set.intersection(*all_datasets_set) if all_datasets_set else set()
+                )
+
+                if common_metrics and common_datasets:
+                    formatted_parts.append(
+                        f"**Common metrics:** {', '.join(common_metrics)}"
+                    )
+                    formatted_parts.append(
+                        f"**Common datasets:** {', '.join(common_datasets)}"
+                    )
+                    formatted_parts.append("")
+                    formatted_parts.append("Direct comparison possible:")
+
+                    # Build comparison table
+                    # Get all unique models across papers
+                    all_models = []
+                    for data in papers_data:
+                        for r in data.get("results", []):
+                            m = r.get("model", "N/A")
+                            if m not in all_models:
+                                all_models.append(m)
+
+                    if all_models:
+                        # Header: Model | Paper 1 | Paper 2 | ...
+                        header = (
+                            "| Model | "
+                            + " | ".join(
+                                [f"Paper {i + 1}" for i in range(len(papers_data))]
+                            )
+                            + " |"
+                        )
+                        formatted_parts.append(header)
+                        sep = "|---" + "|---" * len(papers_data) + "|"
+                        formatted_parts.append(sep)
+
+                        for model in all_models:
+                            row = [model]
+                            for data in papers_data:
+                                # Find value for this model in this paper
+                                val = next(
+                                    (
+                                        r.get("value", "N/A")
+                                        for r in data.get("results", [])
+                                        if r.get("model") == model
+                                    ),
+                                    "N/A",
+                                )
+                                row.append(val)
+                            formatted_parts.append("| " + " | ".join(row) + " |")
+                        formatted_parts.append("")
+                else:
+                    formatted_parts.append("**No common benchmarks across papers.**")
+                    formatted_parts.append(
+                        "Direct numerical comparison not meaningful."
+                    )
+
+                formatted_parts.append("")
+                formatted_parts.append(
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                )
+
+            formatted_out = "\n".join(formatted_parts)
+
+            try:
+                from infrastructure.db.models.evaluation import EvaluationCache
+
+                pids_str = ",".join(sorted(paper_ids))
+                cache_entry = EvaluationCache(
+                    query=query, paper_ids=pids_str, results=formatted_out
+                )
+                db_session.add(cache_entry)
+                await db_session.commit()
+            except Exception as e:
+                logger.warning(f"Could not save evaluation cache entry: {e}")
+
+            havf_results = await _verify_response_with_settings(formatted_out, chunks)
+            return _build_response(
+                formatted_out,
+                provider,
+                havf_results,
+                chunks,
+                (time.perf_counter() - start) * 1000,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Error in extraction pass or invalid JSON response. Falling back to regular chat generation: {exc}"
+            )
+
     user_prompt = _build_user_prompt(
-        classification.query_type, query, chunks, history,
+        classification.query_type,
+        query,
+        chunks,
+        history,
     )
 
     with timer("LLM generation"):
         settings = get_settings()
-        # Use the cloud token ceiling — each provider clamps to its own hard limit
-        # (local Ollama: 2048, Ollama Cloud/Gemini/Groq: 4096).
         chat_max_tokens = settings.OLLAMA_CLOUD_MAX_TOKENS
         prompt_tokens = estimate_tokens(SYSTEM_PROMPT + user_prompt)
         estimated_total = prompt_tokens + chat_max_tokens
@@ -160,12 +560,14 @@ async def generate_response(
 
     if not response_text or not response_text.strip():
         from shared.errors import EmptyResponseError
+
         raise EmptyResponseError(provider.value)
 
     havf_results = await _verify_response_with_settings(response_text, chunks)
     latency_ms = (time.perf_counter() - start) * 1000
 
     return _build_response(response_text, provider, havf_results, chunks, latency_ms)
+
 
 async def _gather_paper_metadata(paper_ids: list[str], db_session) -> str:
     from infrastructure.db.crud.paper_crud import get_paper
@@ -186,7 +588,12 @@ async def _gather_paper_metadata(paper_ids: list[str], db_session) -> str:
             parts.append(f"Abstract: {paper.abstract[:500]}")
         meta_lines.append("\n".join(parts))
 
-    return "\n\n---\n\n".join(meta_lines) if meta_lines else "(No paper metadata available)"
+    return (
+        "\n\n---\n\n".join(meta_lines)
+        if meta_lines
+        else "(No paper metadata available)"
+    )
+
 
 async def _handle_metadata_query(
     query: str,
@@ -220,6 +627,7 @@ async def _handle_metadata_query(
         token_count=estimate_tokens(response_text),
         latency_ms=latency_ms,
     )
+
 
 async def generate_comparison(
     paper_ids: list[str],
@@ -267,6 +675,7 @@ async def generate_comparison(
     )
     return response_text, provider
 
+
 async def generate_summary(
     context: str,
     llm: FallbackChain,
@@ -284,4 +693,3 @@ async def generate_summary(
         max_tokens=settings.OLLAMA_CLOUD_MAX_TOKENS,
     )
     return response_text, provider
-

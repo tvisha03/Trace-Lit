@@ -1,21 +1,6 @@
-/**
- * TraceLit — Message Bubble
- *
- * Renders assistant messages with sentence-level attribution:
- *   • Each sentence is parsed and matched to its HAVF verification item(s).
- *   • Sentences with citations are underlined in confidence colour and get
- *     clickable superscript badges with a hover tooltip.
- *   • A uniform LOW-confidence response triggers an abstention warning.
- *   • Sentences whose sources significantly disagree are flagged "contested".
- *
- * Accepts message shape from backend MessageResponse / SSE stream:
- *   { id, role, content, provider, havf_results: VerificationItem[], token_count, latency_ms }
- *
- * VerificationItem: { claim, confidence ("HIGH"|"MEDIUM"|"LOW"), score, source_sentence,
- *                     paragraph_id, paper_id, citation_ref, sentence_key, chunk_type,
- *                     verification_method }
- */
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import ConfidenceBadge from '../common/ConfidenceBadge';
 import CitedSentence from './CitedSentence';
 import {
@@ -41,8 +26,6 @@ const CONF_BADGE_CLS = {
   LOW: 'bg-tl-low/10 text-tl-low border-tl-low/30',
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export default function MessageBubble({ message, onCitationClick }) {
   const [showSources, setShowSources] = useState(false);
   const isUser = message.role === 'user';
@@ -51,8 +34,8 @@ export default function MessageBubble({ message, onCitationClick }) {
   if (isUser) {
     return (
       <div className="flex justify-end mb-3">
-        <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm bg-tl-s3 text-tl-t1">
-          <p className="text-sm">{message.content}</p>
+        <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm bg-tl-s3 text-tl-t1 shadow-sm">
+          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
         </div>
       </div>
     );
@@ -63,12 +46,7 @@ export default function MessageBubble({ message, onCitationClick }) {
   const minScore = overallScore(havfResults);
   const abstaining = isAbstention(message.content, havfResults);
 
-  // Parse content into sentence segments annotated with HAVF items.
-  const segments = parseSentencesWithCitations(message.content, havfResults);
-
-  // Deduplicate sources by citation_ref, keeping the highest-scoring entry per ref.
-  // HAVF produces one result per sentence that cites a paragraph, so the same
-  // paragraph ID (e.g. P349) often appears multiple times in havfResults.
+  // Deduplicate sources for the "Show Sources" list
   const dedupedSources = (() => {
     const best = {};
     for (const item of havfResults) {
@@ -81,44 +59,85 @@ export default function MessageBubble({ message, onCitationClick }) {
     return Object.values(best);
   })();
 
-  return (
-    <div className="flex justify-start mb-3">
-      <div className="max-w-[85%] space-y-1.5">
+  /**
+   * Custom component for react-markdown to handle text nodes.
+   * It finds [P#] citations and replaces them with CitedSentence.
+   */
+  const components = {
+    // Override how text is rendered to inject CitedSentence components
+    text: ({ value }) => {
+      if (!value) return null;
+      
+      // We parse the text node into segments of sentences with citations
+      const segments = parseSentencesWithCitations(value, havfResults);
+      
+      if (segments.length === 0) return value;
+      
+      return (
+        <>
+          {segments.map((seg, i) => (
+            seg.citationRefs.length > 0 ? (
+              <CitedSentence
+                key={i}
+                text={seg.text}
+                havfItems={seg.havfItems}
+                onCitationClick={onCitationClick}
+                isContested={detectContradiction(seg.havfItems)}
+              />
+            ) : (
+              <span key={i}>{seg.text} </span>
+            )
+          ))}
+        </>
+      );
+    },
+    // Style tables to look premium
+    table: ({ children }) => (
+      <div className="my-4 overflow-x-auto border border-tl-b1 rounded-lg shadow-sm">
+        <table className="min-w-full divide-y divide-tl-b1 border-collapse text-[12px]">
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ children }) => <thead className="bg-tl-s3/50">{children}</thead>,
+    th: ({ children }) => (
+      <th className="px-3 py-2 text-left font-mono font-bold text-tl-gold uppercase tracking-tighter border-r border-tl-b1 last:border-0">
+        {children}
+      </th>
+    ),
+    td: ({ children }) => (
+      <td className="px-3 py-2 text-tl-t2 border-r border-t border-tl-b1 last:border-0 align-top">
+        {children}
+      </td>
+    ),
+    // Standard markdown styling
+    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+    code: ({ children }) => <code className="bg-tl-s3 px-1 rounded text-tl-gold font-mono">{children}</code>,
+  };
 
+  return (
+    <div className="flex justify-start mb-4">
+      <div className="max-w-[92%] space-y-2">
         {/* ── Abstention warning ─────────────────────────────────────────── */}
         {abstaining && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-lg
-                          bg-tl-med/8 border border-tl-med/30 mb-1">
-            <span className="text-tl-med text-sm mt-0.5 flex-shrink-0">⚠</span>
-            <p className="text-xs font-mono text-tl-med leading-relaxed">
-              The model could not find sufficient evidence in your uploaded papers to
-              answer this with confidence. This response is based on limited matching.
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-tl-med/10 border border-tl-med/30 mb-1">
+            <span className="text-tl-med text-sm mt-0.5">⚠</span>
+            <p className="text-[11px] font-mono text-tl-med leading-relaxed">
+              Model confidence is low for this response. Verify carefully.
             </p>
           </div>
         )}
 
         {/* ── Message bubble ─────────────────────────────────────────────── */}
-        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-tl-s2 text-tl-t1">
-          <p className="text-sm leading-relaxed">
-            {segments.length > 0
-              ? segments.map((seg, i) =>
-                  seg.citationRefs.length > 0 ? (
-                    // Sentence with attribution: underlined + superscript badges
-                    <CitedSentence
-                      key={i}
-                      text={seg.text}
-                      havfItems={seg.havfItems}
-                      onCitationClick={onCitationClick}
-                      isContested={detectContradiction(seg.havfItems)}
-                    />
-                  ) : (
-                    // Plain sentence — no citation found
-                    <span key={i}>{seg.text} </span>
-                  )
-                )
-              : message.content /* fallback: render content as-is */
-            }
-          </p>
+        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-tl-s2 text-tl-t1 shadow-sm border border-tl-b1/20">
+          <div className="text-[13.5px] leading-relaxed markdown-body">
+            <ReactMarkdown 
+              remarkPlugins={[remarkGfm]} 
+              components={components}
+            >
+              {message.content.replace(/\[(?:[a-z0-9\-_]+_)?([PFTEpfte]\d+)\]/gi, '[$1]')}
+            </ReactMarkdown>
+          </div>
         </div>
 
         {/* ── Metadata row ───────────────────────────────────────────────── */}

@@ -61,8 +61,6 @@ export function uid() {
 export function parseSentencesWithCitations(content, havfResults = []) {
   if (!content) return [];
 
-  // Build a lookup map keyed by citation_ref (e.g. "P15") for fast access.
-  // Multiple HAVF items may share the same citation_ref.
   const havfByRef = {};
   for (const item of havfResults) {
     const ref = item.citation_ref;
@@ -71,26 +69,38 @@ export function parseSentencesWithCitations(content, havfResults = []) {
     havfByRef[ref].push(item);
   }
 
-  // Matches both full-form [59d08199_P15] and short-form [P15] and [F3]/[T2]/[E5].
-  // Capture group 1 is always the short suffix used as citation_ref (e.g. "P15").
-  const CITATION_RE = /\[(?:[a-f0-9]{6,}_)?([PFTEpfte]\d+)\]/g;
+  const CITATION_RE = /\[(?:[a-z0-9\-_]+_)?([PFTEpfte]\d+)\]/gi;
 
-  // Split on sentence boundaries while keeping the delimiter attached.
-  // Regex: split after . ! ? followed by a space or end of string.
+  // Split on sentence boundaries, but be careful not to split between a period and a citation.
+  // We split by whitespace that follows a sentence-ending punctuation.
   const raw = content.split(/(?<=[.!?])\s+/);
+  const processed = [];
 
-  return raw.map((sentence) => {
-    const trimmed = sentence.trim();
-    if (!trimmed) return null;
+  for (let i = 0; i < raw.length; i++) {
+    let sentence = raw[i];
+    if (!sentence.trim()) continue;
 
-    // Extract all citation refs from this sentence, normalised to short form.
-    const refs = [...trimmed.matchAll(CITATION_RE)].map((m) => m[1].toUpperCase());
+    // If this "sentence" starts with a citation and there's a previous sentence,
+    // it's likely a hanging citation. Merge it back.
+    if (sentence.trim().startsWith('[') && processed.length > 0) {
+      // Check if it's actually a citation
+      const match = sentence.match(/^(\s*\[(?:[a-z0-9\-_]+_)?(?:[PFTEpfte]\d+)\])/i);
+      if (match) {
+        processed[processed.length - 1].text += ' ' + sentence;
+        continue;
+      }
+    }
+
+    processed.push({ text: sentence, citationRefs: [], havfItems: [] });
+  }
+
+  return processed.map((seg) => {
+    const refs = [...seg.text.matchAll(CITATION_RE)].map((m) => m[1].toUpperCase());
     const unique = [...new Set(refs)];
-
     const havfItems = unique.flatMap((ref) => havfByRef[ref] ?? []);
 
-    return { text: trimmed, citationRefs: unique, havfItems };
-  }).filter(Boolean);
+    return { ...seg, citationRefs: unique, havfItems };
+  }).filter(seg => seg.text.trim() !== '');
 }
 
 /**

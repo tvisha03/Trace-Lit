@@ -195,10 +195,22 @@ export default function VerifyPanel({ sessionId, papers, initialHavfItem }) {
 
                 {/* Source sentence */}
                 {item.source_sentence && (
-                  <div className="bg-tl-s1 border border-tl-b1 rounded p-2.5 mb-2">
+                  <div className="bg-tl-s1 border border-tl-b1 rounded p-2.5 mb-2 group/src relative">
                     <p className="text-[12px] text-tl-t1 leading-relaxed italic">
                       "{item.source_sentence}"
                     </p>
+                    
+                    {/* Full Context Disclosure */}
+                    {item.full_context && (
+                      <details className="mt-2 pt-2 border-t border-tl-b1/50">
+                        <summary className="text-[9px] font-mono uppercase tracking-widest text-tl-t4 cursor-pointer hover:text-tl-gold transition-colors">
+                          See Full Context
+                        </summary>
+                        <div className="mt-2 text-[11px] text-tl-t3 leading-relaxed bg-tl-s3/30 p-2 rounded border border-tl-b1/30 max-h-40 overflow-y-auto">
+                          {item.full_context}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 )}
 

@@ -12,11 +12,12 @@ STRICT RULES:
 6. Use precise academic language. Be concise and specific.
 7. When referencing figures or charts, copy the [abc12345_F#] ID verbatim and describe what the figure shows.
 8. When referencing tables or tabular data, copy the [abc12345_T#] ID verbatim and summarise the relevant data.
-9. When referencing equations or formulas, copy the [abc12345_E#] ID verbatim and explain the relationship.
+10. When asked about results, evaluation, or performance metrics, always present the metrics and results in a structured markdown table for clarity. Do not summarize in a long paragraph.
 
 The context paragraphs are labelled with full IDs such as [abc12345_P12] or [abc12345_E394].
 You MUST reproduce those exact IDs in your citations — never shorten or renumber them.
 """
+
 
 CHAT_PROMPT_TEMPLATE = """Context from uploaded papers:
 {context}
@@ -67,15 +68,14 @@ SUMMARY_PROMPT_TEMPLATE = """Context from the paper:
 
 User question: {question}
 
-Provide a concise summary of this paper covering:
+Provide a concise, high-quality academic summary of this paper covering:
 1. **Problem**: What problem does this paper address?
 2. **Approach**: What methodology is used?
 3. **Key Findings**: What are the main results?
 4. **Contributions**: What is novel about this work?
 
 If the user question requests a specific focus, address it directly.
-Cite every point with the EXACT paragraph ID shown in the context (e.g. [abc12345_P12]).
-Do NOT use generic numbers like [P1] — copy the full ID verbatim.
+Write in a clear, narrative style. Do NOT include paragraph IDs or citation brackets (like [P12]) in your response.
 """
 
 GAP_ANALYSIS_PROMPT_TEMPLATE = """You are analysing {paper_count} academic papers together.

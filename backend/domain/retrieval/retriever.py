@@ -31,6 +31,7 @@ class RetrievedChunk:
     sentence_map: dict
     chunk_type: str | None = None
     page_number: int | None = None
+    bbox: list[float] | None = None
 
 def _resolve_chunk_type(chunk) -> str | None:
     ct = getattr(chunk, "chunk_type", None)
@@ -52,6 +53,7 @@ def _chunk_to_retrieved(chunk, score: float = _NON_TEXT_MIN_SCORE) -> RetrievedC
         sentence_map=chunk.sentence_map or {},
         chunk_type=_resolve_chunk_type(chunk),
         page_number=chunk.page_number if hasattr(chunk, "page_number") else None,
+        bbox=chunk.bbox if hasattr(chunk, "bbox") else None,
     )
 
 def _should_use_balanced_budget(classification: QueryClassification) -> bool:
@@ -102,6 +104,7 @@ async def _build_chunks(
                 sentence_map=chunk.sentence_map or {},
                 chunk_type=_resolve_chunk_type(chunk),
                 page_number=chunk.page_number if hasattr(chunk, "page_number") else None,
+                bbox=chunk.bbox if hasattr(chunk, "bbox") else None,
             ))
     return retrieved
 
@@ -112,22 +115,34 @@ async def _boost_non_text_chunks(
     query_vector,
     faiss_store: FAISSStore,
     paper_ids: list[str],
+    query: str = "",
 ) -> list[RetrievedChunk]:
     existing_pids = {(c.paper_id, c.paragraph_id) for c in retrieved}
     non_text_added: list[RetrievedChunk] = []
+    query_words = [w.lower() for w in query.split() if len(w) >= 3] if query else []
     for paper_id in paper_ids:
         paper_count = 0
         all_chunks = await get_chunks_by_paper(db_session, paper_id)
+        # Score each chunk by keyword matching
+        scored_candidates = []
         for chunk in all_chunks:
             if not _is_non_text_chunk(chunk):
                 continue
             if (str(chunk.paper_id), chunk.paragraph_id) in existing_pids:
                 continue
-            non_text_added.append(_chunk_to_retrieved(chunk))
+            match_count = sum(1 for w in query_words if w in (chunk.enriched_text or "").lower()) if query_words else 0
+            score = _NON_TEXT_MIN_SCORE + (match_count * 0.1)
+            scored_candidates.append((score, chunk))
+        
+        # Sort candidates by their match score descending
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        for score, chunk in scored_candidates:
+            non_text_added.append(_chunk_to_retrieved(chunk, score=score))
             paper_count += 1
             if paper_count >= _NON_TEXT_RESERVED_SLOTS:
                 break
     return retrieved + non_text_added
+
 
 async def retrieve(
     query: str,
@@ -161,8 +176,9 @@ async def retrieve(
 
     retrieved = await _boost_non_text_chunks(
         retrieved, para_by_paper, db_session,
-        query_vector, faiss_store, paper_ids,
+        query_vector, faiss_store, paper_ids, query=query,
     )
+
 
     use_balanced = _should_use_balanced_budget(classification)
 

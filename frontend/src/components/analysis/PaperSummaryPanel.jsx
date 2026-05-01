@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { analysisApi } from '../../api/client';
 
 /**
@@ -187,29 +189,10 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
         )}
 
         {summary && (
-          <div className="space-y-4 text-[12.5px] leading-relaxed text-tl-t1">
-            {summary.summary.split('\n').map((line, i) => {
-              const t = line.trim();
-              if (!t) return null;
-              if (t.startsWith('### ')) {
-                return <h4 key={i} className="font-mono text-[11px] font-semibold text-tl-t2 uppercase tracking-wider mt-3">{t.slice(4)}</h4>;
-              }
-              if (t.startsWith('## ')) {
-                return <h3 key={i} className="font-serif text-sm font-semibold text-tl-t1 mt-3">{t.slice(3)}</h3>;
-              }
-              if (t.startsWith('**') && t.endsWith('**')) {
-                return <p key={i} className="font-semibold text-tl-t1">{t.slice(2, -2)}</p>;
-              }
-              if (t.startsWith('- ') || t.startsWith('• ')) {
-                return (
-                  <div key={i} className="flex gap-2">
-                    <span className="text-tl-gold flex-shrink-0 mt-0.5">·</span>
-                    <p key={i} className="text-tl-t2">{t.slice(2)}</p>
-                  </div>
-                );
-              }
-              return <p key={i} className="text-tl-t2">{t}</p>;
-            })}
+          <div className="pb-10 markdown-body-summary">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {summary.summary}
+            </ReactMarkdown>
           </div>
         )}
       </div>

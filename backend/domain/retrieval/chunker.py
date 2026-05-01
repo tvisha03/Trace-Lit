@@ -26,6 +26,7 @@ class Chunk:
     sentence_map: dict = field(default_factory=dict)
     chunk_type: ChunkType = ChunkType.TEXT
     image_path: str | None = None
+    bbox: dict | None = None
 
 
 def create_chunks(
@@ -58,8 +59,10 @@ def create_chunks(
             # Resolve the best page number for this specific paragraph
             page_number = base_page
             if combined_text and offset_map:
-                # Find position of this paragraph inside the whole paper text
-                pos = combined_text.find(para_text)
+                # Find position of this paragraph inside the whole paper text, 
+                # starting from the section's known offset to avoid false positives.
+                search_start = getattr(section, "offset_start", 0) or 0
+                pos = combined_text.find(para_text, search_start)
                 if pos >= 0:
                     current_page = base_page
                     for offset, p_num in offset_map:
@@ -80,7 +83,8 @@ def create_chunks(
                     paper_id,
                     page_number,
                     combined_text,
-                    offset_map
+                    offset_map,
+                    section_offset_start=getattr(section, "offset_start", 0) or 0,
                 )
                 chunks.extend(sub_chunks)
                 paragraph_idx += len(sub_chunks)
@@ -169,7 +173,8 @@ def _split_large_paragraph(
     paper_id: str | None = None,
     page_number: int | None = None,
     combined_text: str = "",
-    offset_map: list = None
+    offset_map: list = None,
+    section_offset_start: int = 0,
 ) -> list[Chunk]:
     sentences = split_into_sentences(text)
     chunks: list[Chunk] = []
@@ -186,7 +191,7 @@ def _split_large_paragraph(
             # Recalculate page number for this sub-chunk if possible
             chunk_page = page_number
             if combined_text and offset_map:
-                pos = combined_text.find(combined)
+                pos = combined_text.find(combined, section_offset_start)
                 if pos >= 0:
                     for offset, p_num in offset_map:
                         if pos >= offset:
@@ -215,7 +220,7 @@ def _split_large_paragraph(
         
         chunk_page = page_number
         if combined_text and offset_map:
-            pos = combined_text.find(combined)
+            pos = combined_text.find(combined, section_offset_start)
             if pos >= 0:
                 for offset, p_num in offset_map:
                     if pos >= offset:
@@ -287,6 +292,7 @@ def create_figure_chunks(
                 sentence_map=sentence_map,
                 chunk_type=ChunkType.FIGURE,
                 image_path=fig.image_path,
+                bbox=fig.bbox,
             )
         )
 
@@ -380,6 +386,7 @@ def create_table_chunks(
                 token_count=estimate_tokens(display_text),
                 sentence_map=sentence_map,
                 chunk_type=ChunkType.TABLE,
+                bbox=table.bbox,
             )
         )
 
@@ -441,6 +448,7 @@ def create_formula_chunks(
                 token_count=estimate_tokens(clean_text),
                 sentence_map=sentence_map,
                 chunk_type=ChunkType.FORMULA,
+                bbox=getattr(formula, "bbox", None),
             )
         )
 

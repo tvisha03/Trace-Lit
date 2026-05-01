@@ -13,10 +13,13 @@
  *   onPaperChange       {fn}
  */
 import { useRef, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import usePaperStore from "../../stores/paperStore";
 import useChatStore from "../../stores/chatStore";
 import { papersApi } from "../../api/client";
 import HighlighterPdfViewer from "./HighlighterPdfViewer";
+import ConfidenceBadge from "../common/ConfidenceBadge";
 
 const STATUS_LABEL = {
   QUEUED: "Queued",
@@ -47,6 +50,15 @@ export default function SourceViewer({
   );
   const highlightRef = useRef(null);
   const [showPdf, setShowPdf] = useState(false);
+  const [chunks, setChunks] = useState([]);
+  const [chunksLoading, setChunksLoading] = useState(false);
+  const [chunksError, setChunksError] = useState(null);
+  const sectionEntries = buildSectionEntries(chunks);
+
+  // Resolve which paper to display in the source viewer:
+  // If a citation was clicked, always use that citation's paper_id.
+  // Otherwise fall back to whatever the user has selected.
+  const sourcePaperId = highlightedHavfItem?.paper_id ?? activePaperId;
 
   // Auto-scroll to the highlighted source whenever a citation is clicked
   useEffect(() => {
@@ -60,12 +72,53 @@ export default function SourceViewer({
     }
   }, [highlightedHavfItem, activePaperId]);
 
-  // Reset PDF view when citation changes
+  // Auto-show PDF when a citation is clicked
   useEffect(() => {
     if (highlightedHavfItem) {
-      setShowPdf(false);
+      // Auto-open PDF viewer when citation is clicked
+      setShowPdf(true);
+      // Also switch the active paper tab to the one referenced by this citation
+      if (highlightedHavfItem.paper_id) {
+        onPaperChange?.(highlightedHavfItem.paper_id);
+      }
     }
-  }, [highlightedHavfItem?.sentence_key]);
+  }, [highlightedHavfItem]);
+
+  useEffect(() => {
+    if (!sessionId || !sourcePaperId) {
+      setChunks([]);
+      setChunksLoading(false);
+      setChunksError(null);
+      return;
+    }
+    setChunksLoading(true);
+    setChunksError(null);
+    papersApi
+      .getChunks(sessionId, sourcePaperId)
+      .then((res) => {
+        setChunks(Array.isArray(res?.chunks) ? res.chunks : []);
+      })
+      .catch((err) => {
+        setChunksError(err.message || "Failed to load source text");
+      })
+      .finally(() => {
+        setChunksLoading(false);
+      });
+  }, [sessionId, sourcePaperId]);
+
+  useEffect(() => {
+    if (!highlightedHavfItem?.sentence_key || showPdf) return;
+    const timer = setTimeout(() => {
+      const el = document.getElementById(highlightedHavfItem.sentence_key);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [highlightedHavfItem, showPdf, chunks]);
+
+  const jumpToSection = (sectionId) => {
+    const el = document.getElementById(sectionId);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const completedPapers = papers.filter(
     (p) => p.status?.toUpperCase() === "COMPLETED",
@@ -73,7 +126,8 @@ export default function SourceViewer({
   const allPapers = papers.filter((p) => p.status !== undefined);
   const tabPapers = completedPapers.length > 0 ? completedPapers : allPapers;
 
-  const active = papers.find((p) => p.id === activePaperId) ?? null;
+  // Use sourcePaperId (resolves citation paper first, then active paper)
+  const active = papers.find((p) => p.id === sourcePaperId) ?? null;
 
   return (
     <div className="flex flex-col h-full bg-tl-s1 border-r border-tl-b1">
@@ -177,7 +231,10 @@ export default function SourceViewer({
                       <span className="text-[11px] font-mono font-bold text-tl-gold px-1.5 py-0.5 bg-tl-gold/5 border border-tl-gold/10 rounded">
                         {highlightedHavfItem.citation_ref ?? "REF"}
                       </span>
-                      <ConfidenceBadge confidence={highlightedHavfItem.confidence} />
+                      <ConfidenceBadge
+                        score={highlightedHavfItem.score}
+                        confidence={highlightedHavfItem.confidence}
+                      />
                     </div>
                     {highlightedHavfItem.score != null && (
                       <div className="flex items-center gap-2">
@@ -193,7 +250,9 @@ export default function SourceViewer({
                                   ? "bg-tl-med"
                                   : "bg-tl-low"
                             }`}
-                            style={{ width: `${highlightedHavfItem.score * 100}%` }}
+                            style={{
+                              width: `${highlightedHavfItem.score * 100}%`,
+                            }}
                           />
                         </div>
                       </div>
@@ -203,41 +262,102 @@ export default function SourceViewer({
                   {/* The Source Passage */}
                   <div className="relative">
                     <div className="absolute -left-4 top-0 bottom-0 w-1 bg-tl-gold/20 rounded-r" />
-                    <p className="text-[13px] text-tl-t1 leading-relaxed font-serif italic pl-1">
-                      "{highlightedHavfItem.source_sentence}"
-                    </p>
+                    <div className="pl-1 space-y-2">
+                      <div className="text-[13px] text-tl-t1 leading-relaxed font-serif italic markdown-body-source">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {highlightedHavfItem.source_sentence}
+                        </ReactMarkdown>
+                      </div>
+
+                      {/* Full Context Disclosure */}
+                      {highlightedHavfItem.full_context && (
+                        <details className="mt-2 pt-2 border-t border-tl-b1/30">
+                          <summary className="text-[9px] font-mono uppercase tracking-widest text-tl-t4 cursor-pointer hover:text-tl-gold transition-colors">
+                            See Full Context
+                          </summary>
+                          <div className="mt-2 text-[11px] text-tl-t3 leading-relaxed bg-tl-s3/30 p-2 rounded border border-tl-b1/30 max-h-48 overflow-y-auto markdown-body-source">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {highlightedHavfItem.full_context}
+                            </ReactMarkdown>
+                          </div>
+                        </details>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Verification Metadata */}
-                  <div className="flex items-center gap-4 py-1 border-t border-tl-b1/30">
-                    <div className="flex flex-col">
-                      <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
-                        Page
-                      </span>
-                      <span className="text-[10px] font-mono text-tl-t2">
-                        {highlightedHavfItem.page_number
-                          ? `p.${highlightedHavfItem.page_number + 1}`
-                          : "N/A"}
-                      </span>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
-                        Method
-                      </span>
-                      <span className="text-[10px] font-mono text-tl-t2">
-                        {highlightedHavfItem.verification_method || "N/A"}
-                      </span>
-                    </div>
-                    {highlightedHavfItem.chunk_type && (
+                  {/* Verification Metadata & Actions */}
+                  <div className="flex items-center justify-between gap-2 py-1.5 border-t border-tl-b1/30">
+                    <div className="flex items-center gap-4">
                       <div className="flex flex-col">
                         <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
-                          Context
+                          Page
                         </span>
-                        <span className="text-[10px] font-mono text-tl-t2 capitalize">
-                          {highlightedHavfItem.chunk_type}
+                        <span className="text-[10px] font-mono text-tl-t2">
+                          {highlightedHavfItem.page_number != null
+                            ? `p.${highlightedHavfItem.page_number + 1}`
+                            : "N/A"}
                         </span>
                       </div>
-                    )}
+                      <div className="flex flex-col">
+                        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
+                          Method
+                        </span>
+                        <span className="text-[10px] font-mono text-tl-t2">
+                          {highlightedHavfItem.verification_method ||
+                            "Direct Match"}
+                        </span>
+                      </div>
+                      {highlightedHavfItem.chunk_type && (
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
+                            Context
+                          </span>
+                          <span className="text-[10px] font-mono text-tl-t2 capitalize">
+                            {highlightedHavfItem.chunk_type}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => {
+                          if (highlightedHavfItem?.source_sentence) {
+                            navigator.clipboard.writeText(
+                              highlightedHavfItem.source_sentence,
+                            );
+                          }
+                        }}
+                        title="Copy sentence"
+                        className="px-2 py-1 bg-tl-s3 border border-tl-b1 rounded text-[9px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-all"
+                      >
+                        [Copy sentence]
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (highlightedHavfItem?.citation_ref) {
+                            navigator.clipboard.writeText(
+                              highlightedHavfItem.citation_ref,
+                            );
+                          }
+                        }}
+                        title="Copy citation"
+                        className="px-2 py-1 bg-tl-s3 border border-tl-b1 rounded text-[9px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-all"
+                      >
+                        [Copy citation]
+                      </button>
+                      {active && sessionId && (
+                        <a
+                          href={papersApi.getPdfUrl(sessionId, active.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open PDF"
+                          className="px-2 py-1 bg-tl-s3 border border-tl-b1 rounded text-[9px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-all"
+                        >
+                          [Open PDF]
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -252,12 +372,16 @@ export default function SourceViewer({
 
             {/* ── VIEWER AREA ── */}
             <div className="flex-1 min-h-0 relative">
-              {showPdf && highlightedHavfItem ? (
+              {showPdf && active ? (
                 <HighlighterPdfViewer
-                  key={`pdf-${highlightedHavfItem.sentence_key || active.id}`}
+                  key={`pdf-${highlightedHavfItem?.sentence_key || active.id}-pg${highlightedHavfItem?.page_number}`}
                   url={papersApi.getPdfUrl(sessionId, active.id)}
-                  targetPage={highlightedHavfItem.page_number ?? undefined}
-                  highlightText={highlightedHavfItem.source_sentence}
+                  targetPage={highlightedHavfItem?.page_number ?? 0}
+                  highlightText={highlightedHavfItem?.source_sentence}
+                  claim={highlightedHavfItem?.claim}
+                  fullContext={highlightedHavfItem?.full_context}
+                  bbox={highlightedHavfItem?.bbox}
+                  chunkType={highlightedHavfItem?.chunk_type}
                 />
               ) : (
                 <div className="h-full overflow-y-auto px-4 py-4 space-y-6">
@@ -279,10 +403,63 @@ export default function SourceViewer({
                     <PaperMetadataSummary paper={active} />
                   </div>
 
+                  <div className="space-y-3">
+                    <h4 className="text-[10px] font-mono text-tl-t4 uppercase tracking-wider">
+                      Source Text
+                    </h4>
+                    {sectionEntries.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {sectionEntries.map((section) => (
+                          <button
+                            key={section.id}
+                            onClick={() => jumpToSection(section.id)}
+                            className="px-2 py-1 rounded-full border border-tl-b1 bg-tl-s2 text-[10px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-colors"
+                          >
+                            {section.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {chunksLoading && (
+                      <p className="text-xs font-mono text-tl-t4">
+                        Loading source text...
+                      </p>
+                    )}
+                    {chunksError && (
+                      <p className="text-xs font-mono text-tl-low">
+                        {chunksError}
+                      </p>
+                    )}
+                    {!chunksLoading && !chunksError && chunks.length === 0 && (
+                      <p className="text-xs font-mono text-tl-t4">
+                        No source text available yet.
+                      </p>
+                    )}
+                    {!chunksLoading && !chunksError && chunks.length > 0 && (
+                      <div className="space-y-4">
+                        {renderChunkText(
+                          chunks,
+                          highlightedHavfItem?.sentence_key,
+                          sectionEntries,
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   {!highlightedHavfItem && (
                     <div className="flex flex-col items-center justify-center pt-20 text-tl-b2">
-                      <svg className="w-12 h-12 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      <svg
+                        className="w-12 h-12 mb-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={1}
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                        />
                       </svg>
                       <p className="text-xs font-mono text-tl-t4">
                         Awaiting citation focus...
@@ -407,22 +584,78 @@ export default function SourceViewer({
   );
 }
 
-
 // ─── Auxiliary Components ───────────────────────────────────────────────────
 
-function ConfidenceBadge({ confidence }) {
-  const styles = {
-    HIGH: "text-tl-hi bg-tl-hi/10 border-tl-hi/20",
-    MEDIUM: "text-tl-med bg-tl-med/10 border-tl-med/20",
-    LOW: "text-tl-low bg-tl-low/10 border-tl-low/20",
-  };
-  const cls = styles[confidence] ?? styles.LOW;
+function buildSectionEntries(chunks) {
+  const sections = [];
+  let lastTitle = null;
 
-  return (
-    <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border ${cls}`}>
-      {confidence || "UNKNOWN"}
-    </span>
-  );
+  chunks.forEach((chunk, index) => {
+    if (chunk.section_title && chunk.section_title !== lastTitle) {
+      lastTitle = chunk.section_title;
+      sections.push({
+        id: `section-${sections.length}`,
+        title: chunk.section_title,
+        chunkIndex: index,
+      });
+    }
+  });
+
+  return sections;
+}
+
+function renderChunkText(chunks, highlightedSentenceKey, sectionEntries = []) {
+  let lastSection = null;
+  let sectionIndex = 0;
+  const blocks = [];
+
+  chunks.forEach((chunk) => {
+    if (chunk.section_title && chunk.section_title !== lastSection) {
+      lastSection = chunk.section_title;
+      const sectionId = sectionEntries[sectionIndex]?.id ?? `section-${sectionIndex}`;
+      sectionIndex += 1;
+      blocks.push(
+        <h5
+          key={sectionId}
+          id={sectionId}
+          className="text-[11px] font-mono text-tl-t3 uppercase tracking-wider"
+        >
+          {chunk.section_title}
+        </h5>,
+      );
+    }
+
+    const sentenceEntries = Object.entries(chunk.sentence_map || {})
+      .map(([key, data]) => ({ key, ...data }))
+      .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+
+    blocks.push(
+      <div
+        key={chunk.paragraph_id}
+        id={`para-${chunk.paragraph_id}`}
+        className="text-[12px] leading-relaxed text-tl-t1"
+      >
+        {sentenceEntries.length > 0
+          ? sentenceEntries.map((sentence, idx) => (
+              <span
+                key={sentence.key}
+                id={sentence.key}
+                className={
+                  sentence.key === highlightedSentenceKey
+                    ? "bg-tl-gold/20 ring-1 ring-tl-gold/40 rounded px-0.5"
+                    : ""
+                }
+              >
+                {sentence.text}
+                {idx < sentenceEntries.length - 1 ? " " : ""}
+              </span>
+            ))
+          : chunk.text}
+      </div>,
+    );
+  });
+
+  return blocks;
 }
 
 function PaperMetadataSummary({ paper }) {
@@ -430,19 +663,33 @@ function PaperMetadataSummary({ paper }) {
   return (
     <div className="grid grid-cols-2 gap-3 bg-tl-s2 border border-tl-b1 rounded-lg p-3">
       <div className="flex flex-col">
-        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">Pages</span>
-        <span className="text-[11px] font-mono text-tl-t2">{paper.page_count ?? "—"}</span>
+        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
+          Pages
+        </span>
+        <span className="text-[11px] font-mono text-tl-t2">
+          {paper.page_count ?? "—"}
+        </span>
       </div>
       <div className="flex flex-col">
-        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">Chunks</span>
-        <span className="text-[11px] font-mono text-tl-t2">{paper.chunk_count ?? "—"}</span>
+        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
+          Chunks
+        </span>
+        <span className="text-[11px] font-mono text-tl-t2">
+          {paper.chunk_count ?? "—"}
+        </span>
       </div>
       <div className="flex flex-col">
-        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">Size</span>
-        <span className="text-[11px] font-mono text-tl-t2">{paper.file_size_mb?.toFixed(2)} MB</span>
+        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
+          Size
+        </span>
+        <span className="text-[11px] font-mono text-tl-t2">
+          {paper.file_size_mb?.toFixed(2)} MB
+        </span>
       </div>
       <div className="flex flex-col">
-        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">Status</span>
+        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
+          Status
+        </span>
         <span className="text-[11px] font-mono text-tl-t2">{paper.status}</span>
       </div>
     </div>

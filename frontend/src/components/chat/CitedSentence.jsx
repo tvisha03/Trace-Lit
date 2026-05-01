@@ -14,10 +14,11 @@ import { confidenceLevel } from '../../utils/helpers';
 import CitationTooltip from './CitationTooltip';
 
 // Confidence → underline color (defined in tailwind config as tl-hi/med/low)
-const UNDERLINE_COLOR = {
-  high: 'decoration-tl-hi',
-  medium: 'decoration-tl-med',
-  low: 'decoration-tl-low',
+// Confidence → CSS class (defined in index.css)
+const UNDERLINE_CLASS = {
+  high: 'conf-high',
+  medium: 'conf-medium',
+  low: 'conf-low',
 };
 
 // Confidence → superscript color
@@ -38,24 +39,30 @@ function bestScore(havfItems) {
  * Normalize all citation tags to P## (e.g. E287 -> P287)
  */
 function refLabel(ref) {
-  // "[P1]" → "P1", "[E287]" -> "P287"
+  // "[abc12345_P1]" → "P1", "[T2]" -> "T2"
   let r = ref.replace(/^\[|\]$/g, '');
-  if (/^[A-Za-z]\d+$/.test(r)) {
-    r = 'P' + r.substring(1);
+  // If it's a full ID like abc12345_P1, extract the suffix
+  if (r.includes('_')) {
+    r = r.split('_').pop();
   }
-  return r;
+  // Ensure the label is clean but preserve its type (P, F, T, E)
+  return r.toUpperCase();
 }
 
 export default function CitedSentence({ text, havfItems = [], onCitationClick, isContested }) {
   const [hoveredItem, setHoveredItem] = useState(null);
 
   // Strip inline citations from display text — both full [59d08199_P15] and short [P15] forms.
-  // They are represented as superscript badges instead.
-  const displayText = text.replace(/\s*\[(?:[a-f0-9]{6,}_)?[PFTEpfte]\d+\]/g, '');
+  // Robust regex: matches [ID_P123] or [P123] case-insensitively and handles varying ID lengths/characters
+  // Also cleans up trailing commas/whitespace left after stripping multiple citations
+  const displayText = text
+    .replace(/\s*\[(?:[a-z0-9\-_]+_)?([PFTEpfte]\d+)\]/gi, '')
+    .replace(/,\s*\./g, '.') // Fix ", ." -> "."
+    .replace(/,\s*,/g, ',')   // Fix ", ," -> ","
+    .trim();
 
   // Determine overall confidence for this sentence from the best-scoring HAVF item.
   const score = bestScore(havfItems);
-  const level = score != null ? confidenceLevel(score) : null;
 
   // Deduplicate citation refs; associate each with its HAVF item(s).
   const seenRefs = new Set();
@@ -67,6 +74,9 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
       uniqueRefs.push(ref);
     }
   }
+
+  // Fallback to 'low' if there are citations but no matching HAVF items (indicates extraction gap)
+  const level = score != null ? confidenceLevel(score) : (havfItems.length === 0 && uniqueRefs.length > 0 ? 'low' : null);
 
   // First HAVF item for each unique ref (used for tooltip).
   const itemByRef = {};
@@ -88,11 +98,11 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
   return (
     <span className="inline relative">
       <span
-        className={`inline ${
-          level
-            ? `underline underline-offset-2 decoration-1 ${UNDERLINE_COLOR[level]}`
-            : ''
+        onClick={(e) => uniqueRefs.length > 0 && handleClick(uniqueRefs[0], e)}
+        className={`inline transition-all duration-300 cursor-pointer ${
+          level ? UNDERLINE_CLASS[level] : ''
         }`}
+        title={uniqueRefs.length > 0 ? 'Click to view source' : ''}
       >
         {displayText}
       </span>
@@ -107,10 +117,9 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
               onClick={(e) => handleClick(ref, e)}
               onMouseEnter={() => setHoveredItem(ref)}
               onMouseLeave={() => setHoveredItem(null)}
-              className={`ml-px text-[9px] font-semibold cursor-pointer select-none
+              className={`ml-px text-[9px] font-semibold cursor-pointer
                           transition-opacity hover:opacity-70
                           ${SUP_COLOR[itemLevel] ?? 'text-tl-gold'}`}
-              title={`${refLabel(ref)} — click to view source`}
             >
               [{refLabel(ref)}]
             </sup>

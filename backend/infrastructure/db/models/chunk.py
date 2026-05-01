@@ -30,6 +30,7 @@ class Chunk(Base):
     token_count: Mapped[int] = mapped_column(Integer, default=0)
     chunk_type: Mapped[str] = mapped_column(String(16), default="text", index=True)
     image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    bbox: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (

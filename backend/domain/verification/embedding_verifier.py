@@ -66,7 +66,7 @@ def _build_result(
     medium_threshold: float | None = None,
 ) -> dict:
     best_idx = int(np.argmax(scores))
-    best_score = float(scores[best_idx])
+    best_score = scores[best_idx].item()
     confidence, needs_reranking = _determine_confidence(
         best_score, high_threshold, medium_threshold
     )
@@ -80,6 +80,7 @@ def _build_result(
         "paper_id": best_source.get("paper_id"),
         "sentence_key": best_source.get("sentence_key"),
         "page_number": best_source.get("page_number"),
+        "full_context": best_source.get("full_context"),
         "needs_reranking": needs_reranking,
     }
 

@@ -14,14 +14,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import usePaperStore from "../../stores/paperStore";
 import useSessionStore from "../../stores/sessionStore";
-import { analysisApi } from "../../api/client";
-
-// ─── WebSocket URL helper ─────────────────────────────────────────────────────
-function buildWsUrl(sessionId) {
-  if (!sessionId) return null;
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/ws/${sessionId}`;
-}
+import { analysisApi, sessionsApi } from "../../api/client";
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 const ANALYSIS_TOOLS = [
@@ -46,6 +39,9 @@ export default function Sidebar({
 }) {
   const { papers, fetchPapers, applyProgressEvent, progressMap } =
     usePaperStore();
+  const websocketUrl = usePaperStore((state) => state.websocketUrl);
+  const websocketSessionId = usePaperStore((state) => state.websocketSessionId);
+  const setWebsocketConnection = usePaperStore((state) => state.setWebsocketConnection);
   const {
     sessions,
     activeSession,
@@ -92,6 +88,28 @@ export default function Sidebar({
     sessionIdRef.current = sessionId;
   }, [sessionId]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+
+    sessionsApi
+      .getWebsocketUrl(sessionId)
+      .then((data) => {
+        if (!cancelled && data?.websocket_url) {
+          setWebsocketConnection(sessionId, data.websocket_url);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWebsocketConnection(sessionId, null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, setWebsocketConnection]);
+
   const hasActivePapers = useCallback(
     () =>
       papers.some(
@@ -115,9 +133,8 @@ export default function Sidebar({
   }, []);
 
   const connectWs = useCallback(
-    (sid) => {
-      const url = buildWsUrl(sid);
-      if (!url) return;
+    (sid, url) => {
+      if (!sid || !url) return;
       // Block if already open OR still connecting — prevents duplicate sockets
       const rs = wsRef.current?.readyState;
       if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return;
@@ -181,14 +198,16 @@ export default function Sidebar({
     
     // Defer connection slightly to bypass React StrictMode double-mount warnings
     const t = setTimeout(() => {
-      connectWs(sessionId);
+      if (websocketSessionId === sessionId && websocketUrl) {
+        connectWs(sessionId, websocketUrl);
+      }
     }, 50);
 
     return () => {
       clearTimeout(t);
       cleanup();
     };
-  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, websocketSessionId, websocketUrl, connectWs]);
 
   useEffect(() => {
     if (hasActivePapers() && !wsRef.current && !pollRef.current) {

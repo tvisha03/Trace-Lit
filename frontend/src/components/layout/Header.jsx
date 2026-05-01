@@ -55,11 +55,11 @@ export default function Header({
     >
       {/* ── Logo ─────────────────────────────────────────────────────── */}
       <div className="flex items-baseline gap-1.5 flex-shrink-0">
-        <span className="font-serif text-[17px] tracking-tight text-tl-t1 select-none">
+        <span className="font-serif text-[17px] tracking-tight text-tl-t1">
           TraceLit
         </span>
         <span
-          className="font-mono text-[9px] tracking-[0.12em] uppercase text-tl-gold px-[5px] py-[1px] rounded-sm select-none"
+          className="font-mono text-[9px] tracking-[0.12em] uppercase text-tl-gold px-[5px] py-[1px] rounded-sm"
           style={{
             border: '1px solid rgba(201,169,110,0.35)',
             background: 'rgba(201,169,110,0.06)',
@@ -100,16 +100,6 @@ export default function Header({
 
       {/* ── Right controls ───────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-shrink-0">
-        {/* Status dot + model name */}
-        <div className="flex items-center gap-1.5">
-          <span
-            className="breathe inline-block w-[5px] h-[5px] rounded-full bg-tl-hi flex-shrink-0"
-            style={{ boxShadow: '0 0 6px var(--hi)' }}
-          />
-          <span className="font-mono text-[10.5px] text-tl-t3 whitespace-nowrap">
-            Gemini Flash
-          </span>
-        </div>
 
         {/* Session picker */}
         <div className="relative" ref={dropdownRef}>
@@ -168,7 +158,7 @@ export default function Header({
 
         {/* Avatar */}
         <div
-          className="w-[26px] h-[26px] rounded-full flex items-center justify-center text-[10px] font-mono text-tl-gold cursor-pointer transition-colors select-none flex-shrink-0"
+          className="w-[26px] h-[26px] rounded-full flex items-center justify-center text-[10px] font-mono text-tl-gold cursor-pointer transition-colors flex-shrink-0"
           style={{ background: 'var(--s3)', border: '1.5px solid var(--b3)' }}
         >
           A

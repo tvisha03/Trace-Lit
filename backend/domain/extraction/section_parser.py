@@ -99,6 +99,7 @@ class Section:
     content: str
     level: int = 1
     page_start: int | None = None
+    offset_start: int | None = None
     order: int = 0
 
 
@@ -386,6 +387,7 @@ def _assign_page_numbers(sections: list[Section], pages: list) -> None:
         # Try exact match first
         content_start = combined.find(section.content)
         if content_start >= 0:
+            section.offset_start = content_start
             section.page_start = offset_to_page_number(content_start)
             continue
 
@@ -394,6 +396,7 @@ def _assign_page_numbers(sections: list[Section], pages: list) -> None:
         if len(snippet) > 50:
             content_start = combined.find(snippet)
             if content_start >= 0:
+                section.offset_start = content_start
                 section.page_start = offset_to_page_number(content_start)
                 continue
 
@@ -401,4 +404,5 @@ def _assign_page_numbers(sections: list[Section], pages: list) -> None:
         if section.title and section.title != "Full Document":
             title_pos = combined.find(section.title)
             if title_pos >= 0:
+                section.offset_start = title_pos
                 section.page_start = offset_to_page_number(title_pos)

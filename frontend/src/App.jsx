@@ -49,7 +49,11 @@ function App() {
       const fetchedSessions = await fetchSessions();
       const { activeSession: current } = useSessionStore.getState();
       if (!current) {
-        if (fetchedSessions?.length > 0) {
+        const savedId = localStorage.getItem("tracelit_active_session_id");
+        const matched = savedId ? fetchedSessions?.find((s) => s.id === savedId) : null;
+        if (matched) {
+          setActiveSession(matched);
+        } else if (fetchedSessions?.length > 0) {
           setActiveSession(fetchedSessions[0]);
         } else {
           try {
@@ -74,7 +78,11 @@ function App() {
     setSessionError(null);
     try {
       const fetchedSessions = await fetchSessions();
-      if (fetchedSessions?.length > 0) {
+      const savedId = localStorage.getItem("tracelit_active_session_id");
+      const matched = savedId ? fetchedSessions?.find((s) => s.id === savedId) : null;
+      if (matched) {
+        setActiveSession(matched);
+      } else if (fetchedSessions?.length > 0) {
         setActiveSession(fetchedSessions[0]);
       } else {
         await createSession("Session 1");

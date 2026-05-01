@@ -56,9 +56,38 @@ def _validate_and_strip_citations(
     return full_text, has_citations
 
 
-async def _emit_havf_results(full_text: str, chunks: list):
+def _clean_final_text(text: str) -> str:
+    """Clean up common LLM artifacts like multiple commas or trailing separators."""
+    # Remove multiple commas (e.g., ",,,")
+    text = _re.sub(r",\s*,+", ", ", text)
+    # Remove multiple commas before a period (e.g., ",,,.")
+    text = _re.sub(r",+\s*\.", ".", text)
+    # Remove multiple periods
+    text = _re.sub(r"\.\.+", ".", text)
+    # Clean up whitespace around commas
+    text = _re.sub(r"\s+,\s+", ", ", text)
+    return text.strip()
+
+
+async def _emit_havf_results(full_text: str, chunks: list, paper_ids: list[str], db_session):
     from domain.verification.havf import verify_response
     from app.config import get_settings
+    from infrastructure.db.crud.chunk_crud import get_chunk_by_paragraph_id
+    from domain.retrieval.retriever import _chunk_to_retrieved
+
+    # AUGMENTATION: Ensure every cited paragraph ID is present
+    raw_cited = set(extract_paragraph_ids(full_text))
+    existing_pids = {c.paragraph_id for c in chunks}
+    missing_pids = raw_cited - existing_pids
+
+    if missing_pids:
+        logger.info(f"Streaming HAVF Augmentation: Fetching {len(missing_pids)} missing cited paragraphs")
+        for pid in missing_pids:
+            target_paper = next((p for p in paper_ids if pid.startswith(p[:8])), None)
+            if target_paper:
+                chunk = await get_chunk_by_paragraph_id(db_session, target_paper, pid)
+                if chunk:
+                    chunks.append(_chunk_to_retrieved(chunk, score=0.9))
 
     settings = get_settings()
     havf_results = await verify_response(
@@ -83,6 +112,8 @@ async def _emit_havf_results(full_text: str, chunks: list):
             "chunk_type": r.chunk_type,
             "citation_ref": r.citation_ref,
             "page_number": r.page_number,
+            "bbox": r.bbox,
+            "full_context": r.full_context,
         }
         for r in havf_results
     ]
@@ -191,47 +222,74 @@ async def _persist_response(
     full_text: str,
     provider: str,
     havf_data: list,
-    db_session,
 ) -> None:
     try:
+        from infrastructure.db.database import async_session_factory
         from infrastructure.db.crud.message_crud import create_message
         from shared.enums import MessageRole
 
-        await create_message(
-            db_session,
-            session_id=session_id,
-            role=MessageRole.ASSISTANT,
-            content=full_text,
-            provider=provider,
-            havf_results=havf_data,
-        )
-        await db_session.commit()
+        async with async_session_factory() as db:
+            await create_message(
+                db,
+                session_id=session_id,
+                role=MessageRole.ASSISTANT,
+                content=full_text,
+                provider=provider,
+                havf_results=havf_data,
+            )
+            await db.commit()
     except Exception as exc:
         logger.error(
             f"Failed to persist streaming assistant message for session {session_id}: {exc}"
         )
 
 
-def _build_streaming_prompt(
-    classification,
+async def _build_streaming_prompt(
+    classification: QueryClassification,
     query: str,
     chunks: list,
     history: list,
+    paper_ids: list[str],
+    db_session,
 ) -> str:
     context_block = build_context_block(chunks)
     history_block = build_history_block(history)
     query_type = classification.query_type
 
     if query_type == QueryType.COMPARISON:
+        from infrastructure.db.crud.paper_crud import get_paper
+        paper_titles = {}
+        for pid in paper_ids:
+            p = await get_paper(db_session, pid)
+            paper_titles[pid] = p.title if p and p.title else f"Paper {pid[:8]}"
+        
+        paper_count = len(paper_ids)
+        paper_listing_lines = [f"  {i+1}. {paper_titles[pid]}" for i, pid in enumerate(paper_ids)]
+        paper_listing = "\n".join(paper_listing_lines)
+        
+        header_cols = ["Dimension"]
+        for i, pid in enumerate(paper_ids):
+            header_cols.append(f"Paper {i+1}: {paper_titles[pid]}")
+        header_cols.append("Synthesis")
+        
+        table_header = " | ".join(header_cols)
+        table_separator = " | ".join(["---"] * len(header_cols))
+
         return COMPARISON_PROMPT_TEMPLATE.format(
+            paper_count=paper_count,
+            paper_listing=paper_listing,
+            table_header=table_header,
+            table_separator=table_separator,
             paper_contexts=context_block,
             question=query,
         )
+    
     if query_type == QueryType.SUMMARY:
         return SUMMARY_PROMPT_TEMPLATE.format(
             context=context_block,
             question=query,
         )
+        
     return CHAT_PROMPT_TEMPLATE.format(
         context=context_block,
         history=history_block,
@@ -250,6 +308,13 @@ async def stream_chat_response(
     keywords: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     try:
+        EVAL_KEYWORDS = {
+            "accuracy", "bleu", "f1", "precision", "recall", "perplexity", "auc",
+            "rouge", "benchmark", "dataset", "evaluation", "performance", "score",
+            "results", "compared", "achieved"
+        }
+        is_eval_query = any(kw in query.lower() for kw in EVAL_KEYWORDS)
+
         classification = await _classify_and_validate_query(
             query, len(paper_ids), history
         )
@@ -260,6 +325,127 @@ async def stream_chat_response(
         chunks = await _retrieve_and_filter_chunks(
             query, paper_ids, faiss_store, db_session, classification, keywords
         )
+
+        if is_eval_query:
+            try:
+                from sqlalchemy import select
+                from infrastructure.db.models.evaluation import EvaluationCache
+
+                pids_str = ",".join(sorted(paper_ids))
+                stmt = select(EvaluationCache).where(
+                    EvaluationCache.query == query,
+                    EvaluationCache.paper_ids == pids_str
+                )
+                res = await db_session.execute(stmt)
+                cache_item = res.scalars().first()
+
+                if cache_item:
+                    logger.info(f"Using cached evaluation metrics in stream for query: {query}")
+                    yield sse_event(
+                        "sources",
+                        json.dumps([
+                            {
+                                "paragraph_id": c.paragraph_id,
+                                "paper_id": c.paper_id,
+                                "score": c.score,
+                                "page_number": c.page_number,
+                                "bbox": list(c.bbox) if getattr(c, "bbox", None) and isinstance(c.bbox, (list, tuple)) else None,
+                                "chunk_type": getattr(c, "chunk_type", "text"),
+                            }
+                            for c in chunks
+                        ]),
+                    )
+                    # Emit tokens and HAVF data
+                    for token in cache_item.results:
+                        yield sse_event("token", {"token": token})
+                    
+                    havf_data = await _emit_havf_results(cache_item.results, chunks, paper_ids, db_session)
+                    yield sse_event("havf", json.dumps(havf_data))
+                    yield sse_event(
+                        "done", json.dumps({"provider": "ollama", "full_text": cache_item.results})
+                    )
+                    await _persist_response(session_id, cache_item.results, "ollama", havf_data)
+                    return
+            except Exception as e:
+                logger.warning(f"Error in streaming evaluation cache lookup: {e}")
+
+        # If not cached but is an eval query, perform extraction
+        if is_eval_query:
+            try:
+                from domain.generation.chat_engine import format_evaluation_output
+                from app.config import get_settings
+                context_text = "\n".join([c.text for c in chunks])
+                extract_prompt = f"""You are an expert academic reviewer extracting experimental evaluation details.
+Analyze the following retrieved context from the paper:
+{context_text}
+
+Extract the following details from the paper as a clean JSON object:
+- task: What problem/task the paper evaluates.
+- datasets: The datasets used.
+- metrics: The evaluation metrics used (e.g., BLEU, accuracy, perplexity).
+- results: The main experimental results achieved by the paper's method.
+- baselines: What baselines/previous models the paper compares against.
+- training_details: Training parameters, compute, or hardware mentioned.
+
+Your response MUST be ONLY valid JSON with keys: 'task', 'datasets', 'metrics', 'results', 'baselines', 'training_details'. Do NOT add extra text.
+"""
+                settings = get_settings()
+                res_text, provider, _ = await llm.generate(
+                    system_prompt="You are a JSON extractor. Return ONLY valid JSON.",
+                    user_prompt=extract_prompt,
+                    max_tokens=settings.OLLAMA_CLOUD_MAX_TOKENS,
+                )
+
+                import re
+                match = re.search(r'\{.*\}', res_text, re.DOTALL)
+                if match:
+                    res_text = match.group(0)
+
+                data = json.loads(res_text)
+                p_short = paper_ids[0][:8] if paper_ids else "P1"
+                formatted_out = format_evaluation_output(data, p_short)
+
+                # Cache extraction results
+                try:
+                    from infrastructure.db.models.evaluation import EvaluationCache
+                    pids_str = ",".join(sorted(paper_ids))
+                    cache_entry = EvaluationCache(
+                        query=query,
+                        paper_ids=pids_str,
+                        results=formatted_out
+                    )
+                    db_session.add(cache_entry)
+                    await db_session.commit()
+                except Exception as e:
+                    logger.warning(f"Could not save evaluation cache entry: {e}")
+
+                yield sse_event(
+                    "sources",
+                    json.dumps([
+                        {
+                            "paragraph_id": c.paragraph_id,
+                            "paper_id": c.paper_id,
+                            "score": c.score,
+                            "page_number": c.page_number,
+                            "bbox": list(c.bbox) if getattr(c, "bbox", None) and isinstance(c.bbox, (list, tuple)) else None,
+                            "chunk_type": getattr(c, "chunk_type", "text"),
+                        }
+                        for c in chunks
+                    ]),
+                )
+                for token in formatted_out:
+                    yield sse_event("token", {"token": token})
+
+                havf_data = await _emit_havf_results(formatted_out, chunks, paper_ids, db_session)
+                yield sse_event("havf", json.dumps(havf_data))
+                yield sse_event(
+                    "done", json.dumps({"provider": provider.value, "full_text": formatted_out})
+                )
+                await _persist_response(session_id, formatted_out, provider.value, havf_data)
+                return
+            except Exception as e:
+                logger.warning(f"Error in streaming extraction pass. Falling back: {e}")
+
         yield sse_event(
             "sources",
             json.dumps(
@@ -269,13 +455,18 @@ async def stream_chat_response(
                         "paper_id": c.paper_id,
                         "score": c.score,
                         "page_number": c.page_number,
+                        "bbox": list(c.bbox) if getattr(c, "bbox", None) and isinstance(c.bbox, (list, tuple)) else None,
+                        "chunk_type": getattr(c, "chunk_type", "text"),
                     }
                     for c in chunks
+
                 ]
             ),
         )
 
-        user_prompt = _build_streaming_prompt(classification, query, chunks, history)
+        user_prompt = await _build_streaming_prompt(
+            classification, query, chunks, history, paper_ids, db_session
+        )
 
         full_text = ""
         provider = ""
@@ -307,14 +498,18 @@ async def stream_chat_response(
                 ),
             )
 
-        havf_data = await _emit_havf_results(full_text, chunks)
+        havf_data = await _emit_havf_results(full_text, chunks, paper_ids, db_session)
+        
+        # FINAL CLEANUP: strip artifacts before finalizing
+        full_text = _clean_final_text(full_text)
+        
         yield sse_event("havf", json.dumps(havf_data))
         yield sse_event(
             "done", json.dumps({"provider": resolved_provider, "full_text": full_text})
         )
 
         await _persist_response(
-            session_id, full_text, resolved_provider, havf_data, db_session
+            session_id, full_text, resolved_provider, havf_data
         )
 
     except Exception as exc:

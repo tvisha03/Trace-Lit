@@ -9,11 +9,21 @@ import asyncio
 import hashlib
 import time
 
-from api.v1.schemas import PaperResponse, PaperListResponse, PaperUploadResponse
+from api.v1.schemas import (
+    ChunkResponse,
+    PaperChunksResponse,
+    PaperResponse,
+    PaperListResponse,
+    PaperUploadResponse,
+)
 from api.v1.routes.websocket import ws_manager
 from app.dependencies import get_db, get_faiss_store
 from app.config import get_settings
-from infrastructure.db.crud.paper_crud import get_paper as db_get_paper, get_paper_by_content_hash
+from infrastructure.db.crud.paper_crud import (
+    get_paper as db_get_paper,
+    get_paper_by_content_hash,
+)
+from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.db.crud.session_crud import get_session
 from infrastructure.storage.file_storage import FileStorage
 from infrastructure.db.database import async_session_factory
@@ -242,7 +252,18 @@ async def _register_all_papers(
         paper_ids.append(paper_id)
     return paper_ids
 
-@router.post("", response_model=PaperUploadResponse, status_code=201)
+
+def _build_ws_url(request: Request, session_id: str) -> str:
+    base_url = str(request.base_url).rstrip("/")
+    if base_url.startswith("https://"):
+        ws_base = "wss://" + base_url[len("https://") :]
+    elif base_url.startswith("http://"):
+        ws_base = "ws://" + base_url[len("http://") :]
+    else:
+        ws_base = base_url
+    return f"{ws_base}/ws/{session_id}"
+
+@router.post("", response_model=PaperUploadResponse, status_code=202)
 async def upload_papers(
     session_id: str,
     request: Request,
@@ -274,6 +295,7 @@ async def upload_papers(
     return PaperUploadResponse(
         paper_ids=paper_ids,
         message=f"{len(paper_ids)} paper(s) uploaded and queued for processing",
+        websocket_url=_build_ws_url(request, session_id),
     )
 
 @router.get("", response_model=PaperListResponse)
@@ -336,6 +358,35 @@ async def get_paper(
         error_message=paper.error_message,
         created_at=paper.created_at.isoformat(),
     )
+
+
+@router.get("/{paper_id}/chunks", response_model=PaperChunksResponse)
+async def get_paper_chunks(
+    session_id: str,
+    paper_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    paper = await db_get_paper(db, paper_id)
+    if not paper:
+        raise NotFoundError("Paper", paper_id)
+
+    if str(paper.session_id) != session_id:
+        raise ForbiddenError("Paper", paper_id)
+
+    chunks = await get_chunks_by_paper(db, paper_id)
+    items = [
+        ChunkResponse(
+            paragraph_id=chunk.paragraph_id,
+            text=chunk.text,
+            section_title=chunk.section_title,
+            page_number=chunk.page_number,
+            chunk_type=chunk.chunk_type,
+            sentence_map=chunk.sentence_map or {},
+        )
+        for chunk in chunks
+    ]
+
+    return PaperChunksResponse(paper_id=paper_id, chunks=items)
 
 @router.get("/{paper_id}/pdf")
 async def serve_paper_pdf(

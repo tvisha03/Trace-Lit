@@ -123,7 +123,8 @@ def _extract_figures_from_pages(
     figures: list[ExtractedFigure] = []
     seen_paths: set[str] = set()
     for page_data in page_chunks:
-        page_num = page_data.get("metadata", {}).get("page", 0)
+        # Switch to 1-based indexing for internal consistency
+        page_num = page_data.get("metadata", {}).get("page", 0) + 1
         page_text = page_data.get("text", "")
         for img_info in page_data.get("images", []):
             bbox = img_info.get("bbox") if isinstance(img_info, dict) else None
@@ -203,13 +204,15 @@ def _render_page_figures(
 ) -> list[ExtractedFigure]:
     import pymupdf
 
-    page_num = page_data.get("metadata", {}).get("page", 0)
+    # Switch to 1-based indexing
+    page_num = page_data.get("metadata", {}).get("page", 0) + 1
     picture_boxes = _get_picture_boxes(page_data)
 
     if not picture_boxes or page_num >= len(doc):
         return []
 
-    page = doc[page_num]
+    # doc index is still 0-based, but we use 1-based page_num for metadata
+    page = doc[page_num - 1]
     page_area = abs(page.rect.width * page.rect.height)
     rendered: list[ExtractedFigure] = []
 
@@ -252,10 +255,29 @@ def _render_missing_figures(
 
 def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
     pages: list[ExtractedPage] = []
-    for page_data in page_chunks:
+    for i, page_data in enumerate(page_chunks, start=1):
         meta = page_data.get("metadata", {})
+        # Robustly determine page number:
+        # 1. Try "page" from metadata (often 1-based in pymupdf4llm)
+        # 2. Fall back to loop index i
+        raw_page = meta.get("page")
+        try:
+            if raw_page is not None:
+                p_num = int(raw_page)
+                # If it's already 1-based, use it. If 0-indexed, add 1.
+                # Heuristic: if p_num is 0, it's definitely 0-indexed.
+                # If it's within [1, len(page_chunks)], it might be 1-indexed.
+                if p_num == 0:
+                    page_number = 1
+                else:
+                    page_number = p_num
+            else:
+                page_number = i
+        except (ValueError, TypeError):
+            page_number = i
+
         pages.append(ExtractedPage(
-            page_number=meta.get("page", 0),
+            page_number=page_number,
             text=page_data.get("text", ""),
             tables=page_data.get("tables", []),
             images=page_data.get("images", []),
@@ -321,10 +343,11 @@ def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
     if ocr_fn:
         kwargs["ocr"] = ocr_fn
 
-    logger.info(
-        f"Running {'layout' if _LAYOUT_MODE else 'legacy'} extraction on {file_path.name}"
-    )
-    return pymupdf4llm.to_markdown(str(file_path), **kwargs)
+    chunks = pymupdf4llm.to_markdown(str(file_path), **kwargs)
+    # We leave the metadata as is from pymupdf4llm and handle normalization 
+    # in _build_pages to avoid in-place corruption.
+    return chunks
+
 
 def _run_layout_extraction_no_images(file_path: Path, figure_dir: Path) -> list[dict]:
     import pymupdf4llm
@@ -334,10 +357,9 @@ def _run_layout_extraction_no_images(file_path: Path, figure_dir: Path) -> list[
     if ocr_fn:
         kwargs["ocr"] = ocr_fn
 
-    logger.info(
-        f"Running {'layout' if _LAYOUT_MODE else 'legacy'} (no-image) extraction on {file_path.name}"
-    )
-    return pymupdf4llm.to_markdown(str(file_path), **kwargs)
+    chunks = pymupdf4llm.to_markdown(str(file_path), **kwargs)
+    return chunks
+
 
 def _run_plain_text_extraction(file_path: Path) -> list[dict]:
     import pymupdf
@@ -349,6 +371,8 @@ def _run_plain_text_extraction(file_path: Path) -> list[dict]:
         for page_num, page in enumerate(doc):
             text = page.get_text("text")
             page_chunks.append({
+                # Use 0-based indexing for internal consistency; 
+                # _build_pages will convert to 1-based for the database.
                 "metadata": {"page": page_num},
                 "text": text,
                 "tables": [],
@@ -380,6 +404,7 @@ def _try_render_image_on_page(
     file_prefix: str,
 ) -> ExtractedFigure | None:
     import pymupdf
+    import re
 
     bbox = img_info.get("bbox")
     if not bbox or len(bbox) < 4:
@@ -400,11 +425,62 @@ def _try_render_image_on_page(
         logger.debug(f"Pixmap render failed for page {page_num} img {idx}: {exc}")
         return None
 
+    caption = ""
+    caption_bbox = None
+    inline_references = []
+    try:
+        blocks = page.get_text("blocks")
+        for b in blocks:
+            if len(b) >= 5 and isinstance(b[4], str):
+                bx0, by0, bx1, by1, btext, *_ = b
+                is_near_y = (by0 >= bbox[3] - 10 and by0 <= bbox[3] + 50) or (by1 >= bbox[1] - 50 and by1 <= bbox[1] + 10)
+                if is_near_y and re.match(r'^\s*(figure|fig\.?)\s*\d+[:\.]?', btext, re.IGNORECASE):
+                    caption = btext.strip()
+                    caption_bbox = (bx0, by0, bx1, by1)
+                    break
+    except Exception:
+        pass
+
+    if not caption_bbox:
+        caption_bbox = (bbox[0], bbox[3] + 5, bbox[2], bbox[3] + 35)
+        caption = f"Figure on page {page_num}"
+
+    fig_num = 1
+    m = re.search(r'\d+', caption)
+    if m:
+        fig_num = int(m.group(0))
+
+    try:
+        # Scan page for references like "Figure N"
+        words = page.get_text("words")
+        for w in words:
+            if len(w) >= 5 and isinstance(w[4], str):
+                wx0, wy0, wx1, wy1, wtext, *_ = w
+                if re.match(rf'\b(fig\.|figure)\s*{fig_num}\b', wtext, re.IGNORECASE):
+                    inline_references.append({
+                        "page": page_num,
+                        "bbox": (wx0, wy0, wx1, wy1),
+                        "text": wtext
+                    })
+    except Exception:
+        pass
+
+    bbox_dict = {
+        "source_type": "figure",
+        "figure_id": f"figure_{page_num}_{idx}",
+        "page": page_num,
+        "figure_number": fig_num,
+        "image_bbox": tuple(bbox),
+        "caption_bbox": caption_bbox,
+        "caption_text": caption,
+        "inline_references": inline_references,
+    }
+
     return ExtractedFigure(
         image_path=str(img_path),
         page_number=page_num,
-        bbox=tuple(bbox),
-        caption="",
+        bbox=bbox_dict,
+        caption=caption,
     )
 
 def _render_figures_by_rendering(
@@ -418,7 +494,8 @@ def _render_figures_by_rendering(
     doc = pymupdf.open(str(file_path))
     figures: list[ExtractedFigure] = []
     try:
-        for page_num, page in enumerate(doc):
+        for page_num_0, page in enumerate(doc):
+            page_num = page_num_0 + 1
             page_area = abs(page.rect.width * page.rect.height)
             try:
                 image_infos = page.get_image_info()
@@ -444,13 +521,19 @@ def _merge_figures(
     base: list[ExtractedFigure],
     supplement: list[ExtractedFigure],
 ) -> list[ExtractedFigure]:
-    seen = {f.image_path for f in base}
-    merged = list(base)
+    # Map by image_path to identify duplicates and preserve metadata
+    merged_map: dict[str, ExtractedFigure] = {f.image_path: f for f in base}
+    
     for fig in supplement:
-        if fig.image_path not in seen:
-            merged.append(fig)
-            seen.add(fig.image_path)
-    return merged
+        if fig.image_path not in merged_map:
+            merged_map[fig.image_path] = fig
+        else:
+            # If duplicate, prefer the version that has a bbox
+            existing = merged_map[fig.image_path]
+            if not existing.bbox and fig.bbox:
+                merged_map[fig.image_path] = fig
+                
+    return list(merged_map.values())
 
 def _assemble_document(
     file_path: Path,

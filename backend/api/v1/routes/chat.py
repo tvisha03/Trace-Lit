@@ -66,6 +66,8 @@ async def send_message(
                 chunk_type=r.chunk_type,
                 citation_ref=r.citation_ref,
                 page_number=r.page_number,
+                bbox=r.bbox,
+                full_context=r.full_context,
             )
             for r in response.havf_results
         ],

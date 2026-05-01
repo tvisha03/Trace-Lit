@@ -44,8 +44,12 @@ def _clean_table_source(stripped: str, caption: str | None) -> str:
 def _clean_figure_source(stripped: str, caption: str | None) -> str:
     if caption:
         return _MD_BOLD_RE.sub(r"\1", caption)
+    # If no caption, try to return a cleaner first line or just a label
     lines = stripped.split("\n")
-    return lines[0].strip() if lines else stripped
+    first = lines[0].strip() if lines else ""
+    if "Figure" in first or "Fig." in first:
+        return first
+    return "Figure/Image Content"
 
 
 def _clean_formula_source(stripped: str) -> str:
@@ -66,8 +70,14 @@ def _clean_source_for_display(
     source_text: str | None,
     chunk_type: str | None,
 ) -> str | None:
-    if not source_text or chunk_type == "text" or chunk_type is None:
+    if not source_text:
         return source_text
+
+    # Always strip system citation markers like [abc12345_P12] for display
+    source_text = _CITATION_ID_RE.sub("", source_text).strip()
+
+    if chunk_type == "text" or chunk_type is None:
+        return _truncate_display(source_text, source_text)
 
     caption_match = _CAPTION_EXTRACT_RE.search(source_text)
     caption = caption_match.group(1).strip() if caption_match else None
@@ -121,6 +131,8 @@ def _postprocess_display_sources(
             chunk_type=r.chunk_type,
             citation_ref=r.citation_ref,
             page_number=r.page_number,
+            bbox=r.bbox,
+            full_context=r.full_context,
         )
         for r in results
     ]
@@ -168,6 +180,8 @@ def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
     for src in source_sentences:
         pid = src.get("paragraph_id")
         if pid and pid not in index:
+            # Also handle the sentence-level key if needed, 
+            # but primary index is by paragraph_id for citation matching
             index[pid] = src
     return index
 
@@ -180,37 +194,54 @@ def _apply_citation_correction(
     # Use settings value if not provided
     if ce_threshold is None:
         ce_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
+    
+    from domain.retrieval.indexer import encode_texts
+    import numpy as np
+
     corrected = []
     for result in results:
         cited_pid = _extract_cited_para_id(result.claim)
         if cited_pid and cited_pid in para_source_index:
             src = para_source_index[cited_pid]
-            new_pid = src["paragraph_id"]
-            chunk_type = _chunk_type_from_paragraph_id(new_pid)
+            
+            # If the current result already matched the cited PID, keep it
+            if result.paragraph_id == cited_pid:
+                corrected.append(result)
+                continue
 
-            confidence = result.confidence
-            score = result.score
-            if chunk_type != "text" and _is_non_text_paragraph(new_pid):
-                if confidence == ConfidenceLevel.LOW:
-                    confidence = ConfidenceLevel.MEDIUM
-                # Use the cross-encoder threshold as minimum for non-text chunks
-                # to ensure consistency with Level 2 verification
-                score = max(score, ce_threshold)
-
-            result = VerificationResult(
+            # If it matched something ELSE, we must re-evaluate against the cited PID
+            # to ensure the 'Source' shown in UI actually matches the claim.
+            logger.debug(f"Citation correction: overriding match {result.paragraph_id} with cited {cited_pid}")
+            
+            # Simple embedding check for the corrected source
+            claim_vec = encode_texts([result.claim])
+            src_vec = encode_texts([src["text"]])
+            new_score = (claim_vec @ src_vec.T).item()
+            
+            settings = get_settings()
+            new_conf = ConfidenceLevel.LOW
+            if new_score >= settings.HAVF_HIGH_THRESHOLD:
+                new_conf = ConfidenceLevel.HIGH
+            elif new_score >= settings.HAVF_MEDIUM_THRESHOLD:
+                new_conf = ConfidenceLevel.MEDIUM
+            
+            corrected.append(VerificationResult(
                 claim=result.claim,
-                confidence=confidence,
-                score=score,
+                confidence=new_conf,
+                score=new_score,
                 source_sentence=src["text"],
-                paragraph_id=new_pid,
+                paragraph_id=src["paragraph_id"],
                 paper_id=src["paper_id"],
                 sentence_key=src["sentence_key"],
-                verification_method=result.verification_method,
-                chunk_type=chunk_type,
-                citation_ref=new_pid.split("_")[-1] if new_pid else None,
+                verification_method=VerificationMethod.EMBEDDING_SIMILARITY,
+                chunk_type=_chunk_type_from_paragraph_id(src["paragraph_id"]),
+                citation_ref=cited_pid.split("_")[-1] if cited_pid else None,
                 page_number=src.get("page_number"),
-            )
-        corrected.append(result)
+                bbox=src.get("bbox"),
+                full_context=src.get("full_context"),
+            ))
+        else:
+            corrected.append(result)
     return corrected
 
 
@@ -227,6 +258,8 @@ class VerificationResult:
     chunk_type: str | None = None
     citation_ref: str | None = None
     page_number: int | None = None
+    full_context: str | None = None
+    bbox: dict | None = None
 
 
 _PARAGRAPH_TYPE_MAP: dict[str, str] = {"F": "figure", "T": "table", "E": "formula"}
@@ -264,7 +297,7 @@ def _add_non_text_source(
     if not _is_non_text_paragraph(para_id):
         return
     best_text = _select_best_chunk_text(chunk)
-    if len(best_text) <= 50:
+    if len(best_text) <= 10:  # Reduced from 50 to 10 to catch short captions
         return
     cleaned = clean_source_text(best_text)
     existing_texts = {s["text"] for s in sources}
@@ -276,6 +309,8 @@ def _add_non_text_source(
                 "paper_id": paper_id,
                 "sentence_key": f"{para_id}_FULL" if para_id else None,
                 "page_number": getattr(chunk, "page_number", None),
+                "full_context": getattr(chunk, "text", ""),
+                "bbox": getattr(chunk, "bbox", None),
             }
         )
 
@@ -298,6 +333,8 @@ def _extract_chunk_sources(chunk) -> list[dict]:
                     "paper_id": paper_id,
                     "sentence_key": s_key,
                     "page_number": getattr(chunk, "page_number", None),
+                    "full_context": getattr(chunk, "text", ""),
+                    "bbox": getattr(chunk, "bbox", None),
                 }
             )
     _add_non_text_source(sources, chunk, para_id, paper_id)
@@ -376,7 +413,9 @@ def _filter_short_claims(
 
     for claim in claims:
         word_count = len(claim.split())
-        if word_count < short_sentence_threshold:
+        has_citation = bool(_CITATION_ID_RE.search(claim))
+        
+        if word_count < short_sentence_threshold and not has_citation:
             short_claims.append(claim)
         else:
             valid_claims.append(claim)
@@ -475,6 +514,8 @@ def _build_final_results(
                 chunk_type=_chunk_type_from_paragraph_id(p_id),
                 citation_ref=p_id.split("_")[-1] if p_id else None,
                 page_number=r.get("page_number"),
+                bbox=r.get("bbox"),
+                full_context=r.get("full_context"),
             )
         )
     return final

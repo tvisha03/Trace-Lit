@@ -70,8 +70,8 @@ body {
 
 /* Confidence underlines */
 .conf-high   { border-bottom: 2px solid var(--hi); }
-.conf-medium { border-bottom: 2px dashed var(--med); }
-.conf-low    { border-bottom: 2px dotted var(--low); }
+.conf-medium { border-bottom: 2px solid var(--med); opacity: 0.9; }
+.conf-low    { border-bottom: 2px solid var(--low); opacity: 0.8; }
 
 /* Status dot breathe animation */
 @keyframes breathe {
@@ -87,3 +87,112 @@ body {
   100% { background: transparent; }
 }
 .sentence-highlight { animation: sentencePulse 3s ease-out forwards; }
+
+/* PDF text layer highlight pulse and fade while staying visible after 3s */
+@keyframes pdfHighlightPulse {
+  0% {
+    background-color: rgba(255, 230, 0, 0.7);
+    box-shadow: 0 0 10px rgba(255, 230, 0, 0.8);
+  }
+  30% {
+    background-color: rgba(255, 230, 0, 0.3);
+    box-shadow: 0 0 3px rgba(255, 230, 0, 0.3);
+  }
+  60% {
+    background-color: rgba(255, 230, 0, 0.6);
+    box-shadow: 0 0 8px rgba(255, 230, 0, 0.6);
+  }
+  100% {
+    background-color: rgba(255, 230, 0, 0.35);
+    box-shadow: 0 0 4px rgba(255, 230, 0, 0.2);
+  }
+}
+
+.react-pdf__Page__textContent mark.pdf-highlight,
+mark.pdf-highlight {
+  background-color: rgba(255, 230, 0, 0.35);
+  border-radius: 2px;
+  box-shadow: 0 0 4px rgba(255, 230, 0, 0.2);
+  color: inherit;
+  animation: pdfHighlightPulse 3s ease-out;
+}
+
+.pdf-highlight-fallback {
+  background-color: rgba(255, 230, 0, 0.15);
+  border-bottom: 1px dashed rgba(255, 230, 0, 0.8);
+  color: inherit;
+  animation: pdfHighlightPulse 3s ease-out;
+}
+
+/* Markdown Rendering Styles */
+.markdown-body-summary, 
+.markdown-body-source {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--t1);
+}
+
+.markdown-body-summary h1, .markdown-body-summary h2 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 18px;
+  color: var(--t1);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  border-left: 3px solid var(--gold);
+  padding-left: 0.75rem;
+}
+
+.markdown-body-summary h3 {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gold);
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-body-summary p, .markdown-body-source p {
+  margin-bottom: 1rem;
+}
+
+.markdown-body-summary table, .markdown-body-source table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 11px;
+  border: 1px solid var(--b1);
+  background: var(--s2);
+}
+
+.markdown-body-summary th, .markdown-body-source th {
+  background: var(--s3);
+  color: var(--gold);
+  font-weight: 700;
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--b1);
+}
+
+.markdown-body-summary td, .markdown-body-source td {
+  padding: 8px 12px;
+  border: 1px solid var(--b1);
+  color: var(--t2);
+  vertical-align: top;
+}
+
+.markdown-body-summary ul, .markdown-body-summary ol {
+  margin-bottom: 1rem;
+  padding-left: 1.25rem;
+}
+
+.markdown-body-summary li {
+  margin-bottom: 0.5rem;
+  list-style-type: square;
+  color: var(--t2);
+}
+
+.markdown-body-summary li::marker {
+  color: var(--gold);
+}
