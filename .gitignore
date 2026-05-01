@@ -73,3 +73,10 @@ instructions/
 # Postman collections (local dev only)
 postman/
 
+
+# Project docs and instructions
+docs/
+instructions/
+
+# Postman collections (local dev only)
+postman/
