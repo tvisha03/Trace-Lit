@@ -80,3 +80,7 @@ instructions/
 
 # Postman collections (local dev only)
 postman/
+
+# Other local tools
+.opencode/
+.codacy/
