@@ -19,6 +19,7 @@ import { analysisApi, sessionsApi } from "../../api/client";
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 const ANALYSIS_TOOLS = [
   { id: "compare", icon: "⊞", label: "Compare", key: "C" },
+  { id: "keywords", icon: "🔑", label: "Keywords", key: "K" },
   { id: "gaps", icon: "◈", label: "Gaps", key: "G" },
   { id: "review", icon: "≡", label: "Review", key: "R" },
   { id: "verify", icon: "✓", label: "Verify", key: "V" },
@@ -26,7 +27,6 @@ const ANALYSIS_TOOLS = [
 
 const PAPER_TOOLS = [
   { id: "source", icon: "📄", label: "Source", key: "S" },
-  { id: "keywords", icon: "🔑", label: "Keywords", key: "K" },
 ];
 
 export default function Sidebar({

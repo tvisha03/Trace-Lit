@@ -377,6 +377,16 @@ function App() {
             />
           </div>
         )}
+
+        {/* Keywords */}
+        {activeTab === "keywords" && (
+          <div className="overflow-auto h-full p-5">
+            <KeywordsPanel
+              sessionId={activeSession?.id}
+              papers={papers}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

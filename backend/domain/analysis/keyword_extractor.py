@@ -1,4 +1,3 @@
-
 import re
 
 from shared.logger import get_logger
@@ -70,18 +69,56 @@ def extract_keywords(
 
     kw_model = _get_kw_model()
 
-    keywords = kw_model.extract_keywords(
+    # Extract more initially so we have enough candidates after filtering
+    candidates = kw_model.extract_keywords(
         cleaned,
         keyphrase_ngram_range=keyphrase_ngram_range,
         stop_words="english",
-        top_n=top_n,
+        top_n=top_n * 3,
         use_mmr=use_mmr,
         diversity=diversity,
     )
 
-    results = [{"keyword": kw, "score": round(score, 4)} for kw, score in keywords]
-    logger.info(f"Extracted {len(results)} keywords")
-    return results
+    ACADEMIC_STOPWORDS = {
+        "abstract", "introduction", "conclusion", "results", "discussion", "methodology",
+        "background", "related work", "future work", "experimental", "experiments", "evaluation",
+        "proposed", "method", "approach", "system", "model", "analysis", "study", "paper",
+        "author", "authors", "table", "figure", "et al", "university", "department", "institute",
+        "research", "researchers", "framework", "performance", "findings", "contributions",
+        "fig", "dataset", "data", "algorithm", "solution", "problem", "case study",
+        "applications", "references", "acknowledgments", "appendix", "proceedings", "conference",
+        "journal", "volume", "issue", "pages", "year", "date", "published", "doi", "url",
+        "http", "https", "www", "com", "org", "edu", "table 1", "table 2", "fig 1", "fig 2",
+        "et", "al", "ibid", "cf", "eg", "ie", "viz"
+    }
+
+    filtered_keywords = []
+    for kw, score in candidates:
+        kw_lower = kw.lower().strip()
+
+        # Skip too short keywords
+        if len(kw_lower) < 3:
+            continue
+
+        # Skip if the keyword is entirely an academic stopword
+        if kw_lower in ACADEMIC_STOPWORDS:
+            continue
+
+        # Skip if the keyword is just a single number
+        if kw_lower.isdigit():
+            continue
+
+        # Skip if it's too generic or contains any academic stopword
+        words = kw_lower.split()
+        if any(w in ACADEMIC_STOPWORDS for w in words):
+            continue
+
+        filtered_keywords.append({"keyword": kw, "score": round(score, 4)})
+        if len(filtered_keywords) >= top_n:
+            break
+
+    logger.info(f"Extracted {len(filtered_keywords)} filtered keywords from {len(candidates)} candidates")
+    return filtered_keywords
 
 def extract_keywords_per_paper(
     paper_texts: dict[str, str],
