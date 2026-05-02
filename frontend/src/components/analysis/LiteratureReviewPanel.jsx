@@ -12,6 +12,7 @@ const PARA_ID_RE = /\s*\[[a-f0-9]{6,}_[PTFEptfe]\d+\]/g;
 function stripParaIds(text) {
   return text ? text.replace(PARA_ID_RE, '') : text;
 }
+
 export default function LiteratureReviewPanel({ sessionId, papers }) {
   const [reviewText, setReviewText] = useState('');
   const [streaming, setStreaming]   = useState(false);
@@ -23,6 +24,28 @@ export default function LiteratureReviewPanel({ sessionId, papers }) {
   const contentRef    = useRef(null);
 
   const readyCount = (papers ?? []).filter((p) => p.status?.toUpperCase() === 'COMPLETED').length;
+
+  // Load from localStorage on mount & session change
+  useEffect(() => {
+    if (!sessionId) return;
+    try {
+      const saved = localStorage.getItem(`tracelit_cached_review_${sessionId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setReviewText(parsed.reviewText ?? '');
+        setGenerated(parsed.generated ?? false);
+        setProvider(parsed.provider ?? null);
+      } else {
+        setReviewText('');
+        setGenerated(false);
+        setProvider(null);
+      }
+    } catch {
+      setReviewText('');
+      setGenerated(false);
+      setProvider(null);
+    }
+  }, [sessionId]);
 
   // Scroll to bottom as tokens arrive
   useEffect(() => {
@@ -47,11 +70,32 @@ export default function LiteratureReviewPanel({ sessionId, papers }) {
     setProvider(null);
 
     const stop = analysisApi.reviewStream(sessionId, {
-      onToken: (tok) => setReviewText((prev) => prev + tok),
+      onToken: (tok) => {
+        setReviewText((prev) => {
+          const next = prev + tok;
+          try {
+            localStorage.setItem(
+              `tracelit_cached_review_${sessionId}`,
+              JSON.stringify({ reviewText: next, generated: false, provider: null })
+            );
+          } catch {}
+          return next;
+        });
+      },
       onDone: (meta) => {
         setStreaming(false);
         setGenerated(true);
-        setProvider(meta?.provider ?? null);
+        const nextProvider = meta?.provider ?? null;
+        setProvider(nextProvider);
+        try {
+          setReviewText((finalText) => {
+            localStorage.setItem(
+              `tracelit_cached_review_${sessionId}`,
+              JSON.stringify({ reviewText: finalText, generated: true, provider: nextProvider })
+            );
+            return finalText;
+          });
+        } catch {}
       },
       onError: (err) => {
         setStreaming(false);

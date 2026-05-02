@@ -24,9 +24,18 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
   useEffect(() => {
     if (!paper) return;
     if (paper.id !== paperId) {
-      setSummary(null);
       setError(null);
       setPaperId(paper.id);
+      try {
+        const saved = localStorage.getItem(`tracelit_cached_summary_${paper.id}`);
+        if (saved) {
+          setSummary(JSON.parse(saved));
+        } else {
+          setSummary(null);
+        }
+      } catch {
+        setSummary(null);
+      }
     }
   }, [paper, paperId]);
 
@@ -43,10 +52,19 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
     const cancel = analysisApi.summaryStream(sessionId, paper.id, q, {
       onToken: (token) => {
         setLoading(false);
-        setSummary((prev) => ({
-          ...prev,
-          summary: (prev?.summary || '') + token,
-        }));
+        setSummary((prev) => {
+          const next = {
+            ...prev,
+            summary: (prev?.summary || '') + token,
+          };
+          next.summary = next.summary
+            .replace(/\[[a-zA-Z0-9_\-]+_[PFTEpfte]\d+\]/g, '')
+            .replace(/\[P\d+\]/g, '');
+          try {
+            localStorage.setItem(`tracelit_cached_summary_${paper.id}`, JSON.stringify(next));
+          } catch {}
+          return next;
+        });
       },
       onDone: (data) => {
         setLoading(false);
@@ -54,12 +72,19 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
           setError('Failed to generate summary.');
           setSummary(null);
         } else {
-          setSummary({
-            summary: data.full_text,
+          const cleaned = data.full_text
+            .replace(/\[[a-zA-Z0-9_\-]+_[PFTEpfte]\d+\]/g, '')
+            .replace(/\[P\d+\]/g, '');
+          const next = {
+            summary: cleaned,
             title: data.title || paper.title,
             provider: data.provider,
             paper_id: data.paper_id,
-          });
+          };
+          setSummary(next);
+          try {
+            localStorage.setItem(`tracelit_cached_summary_${paper.id}`, JSON.stringify(next));
+          } catch {}
           setPaperId(paper.id);
         }
       },

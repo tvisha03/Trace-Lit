@@ -33,19 +33,73 @@ export default function HighlighterPdfViewer({
   // Sync pageNumber whenever the citation changes
   // Backend uses 0-indexed pages, but react-pdf expects 1-indexed
   useEffect(() => {
-    if (targetPage !== undefined && targetPage !== null) {
-      const displayPage = targetPage + 1; // Convert to 1-indexed for react-pdf
-      console.log(
-        "[HighlighterPdfViewer] Navigating from 0-indexed:",
-        targetPage,
-        "to 1-indexed:",
-        displayPage,
-      );
-      setPageNumber(displayPage);
-      setLoading(true); // show spinner while new page loads
-      setLoadError(null);
+    async function locatePage() {
+      if (targetPage !== undefined && targetPage !== null) {
+        const displayPage = targetPage + 1; // Convert to 1-indexed for react-pdf
+        setLoadError(null);
+        setLoading(true);
+
+        if (!pdf || !highlightText) {
+          setPageNumber(displayPage);
+          return;
+        }
+
+        try {
+          // Check current page
+          const page = await pdf.getPage(displayPage);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items
+            .map((item) => item.str)
+            .join(" ")
+            .toLowerCase();
+
+          const cleanSearch = highlightText.replace(/\[(?:[a-f0-9]{6,}_)?[PFTEpfte]\d+\]/g, " ");
+          const normalizedSearch = cleanSearch
+            .toLowerCase()
+            .replace(/[^\w\s]/g, " ")
+            .trim();
+
+          if (pageText.includes(normalizedSearch)) {
+            setPageNumber(displayPage);
+            return;
+          }
+
+          // Scan all other pages
+          let bestPage = displayPage;
+          let maxCoverage = 0;
+          const searchWords = normalizedSearch.split(/\s+/).filter((w) => w.length >= 4);
+
+          for (let p = 1; p <= pdf.numPages; p++) {
+            const pg = await pdf.getPage(p);
+            const content = await pg.getTextContent();
+            const txt = content.items
+              .map((item) => item.str)
+              .join(" ")
+              .toLowerCase();
+
+            if (txt.includes(normalizedSearch)) {
+              bestPage = p;
+              break;
+            }
+
+            if (searchWords.length > 0) {
+              const matchedWords = searchWords.filter((w) => txt.includes(w));
+              const coverage = matchedWords.length / searchWords.length;
+              if (coverage > maxCoverage && coverage >= 0.4) {
+                maxCoverage = coverage;
+                bestPage = p;
+              }
+            }
+          }
+          setPageNumber(bestPage);
+        } catch (err) {
+          console.warn("[HighlighterPdfViewer] Failed to scan pages for navigation:", err);
+          setPageNumber(displayPage);
+        }
+      }
     }
-  }, [targetPage]);
+    locatePage();
+  }, [targetPage, pdf, highlightText]);
 
   // Check if sentence exists on page to decide on fallback
   useEffect(() => {
@@ -686,13 +740,22 @@ export default function HighlighterPdfViewer({
           </span>
           <span className="truncate max-w-[80%] text-tl-t2">
             {chunkType === "table"
-              ? "Table or caption context referenced. Visual table is highlighted."
+              ? (bbox?.caption_text ? `${bbox.caption_text} — Table rendered as image, row-level highlighting unavailable` : "Table rendered as image — row-level highlighting unavailable")
               : chunkType === "figure"
               ? "Figure content referenced - caption and surrounding context highlighted."
               : useParagraphFallback
               ? "Showing paragraph - exact sentence could not be isolated."
               : highlightText || "Exact retrieved source chunk highlighted."}
           </span>
+          {chunkType === "table" && highlightText && (
+            <button
+              onClick={handleCopyText}
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 bg-tl-s3 border border-tl-b1 rounded text-[8px] font-mono text-tl-t3 hover:text-tl-gold transition-all"
+              title="Copy table data"
+            >
+              📋 Copy Data
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -85,35 +85,53 @@ def format_evaluation_output(
         # Build table - extract model names and values from results
         # Expected format: results is list of dicts with model, metric, value, dataset
         if isinstance(results, list) and len(results) > 0:
-            # Try to build a structured table
             if isinstance(results[0], dict):
-                # Group by dataset
-                from collections import defaultdict
-
-                datasets_map = defaultdict(list)
+                # Filter out useless N/A or empty rows
+                filtered_results = []
                 for r in results:
-                    ds = r.get("dataset", "Unknown")
-                    datasets_map[ds].append(r)
+                    if isinstance(r, dict):
+                        m = str(r.get("model", "N/A"))
+                        v = str(r.get("value", "N/A"))
+                        if m.strip() not in ("N/A", "") or v.strip() not in ("N/A", ""):
+                            filtered_results.append(r)
 
-                for ds, items in datasets_map.items():
-                    # Table header
-                    lines.append(f"**Dataset: {ds}**")
+                if not filtered_results:
+                    lines.append("- No specific structured metrics or results found in the text.")
                     lines.append("")
-                    lines.append("┌" + "─" * 30 + "┬" + "─" * 15 + "┐")
-                    lines.append(f"│ Model{' ' * 26}│ Value{' ' * 10}│")
-                    lines.append("├" + "─" * 30 + "┼" + "─" * 15 + "┤")
+                else:
+                    # Group by dataset
+                    from collections import defaultdict
 
-                    for item in items:
-                        model = item.get("model", "N/A")
-                        value = item.get("value", "N/A")
-                        metric = item.get("metric", "")
-                        metric_str = f" ({metric})" if metric else ""
-                        lines.append(
-                            f"│ {model}{' ' * (30 - len(model))}│ {value}{metric_str}{' ' * (15 - len(str(value)) - len(metric_str))}│"
-                        )
+                    datasets_map = defaultdict(list)
+                    for r in filtered_results:
+                        ds = r.get("dataset", "Unknown") or "Unknown"
+                        datasets_map[ds].append(r)
 
-                    lines.append("└" + "─" * 30 + "┴" + "─" * 15 + "┘")
-                    lines.append("")
+                    for ds, items in datasets_map.items():
+                        # Table header
+                        lines.append(f"**Dataset: {ds}**")
+                        lines.append("")
+                        lines.append("┌" + "─" * 30 + "┬" + "─" * 15 + "┐")
+                        lines.append(f"│ Model{' ' * 26}│ Value{' ' * 10}│")
+                        lines.append("├" + "─" * 30 + "┼" + "─" * 15 + "┤")
+
+                        for item in items:
+                            model = str(item.get("model", "N/A"))
+                            value = str(item.get("value", "N/A"))
+                            metric = str(item.get("metric", ""))
+                            metric_str = f" ({metric})" if metric else ""
+                            # Trim model/value to fit width exactly
+                            if len(model) > 30:
+                                model = model[:27] + "..."
+                            if len(value) + len(metric_str) > 15:
+                                value = value[:12] + "..."
+                            
+                            lines.append(
+                                f"│ {model}{' ' * (30 - len(model))}│ {value}{metric_str}{' ' * (15 - len(str(value)) - len(metric_str))}│"
+                            )
+
+                        lines.append("└" + "─" * 30 + "┴" + "─" * 15 + "┘")
+                        lines.append("")
             else:
                 # Simple list of results
                 for r in results:
@@ -273,25 +291,16 @@ async def generate_response(
             start,
         )
 
-    EVAL_KEYWORDS = {
-        "accuracy",
-        "bleu",
-        "f1",
-        "precision",
-        "recall",
-        "perplexity",
-        "auc",
-        "rouge",
-        "benchmark",
-        "dataset",
-        "evaluation",
-        "performance",
-        "score",
-        "results",
-        "compared",
-        "achieved",
-    }
-    is_eval_query = any(kw in query.lower() for kw in EVAL_KEYWORDS)
+    query_lower = query.lower().strip()
+    is_eval_query = (
+        "evaluation metrics" in query_lower or 
+        "experimental evaluation" in query_lower or 
+        "extract evaluation" in query_lower or 
+        ("metrics" in query_lower and "evaluation" in query_lower) or
+        ("extract" in query_lower and "metrics" in query_lower) or
+        ("summarize" in query_lower and "metrics" in query_lower) or
+        ("summary" in query_lower and "evaluation" in query_lower)
+    )
 
     if is_eval_query:
         try:

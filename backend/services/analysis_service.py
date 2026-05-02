@@ -4,7 +4,7 @@ from typing import AsyncGenerator
 from domain.analysis.keyword_extractor import extract_keywords, extract_keywords_per_paper
 from domain.analysis.gap_finder import find_gaps, GapAnalysis
 from domain.analysis.review_generator import generate_review, stream_review, generate_gap_narrative
-from domain.generation.prompts import SYSTEM_PROMPT, SUMMARY_PROMPT_TEMPLATE, build_context_block
+from domain.generation.prompts import SYSTEM_PROMPT, SUMMARY_PROMPT_TEMPLATE, SUMMARY_SYSTEM_PROMPT, build_context_block
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
 from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.llm.fallback_chain import FallbackChain
@@ -237,11 +237,15 @@ async def generate_paper_summary(
         context=context, question=user_question
     )
 
+    import re
     summary_text, provider, _ = await llm.generate(
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=SUMMARY_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         max_tokens=4096,
     )
+
+    summary_text = re.sub(r'\[[a-zA-Z0-9_\-]+_[PFTEpfte]\d+\]', '', summary_text)
+    summary_text = re.sub(r'\[P\d+\]', '', summary_text)
 
     logger.info(
         f"Generated summary for paper {paper_id} "
@@ -261,6 +265,7 @@ async def stream_paper_summary(
     user_question: str = "Provide a structured summary of this paper.",
 ) -> AsyncGenerator[str, None]:
     import json
+    import re
     from shared.utils.streaming_utils import sse_event
 
     full_text = ""
@@ -285,7 +290,7 @@ async def stream_paper_summary(
         )
 
         async for token, provider_obj in llm.generate_streaming(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=SUMMARY_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             max_tokens=4096,
         ):
@@ -294,6 +299,10 @@ async def stream_paper_summary(
             yield sse_event("token", {"token": token})
 
         resolved_provider = provider or "unknown"
+        # Clean full text of paragraph IDs before sending done event
+        full_text = re.sub(r'\[[a-zA-Z0-9_\-]+_[PFTEpfte]\d+\]', '', full_text)
+        full_text = re.sub(r'\[P\d+\]', '', full_text)
+
         yield sse_event("done", json.dumps({
             "provider": resolved_provider,
             "full_text": full_text,

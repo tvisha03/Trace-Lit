@@ -401,8 +401,345 @@ async def verify_response(
         para_index = _build_para_source_index(source_sentences)
         all_results = _apply_citation_correction(all_results, para_index, ce_thresh)
         all_results = _postprocess_display_sources(all_results)
+
+        try:
+            enhanced_results = []
+            for r in all_results:
+                if r.chunk_type == "table":
+                    r = await _enhance_table_result(r)
+                enhanced_results.append(r)
+            all_results = enhanced_results
+        except Exception as exc:
+            logger.warning(f"Failed to enhance table bboxes: {exc}")
+
         _log_verification_summary(all_results)
         return all_results
+
+
+async def _extract_table_caption_info(chunk_text: str) -> dict:
+    from infrastructure.llm.fallback_chain import FallbackChain
+    import json
+    import re
+
+    prompt = f"""You are extracting table identification information from a research paper chunk.
+
+Given this retrieved chunk:
+{chunk_text}
+
+Extract the following in JSON format:
+{{
+  "table_number": <integer or null>,
+  "table_caption": <full caption text as it appears, or null>,
+  "caption_keywords": <3-5 distinctive words from caption for searching>,
+  "has_numeric_data": <true/false>,
+  "approximate_rows": <estimated number of data rows, or null>
+}}
+
+Rules:
+- table_number: look for "Table 1", "Table 2", "Tab. 1" etc.
+- table_caption: copy the caption EXACTLY as it appears in the chunk
+- caption_keywords: pick unique words that would identify this specific table
+- Only return what is explicitly in the chunk, never infer
+- If no table is identified, return all fields as null"""
+
+    try:
+        llm = FallbackChain()
+        res_text, provider, _ = await llm.generate(
+            system_prompt="You are a helpful academic assistant that extracts info in JSON.",
+            user_prompt=prompt,
+        )
+        match = re.search(r"\{.*\}", res_text, re.DOTALL)
+        if match:
+            res_text = match.group(0)
+        return json.loads(res_text)
+    except Exception as exc:
+        logger.warning(f"Failed to extract table caption info: {exc}")
+        return {
+            "table_number": None,
+            "table_caption": None,
+            "caption_keywords": [],
+            "has_numeric_data": False,
+            "approximate_rows": None
+        }
+
+
+def _search_caption_on_page(doc, page_idx: int, caption_text: str, caption_keywords: list, table_number: int | None) -> tuple | None:
+    if page_idx < 0 or page_idx >= len(doc):
+        return None
+    page = doc[page_idx]
+    import re
+
+    cleaned_caption = None
+    if caption_text:
+        cleaned_caption = re.sub(r"[\*\|]", "", caption_text)
+        cleaned_caption = re.sub(r"\s+", " ", cleaned_caption).strip()
+
+    if cleaned_caption:
+        results = page.search_for(cleaned_caption)
+        if results:
+            return tuple(results[0])
+        if len(cleaned_caption) > 12:
+            results = page.search_for(cleaned_caption[:12])
+            if results:
+                return tuple(results[0])
+
+    if table_number is not None:
+        for prefix in [f"Table {table_number}", f"Tab. {table_number}", f"TABLE {table_number}"]:
+            results = page.search_for(prefix)
+            if results:
+                return tuple(results[0])
+
+    if caption_keywords:
+        all_keyword_results = []
+        for kw in caption_keywords:
+            clean_kw = re.sub(r"[\*\|]", "", kw).strip()
+            if len(clean_kw) >= 3:
+                results = page.search_for(clean_kw)
+                all_keyword_results.extend(results)
+        
+        if len(all_keyword_results) >= 2:
+            min_x = min(r.x0 for r in all_keyword_results)
+            min_y = min(r.y0 for r in all_keyword_results)
+            max_x = max(r.x1 for r in all_keyword_results)
+            max_y = max(r.y1 for r in all_keyword_results)
+            return (min_x, min_y, max_x, max_y)
+
+    return None
+
+
+def _estimate_table_region(page, caption_bbox: tuple) -> tuple:
+    x0, y0, x1, y1 = caption_bbox
+    page_height = page.rect.height
+    page_width = page.rect.width
+
+    images_above = False
+    images_below = False
+
+    try:
+        page_images = page.get_images(full=True)
+        for img in page_images:
+            try:
+                xref = img[0]
+                rects = page.get_image_rects(xref)
+                for rect in rects:
+                    if rect.y1 < y0:
+                        images_above = True
+                    if rect.y0 > y1:
+                        images_below = True
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if images_below:
+        case = "above"
+    elif images_above:
+        case = "below"
+    else:
+        case = "below"
+
+    if case == "above":
+        est_bbox = (
+            x0,
+            y1 + 5,
+            x1,
+            min(y1 + 250, page_height - 30)
+        )
+    else:
+        est_bbox = (
+            x0,
+            max(y0 - 250, 30),
+            x1,
+            y0 - 5
+        )
+
+    return est_bbox
+
+
+def _compute_overlap(bbox1, bbox2) -> float:
+    x0 = max(bbox1[0], bbox2[0])
+    y0 = max(bbox1[1], bbox2[1])
+    x1 = min(bbox1[2], bbox2[2])
+    y1 = min(bbox1[3], bbox2[3])
+
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+
+    intersection = (x1 - x0) * (y1 - y0)
+    area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+    return intersection / area1 if area1 > 0 else 0.0
+
+
+def _find_image_overlap(page, estimated_table_bbox: tuple) -> tuple | None:
+    try:
+        page_images = page.get_images(full=True)
+        for img in page_images:
+            xref = img[0]
+            rects = page.get_image_rects(xref)
+            for rect in rects:
+                overlap = _compute_overlap(estimated_table_bbox, (rect.x0, rect.y0, rect.x1, rect.y1))
+                if overlap > 0.3:
+                    return (rect.x0, rect.y0, rect.x1, rect.y1)
+    except Exception:
+        pass
+    return None
+
+
+async def _verify_table_region(chunk_text: str, text_near_candidate: str) -> bool:
+    from infrastructure.llm.fallback_chain import FallbackChain
+    import json
+    import re
+
+    prompt = f"""You are verifying whether a found PDF region matches a retrieved table chunk.
+
+RETRIEVED CHUNK (what RAG returned):
+{chunk_text}
+
+TEXT FOUND NEAR CANDIDATE LOCATION IN PDF:
+{text_near_candidate}
+
+Does the candidate location match the retrieved chunk?
+Consider: table number, column headers, approximate data values
+
+Return JSON:
+{{
+  "is_match": true | false,
+  "confidence": "high" | "medium" | "low",
+  "reason": "one sentence explanation"
+}}"""
+
+    try:
+        llm = FallbackChain()
+        res_text, provider, _ = await llm.generate(
+            system_prompt="You are a helpful academic assistant that returns verification in JSON.",
+            user_prompt=prompt,
+        )
+        match = re.search(r"\{.*\}", res_text, re.DOTALL)
+        if match:
+            res_text = match.group(0)
+        data = json.loads(res_text)
+        return data.get("is_match") is True and data.get("confidence") in ("high", "medium")
+    except Exception as exc:
+        logger.warning(f"Failed to verify table region via LLM: {exc}")
+        return True
+
+
+async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
+    if not r.paper_id:
+        return r
+    
+    from infrastructure.db.database import async_session_factory
+    from sqlalchemy import select
+    from infrastructure.db.models.paper import Paper
+    import pymupdf
+    import re
+
+    paper_path = None
+    async with async_session_factory() as db:
+        try:
+            stmt = select(Paper).where(Paper.id == r.paper_id)
+            res = await db.execute(stmt)
+            paper = res.scalars().first()
+            if paper:
+                paper_path = paper.file_path
+        except Exception as exc:
+            logger.warning(f"Error fetching paper path for table bbox enhancement: {exc}")
+    
+    if not paper_path:
+        return r
+
+    chunk_text = r.full_context or r.source_sentence or ""
+    if not chunk_text:
+        return r
+
+    info = await _extract_table_caption_info(chunk_text)
+    table_num = info.get("table_number")
+    caption_text = info.get("table_caption")
+    keywords = info.get("caption_keywords") or []
+    
+    if caption_text:
+        caption_text = re.sub(r"\s+", " ", caption_text).strip()
+
+    try:
+        doc = pymupdf.open(str(paper_path))
+    except Exception as exc:
+        logger.warning(f"Could not open PDF for table bbox: {exc}")
+        return r
+
+    try:
+        orig_page = r.page_number if r.page_number is not None else 1
+        page_idx = orig_page - 1
+
+        caption_bbox = None
+        found_page_idx = page_idx
+
+        search_pages = [page_idx]
+        if page_idx - 1 >= 0:
+            search_pages.append(page_idx - 1)
+        if page_idx + 1 < len(doc):
+            search_pages.append(page_idx + 1)
+        for i in range(len(doc)):
+            if i not in search_pages:
+                search_pages.append(i)
+
+        for p_idx in search_pages:
+            if 0 <= p_idx < len(doc):
+                caption_bbox = _search_caption_on_page(doc, p_idx, caption_text, keywords, table_num)
+                if caption_bbox:
+                    found_page_idx = p_idx
+                    break
+
+        page_height = doc[found_page_idx].rect.height
+        page_width = doc[found_page_idx].rect.width
+
+        if caption_bbox:
+            estimated_table_bbox = _estimate_table_region(doc[found_page_idx], caption_bbox)
+            actual_table_bbox = _find_image_overlap(doc[found_page_idx], estimated_table_bbox)
+            
+            text_rect = actual_table_bbox if actual_table_bbox else estimated_table_bbox
+            try:
+                text_near_candidate = doc[found_page_idx].get_text("text", clip=pymupdf.Rect(text_rect))
+            except Exception:
+                text_near_candidate = ""
+
+            is_valid = await _verify_table_region(chunk_text, text_near_candidate)
+            
+            if is_valid:
+                r.page_number = found_page_idx + 1
+                r.bbox = {
+                    "source_type": "table",
+                    "table_id": f"table_{found_page_idx + 1}_{table_num or 1}",
+                    "page": found_page_idx + 1,
+                    "caption_bbox": caption_bbox,
+                    "table_bbox": actual_table_bbox or estimated_table_bbox,
+                    "caption_text": caption_text or f"Table {table_num or 1}",
+                }
+        else:
+            # Let's search for any image objects on the current page first
+            first_image_rect = None
+            try:
+                page_images = doc[found_page_idx].get_images(full=True)
+                for img in page_images:
+                    xref = img[0]
+                    rects = doc[found_page_idx].get_image_rects(xref)
+                    if rects:
+                        first_image_rect = (rects[0].x0, rects[0].y0, rects[0].x1, rects[0].y1)
+                        break
+            except Exception:
+                pass
+
+            r.bbox = {
+                "source_type": "table",
+                "table_id": f"table_{found_page_idx + 1}_1",
+                "page": found_page_idx + 1,
+                "table_bbox": first_image_rect or (50.0, page_height * 0.2, page_width - 50.0, page_height * 0.8),
+                "caption_text": f"Table {table_num or 1}",
+            }
+
+    finally:
+        doc.close()
+
+    return r
 
 
 def _filter_short_claims(

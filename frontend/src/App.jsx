@@ -42,6 +42,23 @@ function App() {
   } = useSessionStore();
   const { papers, fetchPapers, progressMap } = usePaperStore();
 
+  useEffect(() => {
+    if (!activeSession?.id) {
+      setComparisonData(null);
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(`tracelit_cached_comparison_${activeSession.id}`);
+      if (saved) {
+        setComparisonData(JSON.parse(saved));
+      } else {
+        setComparisonData(null);
+      }
+    } catch {
+      setComparisonData(null);
+    }
+  }, [activeSession?.id]);
+
   // ── Session bootstrap ──────────────────────────────────────────────────────
   const initSession = useCallback(async () => {
     setSessionError(null);
@@ -133,6 +150,11 @@ function App() {
     try {
       const result = await compareApi.generate(activeSession.id, readyIds);
       setComparisonData(result ?? null);
+      if (result) {
+        try {
+          localStorage.setItem(`tracelit_cached_comparison_${activeSession.id}`, JSON.stringify(result));
+        } catch {}
+      }
     } catch (err) {
       console.error("Comparison failed:", err);
       setComparisonError(err.message || "Comparison failed");

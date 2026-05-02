@@ -308,12 +308,16 @@ async def stream_chat_response(
     keywords: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     try:
-        EVAL_KEYWORDS = {
-            "accuracy", "bleu", "f1", "precision", "recall", "perplexity", "auc",
-            "rouge", "benchmark", "dataset", "evaluation", "performance", "score",
-            "results", "compared", "achieved"
-        }
-        is_eval_query = any(kw in query.lower() for kw in EVAL_KEYWORDS)
+        query_lower = query.lower().strip()
+        is_eval_query = (
+            "evaluation metrics" in query_lower or 
+            "experimental evaluation" in query_lower or 
+            "extract evaluation" in query_lower or 
+            ("metrics" in query_lower and "evaluation" in query_lower) or
+            ("extract" in query_lower and "metrics" in query_lower) or
+            ("summarize" in query_lower and "metrics" in query_lower) or
+            ("summary" in query_lower and "evaluation" in query_lower)
+        )
 
         classification = await _classify_and_validate_query(
             query, len(paper_ids), history
