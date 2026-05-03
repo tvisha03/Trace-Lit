@@ -4,7 +4,7 @@ from typing import AsyncGenerator
 from domain.analysis.keyword_extractor import extract_keywords, extract_keywords_per_paper
 from domain.analysis.gap_finder import find_gaps, GapAnalysis
 from domain.analysis.review_generator import generate_review, stream_review, generate_gap_narrative
-from domain.generation.prompts import SYSTEM_PROMPT, SUMMARY_PROMPT_TEMPLATE, SUMMARY_SYSTEM_PROMPT, build_context_block
+from domain.generation.prompts import SUMMARY_PROMPT_TEMPLATE, SUMMARY_SYSTEM_PROMPT, build_context_block
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
 from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.llm.fallback_chain import FallbackChain

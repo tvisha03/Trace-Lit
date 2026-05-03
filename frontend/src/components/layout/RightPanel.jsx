@@ -319,7 +319,7 @@ export default function RightPanel({
 
       {/* ── Tab bodies ───────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {rightTab === 'papers' && (
+        <div className={`h-full ${rightTab === 'papers' ? '' : 'hidden'}`}>
           <PapersTab
             papers={papers}
             progressMap={progressMap}
@@ -328,21 +328,22 @@ export default function RightPanel({
             onUpload={handleUploadClick}
             sessionId={sessionId}
           />
-        )}
-        {rightTab === 'source' && (
+        </div>
+        <div className={`h-full ${rightTab === 'source' ? '' : 'hidden'}`}>
           <SourceViewer
             sessionId={sessionId}
             activePaperId={activePaperId}
             highlightedHavfItem={highlightedHavfItem}
             onPaperChange={onPaperChange}
           />
-        )}
-        {rightTab === 'summary' && (
+        </div>
+        <div className={`h-full ${rightTab === 'summary' ? '' : 'hidden'}`}>
           <PaperSummaryPanel
             sessionId={sessionId}
             paper={activePaper}
           />
-        )}
+        </div>
+
       </div>
     </aside>
   );

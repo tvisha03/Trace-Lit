@@ -233,162 +233,151 @@ function App() {
         </div>
 
         {/* Compare */}
-        {activeTab === "compare" && (
-          <div className="p-5 overflow-auto h-full">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-mono text-sm font-semibold text-tl-t2">
-                  Paper Comparison
-                </h3>
-                <p className="font-mono text-[11px] text-tl-t4 mt-0.5">
-                  {readyCount < 2
-                    ? `${readyCount} of ${Math.max(papers.length, 2)} papers indexed — need 2 to compare`
-                    : `${readyCount} papers ready to compare`}
-                </p>
-              </div>
-              <button
-                onClick={handleGenerateComparison}
-                disabled={comparisonLoading || !activeSession || readyCount < 2}
-                title={
-                  readyCount < 2
-                    ? `Need ${2 - readyCount} more indexed paper${2 - readyCount !== 1 ? "s" : ""} to enable comparison`
-                    : "Generate comparison table"
-                }
-                className="px-3.5 py-1.5 text-xs rounded font-mono text-tl-bg bg-tl-gold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
-              >
-                {comparisonLoading
-                  ? "Generating…"
-                  : comparisonData
-                    ? "Regenerate"
-                    : "Generate"}
-              </button>
+        <div className={`p-5 overflow-auto h-full ${activeTab === "compare" ? "" : "hidden"}`}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-mono text-sm font-semibold text-tl-t2">
+                Paper Comparison
+              </h3>
+              <p className="font-mono text-[11px] text-tl-t4 mt-0.5">
+                {readyCount < 2
+                  ? `${readyCount} of ${Math.max(papers.length, 2)} papers indexed — need 2 to compare`
+                  : `${readyCount} papers ready to compare`}
+              </p>
             </div>
-
-            {/* Per-paper readiness checklist — shown until comparison is generated */}
-            {papers.length > 0 && !comparisonData && (
-              <div className="mb-4 p-3 bg-tl-s2 border border-tl-b1 rounded-lg">
-                <p className="font-mono text-[9px] uppercase tracking-widest text-tl-t4 mb-2">
-                  Paper Status
-                </p>
-                <div className="space-y-1.5">
-                  {papers.map((p) => {
-                    const isReady = p.status?.toUpperCase() === "COMPLETED";
-                    const isFailed = p.status?.toUpperCase() === "FAILED";
-                    const t = p.title ?? p.filename ?? p.id;
-                    return (
-                      <div key={p.id} className="flex items-center gap-2">
-                        <span
-                          className="font-mono text-[10px] w-3 flex-shrink-0 text-center"
-                          style={{
-                            color: isReady
-                              ? "var(--hi)"
-                              : isFailed
-                                ? "var(--low)"
-                                : "var(--med)",
-                          }}
-                        >
-                          {isReady ? "✓" : isFailed ? "✗" : "○"}
-                        </span>
-                        <span className="font-mono text-[11px] text-tl-t2 truncate">
-                          {t.length > 45 ? t.slice(0, 45) + "…" : t}
-                        </span>
-                        <span
-                          className="font-mono text-[9px] flex-shrink-0 ml-auto"
-                          style={{
-                            color: isReady
-                              ? "var(--hi)"
-                              : isFailed
-                                ? "var(--low)"
-                                : "var(--t4)",
-                          }}
-                        >
-                          {isReady
-                            ? "Indexed"
-                            : isFailed
-                              ? "Failed"
-                              : (p.status?.toLowerCase() ?? "processing…")}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  {papers.length === 0 && (
-                    <p className="font-mono text-[10px] text-tl-t4">
-                      No papers uploaded.
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {comparisonError && (
-              <div
-                className="mb-3 p-2.5 rounded border"
-                style={{
-                  background: "rgba(248,113,113,0.08)",
-                  borderColor: "rgba(248,113,113,0.25)",
-                }}
-              >
-                <p className="text-xs font-mono" style={{ color: "#f87171" }}>
-                  {comparisonError}
-                </p>
-              </div>
-            )}
-            <ComparisonTable data={comparisonData} />
+            <button
+              onClick={handleGenerateComparison}
+              disabled={comparisonLoading || !activeSession || readyCount < 2}
+              title={
+                readyCount < 2
+                  ? `Need ${2 - readyCount} more indexed paper${2 - readyCount !== 1 ? "s" : ""} to enable comparison`
+                  : "Generate comparison table"
+              }
+              className="px-3.5 py-1.5 text-xs rounded font-mono text-tl-bg bg-tl-gold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+            >
+              {comparisonLoading
+                ? "Generating…"
+                : comparisonData
+                  ? "Regenerate"
+                  : "Generate"}
+            </button>
           </div>
-        )}
+
+          {/* Per-paper readiness checklist — shown until comparison is generated */}
+          {papers.length > 0 && !comparisonData && (
+            <div className="mb-4 p-3 bg-tl-s2 border border-tl-b1 rounded-lg">
+              <p className="font-mono text-[9px] uppercase tracking-widest text-tl-t4 mb-2">
+                Paper Status
+              </p>
+              <div className="space-y-1.5">
+                {papers.map((p) => {
+                  const isReady = p.status?.toUpperCase() === "COMPLETED";
+                  const isFailed = p.status?.toUpperCase() === "FAILED";
+                  const t = p.title ?? p.filename ?? p.id;
+                  return (
+                    <div key={p.id} className="flex items-center gap-2">
+                      <span
+                        className="font-mono text-[10px] w-3 flex-shrink-0 text-center"
+                        style={{
+                          color: isReady
+                            ? "var(--hi)"
+                            : isFailed
+                              ? "var(--low)"
+                              : "var(--med)",
+                        }}
+                      >
+                        {isReady ? "✓" : isFailed ? "✗" : "○"}
+                      </span>
+                      <span className="font-mono text-[11px] text-tl-t2 truncate">
+                        {t.length > 45 ? t.slice(0, 45) + "…" : t}
+                      </span>
+                      <span
+                        className="font-mono text-[9px] flex-shrink-0 ml-auto"
+                        style={{
+                          color: isReady
+                            ? "var(--hi)"
+                            : isFailed
+                              ? "var(--low)"
+                              : "var(--t4)",
+                        }}
+                      >
+                        {isReady
+                          ? "Indexed"
+                          : isFailed
+                            ? "Failed"
+                            : (p.status?.toLowerCase() ?? "processing…")}
+                      </span>
+                    </div>
+                  );
+                })}
+                {papers.length === 0 && (
+                  <p className="font-mono text-[10px] text-tl-t4">
+                    No papers uploaded.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {comparisonError && (
+            <div
+              className="mb-3 p-2.5 rounded border"
+              style={{
+                background: "rgba(248,113,113,0.08)",
+                borderColor: "rgba(248,113,113,0.25)",
+              }}
+            >
+              <p className="text-xs font-mono" style={{ color: "#f87171" }}>
+                {comparisonError}
+              </p>
+            </div>
+          )}
+          <ComparisonTable data={comparisonData} />
+        </div>
 
         {/* Gaps */}
-        {activeTab === "gaps" && (
-          <div className="overflow-auto h-full p-5">
-            <GapFinderPanel sessionId={activeSession?.id} />
-          </div>
-        )}
+        <div className={`overflow-auto h-full p-5 ${activeTab === "gaps" ? "" : "hidden"}`}>
+          <GapFinderPanel sessionId={activeSession?.id} />
+        </div>
 
         {/* Review */}
-        {activeTab === "review" && (
-          <div className="overflow-auto h-full p-5">
-            <LiteratureReviewPanel
-              sessionId={activeSession?.id}
-              papers={papers}
-            />
-          </div>
-        )}
+        <div className={`overflow-auto h-full p-5 ${activeTab === "review" ? "" : "hidden"}`}>
+          <LiteratureReviewPanel
+            sessionId={activeSession?.id}
+            papers={papers}
+          />
+        </div>
 
         {/* Export */}
-        {activeTab === "export" && (
-          <div className="overflow-auto h-full p-6 max-w-xl">
-            <h3 className="font-serif text-base font-semibold text-tl-t1 mb-1">
-              Export Session
-            </h3>
-            <p className="font-mono text-[11.5px] text-tl-t3 mb-5">
-              Download your chat, citations, and paper references.
-            </p>
-            <ExportPanel sessionId={activeSession?.id} />
-          </div>
-        )}
+        <div className={`overflow-auto h-full p-6 max-w-xl ${activeTab === "export" ? "" : "hidden"}`}>
+          <h3 className="font-serif text-base font-semibold text-tl-t1 mb-1">
+            Export Session
+          </h3>
+          <p className="font-mono text-[11.5px] text-tl-t3 mb-5">
+            Download your chat, citations, and paper references.
+          </p>
+          <ExportPanel sessionId={activeSession?.id} />
+        </div>
 
         {/* Verify (HAVF) */}
-        {activeTab === "verify" && (
-          <div className="overflow-auto h-full p-5">
-            <VerifyPanel
-              sessionId={activeSession?.id}
-              papers={papers}
-              initialHavfItem={highlightedHavfItem}
-            />
-          </div>
-        )}
+        <div className={`overflow-auto h-full p-5 ${activeTab === "verify" ? "" : "hidden"}`}>
+          <VerifyPanel
+            sessionId={activeSession?.id}
+            papers={papers}
+            initialHavfItem={highlightedHavfItem}
+          />
+        </div>
 
         {/* Keywords */}
-        {activeTab === "keywords" && (
-          <div className="overflow-auto h-full p-5">
-            <KeywordsPanel
-              sessionId={activeSession?.id}
-              papers={papers}
-            />
-          </div>
-        )}
+        <div className={`overflow-auto h-full p-5 ${activeTab === "keywords" ? "" : "hidden"}`}>
+          <KeywordsPanel
+            sessionId={activeSession?.id}
+            papers={papers}
+          />
+        </div>
       </div>
     </div>
+
   );
 
   // ── Render ─────────────────────────────────────────────────────────────────

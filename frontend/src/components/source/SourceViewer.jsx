@@ -403,48 +403,50 @@ export default function SourceViewer({
                     <PaperMetadataSummary paper={active} />
                   </div>
 
-                  <div className="space-y-3">
-                    <h4 className="text-[10px] font-mono text-tl-t4 uppercase tracking-wider">
-                      Source Text
-                    </h4>
-                    {sectionEntries.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {sectionEntries.map((section) => (
-                          <button
-                            key={section.id}
-                            onClick={() => jumpToSection(section.id)}
-                            className="px-2 py-1 rounded-full border border-tl-b1 bg-tl-s2 text-[10px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-colors"
-                          >
-                            {section.title}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {chunksLoading && (
-                      <p className="text-xs font-mono text-tl-t4">
-                        Loading source text...
-                      </p>
-                    )}
-                    {chunksError && (
-                      <p className="text-xs font-mono text-tl-low">
-                        {chunksError}
-                      </p>
-                    )}
-                    {!chunksLoading && !chunksError && chunks.length === 0 && (
-                      <p className="text-xs font-mono text-tl-t4">
-                        No source text available yet.
-                      </p>
-                    )}
-                    {!chunksLoading && !chunksError && chunks.length > 0 && (
-                      <div className="space-y-4">
-                        {renderChunkText(
-                          chunks,
-                          highlightedHavfItem?.sentence_key,
-                          sectionEntries,
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  {highlightedHavfItem && (
+                    <div className="space-y-3">
+                      <h4 className="text-[10px] font-mono text-tl-t4 uppercase tracking-wider">
+                        Source Text
+                      </h4>
+                      {sectionEntries.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {sectionEntries.map((section) => (
+                            <button
+                              key={section.id}
+                              onClick={() => jumpToSection(section.id)}
+                              className="px-2 py-1 rounded-full border border-tl-b1 bg-tl-s2 text-[10px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-colors"
+                            >
+                              {section.title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {chunksLoading && (
+                        <p className="text-xs font-mono text-tl-t4">
+                          Loading source text...
+                        </p>
+                      )}
+                      {chunksError && (
+                        <p className="text-xs font-mono text-tl-low">
+                          {chunksError}
+                        </p>
+                      )}
+                      {!chunksLoading && !chunksError && chunks.length === 0 && (
+                        <p className="text-xs font-mono text-tl-t4">
+                          No source text available yet.
+                        </p>
+                      )}
+                      {!chunksLoading && !chunksError && chunks.length > 0 && (
+                        <div className="space-y-4">
+                          {renderChunkText(
+                            chunks,
+                            highlightedHavfItem?.sentence_key,
+                            sectionEntries,
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {!highlightedHavfItem && (
                     <div className="flex flex-col items-center justify-center pt-20 text-tl-b2">

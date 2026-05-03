@@ -53,7 +53,7 @@ export default function HighlighterPdfViewer({
             .join(" ")
             .toLowerCase();
 
-          const cleanSearch = highlightText.replace(/\[(?:[a-f0-9]{6,}_)?[PFTEpfte]\d+\]/g, " ");
+          const cleanSearch = highlightText.replace(/\[(?:[a-f0-9]{8}_)?[PFTEpfte]\d+\]/g, " ");
           const normalizedSearch = cleanSearch
             .toLowerCase()
             .replace(/[^\w\s]/g, " ")
@@ -117,7 +117,7 @@ export default function HighlighterPdfViewer({
           .toLowerCase();
 
         const cleanSearch = highlightText.replace(
-          /\[(?:[a-f0-9]{6,}_)?[PFTEpfte]\d+\]/g,
+          /\[(?:[a-f0-9]{8}_)?[PFTEpfte]\d+\]/g,
           " ",
         );
         const normalizedSearch = cleanSearch
@@ -227,7 +227,7 @@ export default function HighlighterPdfViewer({
 
     // Pre-normalize terms
     const cleanSearch = (searchTerm || "").replace(
-      /\[(?:[a-f0-9]{6,}_)?[PFTEpfte]\d+\]/g,
+      /\[(?:[a-f0-9]{8}_)?[PFTEpfte]\d+\]/g,
       " ",
     );
     const normalizedSearch = cleanSearch
@@ -237,7 +237,7 @@ export default function HighlighterPdfViewer({
       .trim();
 
     const cleanFallback = (fallbackTerm || "").replace(
-      /\[(?:[a-f0-9]{6,}_)?[PFTEpfte]\d+\]/g,
+      /\[(?:[a-f0-9]{8}_)?[PFTEpfte]\d+\]/g,
       " ",
     );
     const normalizedFallback = cleanFallback

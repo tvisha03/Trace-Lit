@@ -510,7 +510,6 @@ def _search_caption_on_page(doc, page_idx: int, caption_text: str, caption_keywo
 def _estimate_table_region(page, caption_bbox: tuple) -> tuple:
     x0, y0, x1, y1 = caption_bbox
     page_height = page.rect.height
-    page_width = page.rect.width
 
     images_above = False
     images_below = False
@@ -526,10 +525,10 @@ def _estimate_table_region(page, caption_bbox: tuple) -> tuple:
                         images_above = True
                     if rect.y0 > y1:
                         images_below = True
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                logger.debug(f"Error reading image rects: {e}")
+    except Exception as e:
+        logger.debug(f"Error getting page images: {e}")
 
     if images_below:
         case = "above"
