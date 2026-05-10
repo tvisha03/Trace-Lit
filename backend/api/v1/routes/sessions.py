@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +19,7 @@ from shared.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
+
 
 @router.post("", response_model=SessionResponse, status_code=201)
 async def create_session(
@@ -107,4 +107,5 @@ async def delete_session(
         )
     except Exception as exc:
         logger.warning(f"WS session_deleted event failed for {session_id}: {exc}")
+
 

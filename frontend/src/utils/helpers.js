@@ -116,7 +116,8 @@ export function isAbstention(content, havfResults = []) {
   const phrases = [
     'i cannot', "i can't", 'cannot answer', 'not mentioned',
     'no information', 'not found in', 'not available in', 'unable to find',
-    'not discussed in', 'outside the scope',
+    'not discussed in', 'outside the scope', 'not available', 'could not be automatically attributed',
+    'information is not available', 'i am sorry but', 'do not have information',
   ];
   if (phrases.some((p) => lc.includes(p))) return true;
   // All HAVF results are LOW with very low scores — treat as abstention.

@@ -9,6 +9,12 @@ from shared.enums import ConfidenceLevel, VerificationMethod
 from shared.utils.text_utils import split_into_sentences
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
+import numpy as np
+from sqlalchemy import select
+import pymupdf
+from infrastructure.db.database import async_session_factory
+from infrastructure.db.models.paper import Paper
+from domain.retrieval.indexer import encode_texts
 
 logger = get_logger(__name__)
 
@@ -133,6 +139,8 @@ def _postprocess_display_sources(
             page_number=r.page_number,
             bbox=r.bbox,
             full_context=r.full_context,
+            cross_encoder_score=r.cross_encoder_score,
+            semantic_score=r.semantic_score,
         )
         for r in results
     ]
@@ -195,9 +203,6 @@ def _apply_citation_correction(
     if ce_threshold is None:
         ce_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
     
-    from domain.retrieval.indexer import encode_texts
-    import numpy as np
-
     corrected = []
     for result in results:
         cited_pid = _extract_cited_para_id(result.claim)
@@ -239,6 +244,8 @@ def _apply_citation_correction(
                 page_number=src.get("page_number"),
                 bbox=src.get("bbox"),
                 full_context=src.get("full_context"),
+                cross_encoder_score=result.cross_encoder_score,
+                semantic_score=new_score,
             ))
         else:
             corrected.append(result)
@@ -260,6 +267,11 @@ class VerificationResult:
     page_number: int | None = None
     full_context: str | None = None
     bbox: dict | None = None
+    cross_encoder_score: float | None = None
+    semantic_score: float | None = None
+    transformation_type: str | None = None
+    transformation_confidence: float | None = None
+    transformation_reason: str | None = None
 
 
 _PARAGRAPH_TYPE_MAP: dict[str, str] = {"F": "figure", "T": "table", "E": "formula"}
@@ -395,7 +407,7 @@ async def verify_response(
             medium_threshold=m_thresh,
         )
         results = await _process_verification_results(
-            level1_results, valid_claims, source_sentences, ce_thresh
+            level1_results, valid_claims, source_sentences, ce_thresh, h_thresh
         )
         all_results = short_results + results
         para_index = _build_para_source_index(source_sentences)
@@ -627,12 +639,6 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
     if not r.paper_id:
         return r
     
-    from infrastructure.db.database import async_session_factory
-    from sqlalchemy import select
-    from infrastructure.db.models.paper import Paper
-    import pymupdf
-    import re
-
     paper_path = None
     async with async_session_factory() as db:
         try:
@@ -666,8 +672,8 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
         return r
 
     try:
-        orig_page = r.page_number if r.page_number is not None else 1
-        page_idx = orig_page - 1
+        orig_page = r.page_number if r.page_number is not None else 0
+        page_idx = orig_page
 
         caption_bbox = None
         found_page_idx = page_idx
@@ -704,11 +710,11 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
             is_valid = await _verify_table_region(chunk_text, text_near_candidate)
             
             if is_valid:
-                r.page_number = found_page_idx + 1
+                r.page_number = found_page_idx
                 r.bbox = {
                     "source_type": "table",
-                    "table_id": f"table_{found_page_idx + 1}_{table_num or 1}",
-                    "page": found_page_idx + 1,
+                    "table_id": f"table_{found_page_idx}_{table_num or 0}",
+                    "page": found_page_idx,
                     "caption_bbox": caption_bbox,
                     "table_bbox": actual_table_bbox or estimated_table_bbox,
                     "caption_text": caption_text or f"Table {table_num or 1}",
@@ -729,8 +735,8 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
 
             r.bbox = {
                 "source_type": "table",
-                "table_id": f"table_{found_page_idx + 1}_1",
-                "page": found_page_idx + 1,
+                "table_id": f"table_{found_page_idx}_1",
+                "page": found_page_idx,
                 "table_bbox": first_image_rect or (50.0, page_height * 0.2, page_width - 50.0, page_height * 0.8),
                 "caption_text": f"Table {table_num or 1}",
             }
@@ -810,6 +816,7 @@ async def _process_verification_results(
     claims: list[str],
     source_sentences: list[dict],
     cross_encoder_threshold: float,
+    high_threshold: float,
 ) -> list[VerificationResult]:
     uncertain = [r for r in level1_results if r.get("needs_reranking")]
     resolved = [r for r in level1_results if not r.get("needs_reranking")]
@@ -820,6 +827,7 @@ async def _process_verification_results(
             uncertain,
             source_sentences=source_sentences,
             cross_encoder_threshold=cross_encoder_threshold,
+            high_threshold=high_threshold,
         )
         resolved.extend(reranked)
 
@@ -852,6 +860,8 @@ def _build_final_results(
                 page_number=r.get("page_number"),
                 bbox=r.get("bbox"),
                 full_context=r.get("full_context"),
+                cross_encoder_score=r.get("cross_encoder_score"),
+                semantic_score=r.get("semantic_score", r.get("best_score")),
             )
         )
     return final

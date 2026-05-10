@@ -1,7 +1,7 @@
 /**
  * TraceLit — Topbar
  *
- * Full-width 50 px header: logo • nav tabs • status dot • session picker •
+ * Full-width 60 px header: logo • nav tabs • status dot • session picker •
  * export button • avatar.
  *
  * Props:
@@ -19,7 +19,6 @@ import { useState, useRef, useEffect } from 'react';
 const NAV = [
   { id: 'chat',    label: 'Chat' },
   { id: 'compare', label: 'Compare' },
-  { id: 'gaps',    label: 'Gaps' },
   { id: 'review',  label: 'Review' },
   { id: 'verify',  label: 'Verify' },
 ];
@@ -50,22 +49,13 @@ export default function Header({
 
   return (
     <header
-      className="flex items-center h-[50px] px-4 bg-tl-s1 border-b border-tl-b1 flex-shrink-0 gap-4"
+      className="flex items-center h-[60px] px-4 bg-tl-s1 border-b border-tl-b1 flex-shrink-0 gap-4"
       style={{ minWidth: 0 }}
     >
       {/* ── Logo ─────────────────────────────────────────────────────── */}
       <div className="flex items-baseline gap-1.5 flex-shrink-0">
-        <span className="font-serif text-[17px] tracking-tight text-tl-t1">
+        <span className="font-serif text-[18px] tracking-tight text-tl-t1">
           TraceLit
-        </span>
-        <span
-          className="font-mono text-[9px] tracking-[0.12em] uppercase text-tl-gold px-[5px] py-[1px] rounded-sm"
-          style={{
-            border: '1px solid rgba(201,169,110,0.35)',
-            background: 'rgba(201,169,110,0.06)',
-          }}
-        >
-          BETA
         </span>
       </div>
 

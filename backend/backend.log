@@ -1,0 +1,221 @@
+INFO:     Started server process [27447]
+INFO:     Waiting for application startup.
+2026-05-07 17:34:26 | INFO     | app.lifespan | TraceLit backend starting …
+2026-05-07 17:34:26 | INFO     | infrastructure.vector_store.faiss_store | FAISS index loaded — 942 vectors
+2026-05-07 17:34:26 | WARNING  | app.lifespan | FAISS reconciliation: removing orphaned vectors for paper 93d6db63-3ad5-45c5-a04a-8f80512b941f
+2026-05-07 17:34:26 | INFO     | infrastructure.vector_store.faiss_store | FAISS backup created before rebuild
+2026-05-07 17:34:26 | INFO     | infrastructure.vector_store.faiss_store | FAISS index saved — 0 vectors
+2026-05-07 17:34:26 | INFO     | app.lifespan | FAISS reconciliation complete — removed 1 orphaned paper(s), 0 vectors remain.
+2026-05-07 17:34:26 | INFO     | infrastructure.llm.fallback_chain | Fallback chain: gemini → groq → ollama
+2026-05-07 17:34:26 | INFO     | infrastructure.llm.ollama_provider | Ollama models — text: qwen2.5:3b, vision: moondream
+2026-05-07 17:34:26 | INFO     | infrastructure.llm.rate_monitor | Rate-monitor usage state restored from previous run
+2026-05-07 17:34:27 | INFO     | sentence_transformers.SentenceTransformer | Load pretrained SentenceTransformer: BAAI/bge-small-en-v1.5
+2026-05-07 17:34:27 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:27 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/modules.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:27 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:27 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/README.md "HTTP/1.1 200 OK"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/modules.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/sentence_bert_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:28 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/sentence_bert_config.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:29 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/adapter_config.json "HTTP/1.1 404 Not Found"
+2026-05-07 17:34:29 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:29 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/config.json "HTTP/1.1 200 OK"
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 7041.76it/s]
+[1mBertModel LOAD REPORT[0m from: BAAI/bge-small-en-v1.5
+Key                     | Status     |  | 
+------------------------+------------+--+-
+embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+2026-05-07 17:34:29 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:30 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/config.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:30 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:30 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:30 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-small-en-v1.5/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-05-07 17:34:30 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-small-en-v1.5/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-05-07 17:34:31 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/1_Pooling/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:34:31 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/BAAI/bge-small-en-v1.5/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a/1_Pooling%2Fconfig.json "HTTP/1.1 200 OK"
+2026-05-07 17:34:31 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/BAAI/bge-small-en-v1.5 "HTTP/1.1 200 OK"
+2026-05-07 17:34:32 | INFO     | domain.retrieval.indexer | 🚀 SUCCESS: Using MPS for embeddings (BAAI/bge-small-en-v1.5)
+2026-05-07 17:34:32 | INFO     | app.lifespan | Embedding encoder pre-warmed at startup
+2026-05-07 17:34:32 | INFO     | workers.paper_queue | SmartPaperQueue started
+2026-05-07 17:34:32 | INFO     | app.lifespan | TraceLit backend ready ✓
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:52845 - "HEAD /api/v1/health HTTP/1.1" 405 Method Not Allowed
+2026-05-07 17:35:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:53324 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53567 - "GET /api/v1/sessions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53568 - "GET /api/v1/sessions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53570 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53571 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53575 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53574 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53576 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53578 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53581 - "WebSocket /ws/73ead806-6c1b-4d72-89de-19692420bedb" [accepted]
+2026-05-07 17:35:47 | INFO     | api.v1.routes.websocket | WS connected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=8ddf5791-8e90-4136-b93e-18dfe3ad5f29
+INFO:     connection open
+INFO:     127.0.0.1:53721 - "POST /api/v1/sessions HTTP/1.1" 201 Created
+INFO:     127.0.0.1:53723 - "GET /api/v1/sessions HTTP/1.1" 200 OK
+2026-05-07 17:35:59 | INFO     | api.v1.routes.websocket | WS disconnected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=8ddf5791-8e90-4136-b93e-18dfe3ad5f29
+INFO:     connection closed
+INFO:     127.0.0.1:53729 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53730 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/chat/messages?limit=100 HTTP/1.1" 200 OK
+2026-05-07 17:35:59 | WARNING  | app.exceptions | [403] Access to Paper '1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52' is forbidden
+INFO:     127.0.0.1:53731 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:53732 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53734 - "WebSocket /ws/0167348e-b0dc-4dc3-a5e0-a34efb89a903" [accepted]
+2026-05-07 17:35:59 | INFO     | api.v1.routes.websocket | WS connected: session=0167348e-b0dc-4dc3-a5e0-a34efb89a903 conn=cade6d3f-0cc2-4adf-8a57-b935dd4bdc2b
+INFO:     connection open
+INFO:     127.0.0.1:54019 - "PATCH /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903 HTTP/1.1" 200 OK
+2026-05-07 17:36:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:54082 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:37:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:54796 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:38:11 | INFO     | api.v1.routes.websocket | WS disconnected: session=0167348e-b0dc-4dc3-a5e0-a34efb89a903 conn=cade6d3f-0cc2-4adf-8a57-b935dd4bdc2b
+INFO:     connection closed
+INFO:     127.0.0.1:55324 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55325 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55327 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55330 - "WebSocket /ws/73ead806-6c1b-4d72-89de-19692420bedb" [accepted]
+2026-05-07 17:38:12 | INFO     | api.v1.routes.websocket | WS connected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=7eee488e-dea7-40f0-83b3-5dfacac8de9f
+INFO:     connection open
+INFO:     127.0.0.1:55326 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 200 OK
+2026-05-07 17:38:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:55532 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:39:26 | INFO     | api.v1.routes.websocket | WS disconnected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=7eee488e-dea7-40f0-83b3-5dfacac8de9f
+INFO:     connection closed
+INFO:     127.0.0.1:56243 - "GET /api/v1/sessions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56245 - "GET /api/v1/sessions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56246 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56250 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56249 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56248 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56252 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56255 - "WebSocket /ws/73ead806-6c1b-4d72-89de-19692420bedb" [accepted]
+2026-05-07 17:39:27 | INFO     | api.v1.routes.websocket | WS connected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=a7bd3f12-c604-4989-acfe-58fcc1b5b521
+INFO:     connection open
+INFO:     127.0.0.1:56256 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 200 OK
+2026-05-07 17:39:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:56268 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:40:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:56982 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:41:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:57694 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:42:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:58387 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:43:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:59072 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:59487 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/ws-url HTTP/1.1" 200 OK
+2026-05-07 17:44:03 | INFO     | api.v1.routes.websocket | WS disconnected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=a7bd3f12-c604-4989-acfe-58fcc1b5b521
+INFO:     connection closed
+INFO:     127.0.0.1:59488 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/chat/messages?limit=100 HTTP/1.1" 200 OK
+2026-05-07 17:44:04 | WARNING  | app.exceptions | [403] Access to Paper '1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52' is forbidden
+INFO:     127.0.0.1:59490 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:59494 - "WebSocket /ws/0167348e-b0dc-4dc3-a5e0-a34efb89a903" [accepted]
+2026-05-07 17:44:04 | INFO     | api.v1.routes.websocket | WS connected: session=0167348e-b0dc-4dc3-a5e0-a34efb89a903 conn=ceefbfb1-61a6-4801-b77f-37a0f67c6a9f
+INFO:     127.0.0.1:59491 - "GET /api/v1/sessions/0167348e-b0dc-4dc3-a5e0-a34efb89a903/papers HTTP/1.1" 200 OK
+INFO:     connection open
+2026-05-07 17:44:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:59776 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:45:22 | INFO     | api.v1.routes.websocket | WS disconnected: session=0167348e-b0dc-4dc3-a5e0-a34efb89a903 conn=ceefbfb1-61a6-4801-b77f-37a0f67c6a9f
+INFO:     connection closed
+INFO:     127.0.0.1:60394 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60400 - "WebSocket /ws/73ead806-6c1b-4d72-89de-19692420bedb" [accepted]
+2026-05-07 17:45:22 | INFO     | api.v1.routes.websocket | WS connected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=37a8d1e8-25e9-4002-ba3a-21d78b620802
+INFO:     connection open
+INFO:     127.0.0.1:60395 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60397 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60396 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 200 OK
+2026-05-07 17:45:29 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:60467 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:45:41 | INFO     | api.v1.routes.websocket | WS disconnected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=37a8d1e8-25e9-4002-ba3a-21d78b620802
+INFO:     connection closed
+INFO:     127.0.0.1:60619 - "GET /api/v1/sessions/ae96e8bb-3e07-4d76-8a46-500fe93d7c9d/ws-url HTTP/1.1" 200 OK
+2026-05-07 17:45:41 | WARNING  | app.exceptions | [403] Access to Paper '1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52' is forbidden
+INFO:     127.0.0.1:60621 - "GET /api/v1/sessions/ae96e8bb-3e07-4d76-8a46-500fe93d7c9d/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 403 Forbidden
+INFO:     127.0.0.1:60624 - "GET /api/v1/sessions/ae96e8bb-3e07-4d76-8a46-500fe93d7c9d/papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60620 - "GET /api/v1/sessions/ae96e8bb-3e07-4d76-8a46-500fe93d7c9d/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60625 - "WebSocket /ws/ae96e8bb-3e07-4d76-8a46-500fe93d7c9d" [accepted]
+2026-05-07 17:45:41 | INFO     | api.v1.routes.websocket | WS connected: session=ae96e8bb-3e07-4d76-8a46-500fe93d7c9d conn=b0fae759-d5ea-4990-8650-98715875d57d
+INFO:     connection open
+2026-05-07 17:46:15 | INFO     | api.v1.routes.websocket | WS disconnected: session=ae96e8bb-3e07-4d76-8a46-500fe93d7c9d conn=b0fae759-d5ea-4990-8650-98715875d57d
+INFO:     connection closed
+INFO:     127.0.0.1:61026 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/ws-url HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61031 - "WebSocket /ws/73ead806-6c1b-4d72-89de-19692420bedb" [accepted]
+2026-05-07 17:46:15 | INFO     | api.v1.routes.websocket | WS connected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=c794fb82-91cd-49f9-8963-61b82a44e30d
+INFO:     connection open
+INFO:     127.0.0.1:61027 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/chat/messages?limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61030 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61028 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/chunks HTTP/1.1" 200 OK
+2026-05-07 17:46:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:61167 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:47:04 | INFO     | sentence_transformers.SentenceTransformer | Use pytorch device_name: mps
+2026-05-07 17:47:04 | INFO     | sentence_transformers.SentenceTransformer | Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-05-07 17:47:05 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:05 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:06 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:06 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:06 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:06 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config_sentence_transformers.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:06 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:06 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/README.md "HTTP/1.1 200 OK"
+2026-05-07 17:47:07 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:07 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:07 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/sentence_bert_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:07 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/sentence_bert_config.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:07 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/adapter_config.json "HTTP/1.1 404 Not Found"
+2026-05-07 17:47:08 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:08 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json "HTTP/1.1 200 OK"
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:  68%|██████▊   | 70/103 [00:00<00:00, 699.70it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 974.38it/s]
+[1mBertModel LOAD REPORT[0m from: sentence-transformers/all-MiniLM-L6-v2
+Key                     | Status     |  | 
+------------------------+------------+--+-
+embeddings.position_ids | UNEXPECTED |  | 
+
+[3mNotes:
+- UNEXPECTED[3m	:can be ignored when loading from different task/architecture; not ok if you expect identical arch.[0m
+2026-05-07 17:47:09 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:09 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/config.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:09 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:09 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:10 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-05-07 17:47:10 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-05-07 17:47:11 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/1_Pooling/config.json "HTTP/1.1 307 Temporary Redirect"
+2026-05-07 17:47:11 | INFO     | httpx | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/1_Pooling%2Fconfig.json "HTTP/1.1 200 OK"
+2026-05-07 17:47:11 | INFO     | httpx | HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2 "HTTP/1.1 200 OK"
+2026-05-07 17:47:14 | INFO     | domain.analysis.keyword_extractor | KeyBERT model loaded into memory (all-MiniLM-L6-v2)
+2026-05-07 17:47:51 | INFO     | domain.analysis.keyword_extractor | Extracted 10 filtered keywords from 30 candidates
+INFO:     127.0.0.1:61530 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/analysis/keywords/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52 HTTP/1.1" 200 OK
+2026-05-07 17:47:52 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:61873 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:48:31 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:62585 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:49:32 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:63248 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:50:29 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:63901 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:51:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:64608 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:52:31 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:65313 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:53:29 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:49644 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49734 - "GET /api/v1/sessions/73ead806-6c1b-4d72-89de-19692420bedb/papers/1b9eb61b-f7f4-4b2d-a350-0286cb3ffa52/pdf HTTP/1.1" 200 OK
+2026-05-07 17:54:30 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:50359 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:55:30 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:51052 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:56:28 | WARNING  | app.exceptions | [404] Session '25ef8fd4-2d1b-49be-836b-b797464b5de3' not found
+INFO:     127.0.0.1:51810 - "GET /api/v1/sessions/25ef8fd4-2d1b-49be-836b-b797464b5de3/papers HTTP/1.1" 404 Not Found
+2026-05-07 17:56:31 | INFO     | api.v1.routes.websocket | WS disconnected: session=73ead806-6c1b-4d72-89de-19692420bedb conn=c794fb82-91cd-49f9-8963-61b82a44e30d
+INFO:     connection closed
+/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '

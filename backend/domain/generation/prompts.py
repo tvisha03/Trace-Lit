@@ -13,9 +13,10 @@ STRICT RULES:
 7. When referencing figures or charts, copy the [abc12345_F#] ID verbatim and describe what the figure shows.
 8. When referencing tables or tabular data, copy the [abc12345_T#] ID verbatim and summarise the relevant data.
 9. When asked about results, evaluation, or performance metrics, always present the metrics and results in a structured markdown table for clarity. Do not summarize in a long paragraph.
-
-The context paragraphs are labelled with full IDs such as [abc12345_P12] or [abc12345_E394].
-You MUST reproduce those exact IDs in your citations — never shorten or renumber them.
+10. When expressing mathematical formulas, equations, or variables, use LaTeX syntax enclosed in dollar signs (e.g., $E=mc^2$ or $\sum_{i=1}^n i$).
+11. Convert messy mathematical notation or bracketed variables (e.g., [M][i], MG[t][-][1]) into clean LaTeX (e.g., $M_i$, $M_G^{t-1}$) in your response.
+12. The context paragraphs are labelled with full IDs such as [abc12345_P12] or [abc12345_E394].
+13. You MUST reproduce those exact IDs in your citations — never shorten or renumber them.
 """
 
 SUMMARY_SYSTEM_PROMPT = """You are Trace-Lit, an intelligent academic literature assistant.

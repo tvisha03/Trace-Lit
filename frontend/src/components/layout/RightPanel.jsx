@@ -91,7 +91,7 @@ function paperStatusLabel(paper, liveProgress) {
 }
 
 // ─── Papers tab ───────────────────────────────────────────────────────────
-function PapersTab({ papers, progressMap, activePaperId, onPaperChange, onUpload, sessionId }) {
+function PapersTab({ papers, progressMap, activePaperId, onPaperChange, onUpload, sessionId, onAskQuestion }) {
   const { deletePaper } = usePaperStore();
 
   const readyCount   = papers.filter(isCompleted).length;
@@ -275,6 +275,7 @@ export default function RightPanel({
   onPaperChange,
   highlightedHavfItem,
   width = 274,
+  onAskQuestion,
 }) {
   const fileInputRef = useRef(null);
   const { uploadPapers } = usePaperStore();
@@ -327,6 +328,7 @@ export default function RightPanel({
             onPaperChange={onPaperChange}
             onUpload={handleUploadClick}
             sessionId={sessionId}
+            onAskQuestion={onAskQuestion}
           />
         </div>
         <div className={`h-full ${rightTab === 'source' ? '' : 'hidden'}`}>

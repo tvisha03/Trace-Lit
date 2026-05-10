@@ -150,7 +150,7 @@ def _process_raw_table(
     table_counter["count"] += 1
 
     # Get raw bbox as tuple (if available)
-    bbox_tuple = _extract_box(raw_table)
+    bbox_tuple = _extract_bbox(raw_table)
 
     # Always standardize to dict format for consistent chunk access
     bbox_dict = {
@@ -295,8 +295,8 @@ def _process_pdf_table(
         return None
     rows, cols = dims
     table_counter["count"] += 1
-    # Convert 0-indexed page_idx to 1-based page_number
-    page_number = page_idx + 1
+    # Use 0-indexed page_idx directly
+    page_number = page_idx
 
     table_bbox = tuple(tab.bbox[:4]) if hasattr(tab, "bbox") and tab.bbox else None
     row_bboxes = []
@@ -351,7 +351,7 @@ def _process_pdf_table(
         "caption_bbox": caption_bbox,
         "caption_text": f"Table {table_counter['count']}",
         "table_number": table_counter["count"],
-        "row_indices": list(range(1, max(1, rows))),
+        "row_indices": list(range(max(1, rows))),
     }
 
     return ExtractedTable(

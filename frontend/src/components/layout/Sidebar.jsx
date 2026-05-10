@@ -20,7 +20,6 @@ import { analysisApi, sessionsApi } from "../../api/client";
 const ANALYSIS_TOOLS = [
   { id: "compare", icon: "⊞", label: "Compare", key: "C" },
   { id: "keywords", icon: "🔑", label: "Keywords", key: "K" },
-  { id: "gaps", icon: "◈", label: "Gaps", key: "G" },
   { id: "review", icon: "≡", label: "Review", key: "R" },
   { id: "verify", icon: "✓", label: "Verify", key: "V" },
 ];
@@ -36,6 +35,7 @@ export default function Sidebar({
   width = 224,
   sessionError: parentSessionError,
   onRetrySession,
+  onAskQuestion,
 }) {
   const { papers, fetchPapers, applyProgressEvent, progressMap } =
     usePaperStore();

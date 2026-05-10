@@ -6,8 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.v1.schemas import (
     KeywordResponse,
     KeywordItem,
-    GapAnalysisResponse,
-    ThemeItem,
     ReviewResponse,
     SummaryResponse,
 )
@@ -17,7 +15,6 @@ from infrastructure.db.crud.session_crud import get_session
 from infrastructure.llm.fallback_chain import FallbackChain
 from services.analysis_service import (
     get_paper_keywords,
-    get_session_gap_analysis,
     generate_literature_review,
     generate_paper_summary,
     stream_literature_review,
@@ -57,38 +54,7 @@ async def paper_keywords(
         keywords=[KeywordItem(**k) for k in keywords],
     )
 
-@router.get("/gaps", response_model=GapAnalysisResponse)
-async def gap_analysis(
-    session_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    _analysis_limiter.enforce(request)
-    session = await get_session(db, session_id)
-    if not session:
-        raise NotFoundError("Session", session_id)
 
-    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
-    if not papers:
-        raise InsufficientDataError(
-            f"No completed papers in session '{session_id}'. "
-            "Please wait for paper processing to finish before running gap analysis."
-        )
-
-    if len(papers) < 2:
-        raise InsufficientDataError(
-            f"Gap analysis requires at least 2 completed papers, but session "
-            f"'{session_id}' has only {len(papers)}. Upload more papers to "
-            f"identify research gaps across multiple studies."
-        )
-
-    result = await get_session_gap_analysis(session_id, db, _get_llm(request))
-    return GapAnalysisResponse(
-        themes=[ThemeItem(**t) for t in result["themes"]],
-        underexplored=[ThemeItem(**t) for t in result["underexplored"]],
-        narrative=result.get("narrative"),
-        provider=result.get("provider"),
-    )
 
 @router.get("/review", response_model=ReviewResponse)
 async def literature_review(

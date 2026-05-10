@@ -18,6 +18,8 @@ from domain.retrieval.query_router import classify_query, QueryClassification
 from infrastructure.vector_store.faiss_store import FAISSStore
 from shared.utils.streaming_utils import sse_event
 from shared.logger import get_logger
+from sqlalchemy import select
+from infrastructure.db.models.evaluation import EvaluationCache
 
 logger = get_logger(__name__)
 
@@ -97,6 +99,13 @@ async def _emit_havf_results(full_text: str, chunks: list, paper_ids: list[str],
         medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
         cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
     )
+
+    from services.chat_service import _classifier
+    all_chunks = [
+        {"text": c.text, "paper_id": str(c.paper_id)} 
+        for c in chunks
+    ]
+
     return [
         {
             "claim": r.claim,
@@ -114,6 +123,17 @@ async def _emit_havf_results(full_text: str, chunks: list, paper_ids: list[str],
             "page_number": r.page_number,
             "bbox": r.bbox,
             "full_context": r.full_context,
+            "cross_encoder_score": r.cross_encoder_score,
+            "semantic_score": r.semantic_score,
+            "transformation_type": (t := _classifier.classify(
+                claim=r.claim,
+                source_sentence=r.source_sentence,
+                semantic_similarity=r.semantic_score or r.score,
+                cross_encoder_score=r.cross_encoder_score,
+                all_retrieved_sources=all_chunks
+            )).type,
+            "transformation_confidence": t.confidence,
+            "transformation_reason": t.reason,
         }
         for r in havf_results
     ]
@@ -332,9 +352,6 @@ async def stream_chat_response(
 
         if is_eval_query:
             try:
-                from sqlalchemy import select
-                from infrastructure.db.models.evaluation import EvaluationCache
-
                 pids_str = ",".join(sorted(paper_ids))
                 stmt = select(EvaluationCache).where(
                     EvaluationCache.query == query,

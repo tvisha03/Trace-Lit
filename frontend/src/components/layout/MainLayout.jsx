@@ -4,7 +4,7 @@ import React from 'react';
  * TraceLit — App Shell
  *
  * Structure:
- *   ┌──────────── Topbar (50px) ─────────────┐
+ *   ┌──────────── Topbar (60px) ─────────────┐
  *   ├──────────┬──────────────┬──────────────┤
  *   │ Left     │ Main panel   │ Right panel  │
  *   │ (224px)  │ (flex-1)     │ (274px)      │

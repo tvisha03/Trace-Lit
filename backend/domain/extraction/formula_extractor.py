@@ -353,10 +353,11 @@ def extract_formulas_from_pages(
             seen.add(key)
             if f.bbox and not isinstance(f.bbox, dict):
                 eq_num = getattr(f, "equation_number", "1") or "1"
+                page_val = f.page_number if f.page_number is not None else 0
                 f.bbox = {
                     "source_type": "equation",
-                    "equation_id": f"eq_{f.page_number or 1}_{eq_num}",
-                    "page": f.page_number or 1,
+                    "equation_id": f"eq_{page_val}_{eq_num}",
+                    "page": page_val,
                     "equation_number": eq_num,
                     "equation_bbox": f.bbox,
                     "number_bbox": (f.bbox[2] - 30, f.bbox[1], f.bbox[2], f.bbox[3]),

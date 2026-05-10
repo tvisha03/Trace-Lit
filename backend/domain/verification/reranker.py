@@ -112,23 +112,28 @@ def _apply_rerank_results(
     best_score: float,
     best_source: dict,
     cross_encoder_threshold: float,
+    high_threshold: float,
 ) -> None:
     """Update result with reranking outcome."""
     if best_source:
         # Normalize raw cross-encoder logit to 0-1 range for comparison
         normalized_score = _normalize_cross_encoder_score(best_score)
-        # Compare normalized score against threshold for consistency with Level 1
-        result["confidence"] = (
-            ConfidenceLevel.MEDIUM
-            if normalized_score >= cross_encoder_threshold
-            else ConfidenceLevel.LOW
-        )
+        
+        # Determine confidence level based on normalized score
+        if normalized_score >= high_threshold:
+            result["confidence"] = ConfidenceLevel.HIGH
+        elif normalized_score >= cross_encoder_threshold:
+            result["confidence"] = ConfidenceLevel.MEDIUM
+        else:
+            result["confidence"] = ConfidenceLevel.LOW
+            
         result["best_score"] = normalized_score
         result["source_sentence"] = best_source["text"]
         result["paragraph_id"] = best_source.get("paragraph_id")
         result["paper_id"] = best_source.get("paper_id")
         result["sentence_key"] = best_source.get("sentence_key")
         result["page_number"] = best_source.get("page_number")
+        result["cross_encoder_score"] = normalized_score
     else:
         result["confidence"] = ConfidenceLevel.LOW
     result["needs_reranking"] = False
@@ -140,6 +145,7 @@ def rerank_claims(
     source_sentences: list[dict] | None = None,
     *,
     cross_encoder_threshold: float | None = None,
+    high_threshold: float | None = None,
 ) -> list[dict]:
     if not uncertain_results:
         return []
@@ -148,8 +154,11 @@ def rerank_claims(
     if cross_encoder is None:
         return uncertain_results
 
+    settings = get_settings()
     if cross_encoder_threshold is None:
-        cross_encoder_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
+        cross_encoder_threshold = settings.HAVF_CROSS_ENCODER_THRESHOLD
+    if high_threshold is None:
+        high_threshold = settings.HAVF_HIGH_THRESHOLD
 
     all_candidates, claim_map = _build_candidate_pairs(
         uncertain_results, top_k_sources, source_sentences
@@ -161,20 +170,21 @@ def rerank_claims(
     results_to_update = _find_best_matches(all_scores, claim_map)
 
     for result in uncertain_results:
-        # Use `or` to provide default when key not found (was: tuple bug with comma)
         update_data = results_to_update.get(id(result)) or {
             "score": -1.0,
             "source": None,
         }
         best_score = float(update_data["score"])
         best_source = update_data["source"]
-        _apply_rerank_results(result, best_score, best_source, cross_encoder_threshold)
+        _apply_rerank_results(
+            result, best_score, best_source, cross_encoder_threshold, high_threshold
+        )
 
-    medium_count = sum(
-        1 for r in uncertain_results if r["confidence"] == ConfidenceLevel.MEDIUM
+    promoted_count = sum(
+        1 for r in uncertain_results if r["confidence"] in (ConfidenceLevel.MEDIUM, ConfidenceLevel.HIGH)
     )
     logger.info(
-        f"Level 2 reranking: promoted {medium_count}/{len(uncertain_results)} to MEDIUM"
+        f"Level 2 reranking: resolved {promoted_count}/{len(uncertain_results)} claims"
     )
 
     return uncertain_results

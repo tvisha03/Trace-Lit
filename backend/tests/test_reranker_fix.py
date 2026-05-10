@@ -133,20 +133,29 @@ class TestApplyRerankResults:
     """Tests for _apply_rerank_results function."""
 
     def test_applies_correct_confidence_high(self):
-        """Should set MEDIUM when score >= threshold."""
+        """Should set HIGH when score >= high_threshold."""
         result = {"confidence": ConfidenceLevel.MEDIUM, "needs_reranking": True}
 
-        _apply_rerank_results(result, 5.0, {"text": "source"}, 0.75)
+        _apply_rerank_results(result, 5.0, {"text": "source"}, 0.75, 0.85)
 
         assert result["needs_reranking"] is False
-        # sigmoid(5) ≈ 0.993 > 0.75
+        assert result["confidence"] == ConfidenceLevel.HIGH
+
+    def test_applies_correct_confidence_medium(self):
+        """Should set MEDIUM when score >= threshold but < high_threshold."""
+        result = {"confidence": ConfidenceLevel.MEDIUM, "needs_reranking": True}
+
+        # raw_score 1.5 -> sigmoid(1.5) ≈ 0.81. 0.81 > 0.75 but < 0.85
+        _apply_rerank_results(result, 1.5, {"text": "source"}, 0.75, 0.85)
+
+        assert result["needs_reranking"] is False
         assert result["confidence"] == ConfidenceLevel.MEDIUM
 
     def test_applies_correct_confidence_low(self):
         """Should set LOW when score < threshold."""
         result = {"confidence": ConfidenceLevel.MEDIUM, "needs_reranking": True}
 
-        _apply_rerank_results(result, -2.0, {"text": "source"}, 0.75)
+        _apply_rerank_results(result, -2.0, {"text": "source"}, 0.75, 0.85)
 
         assert result["needs_reranking"] is False
         # sigmoid(-2) ≈ 0.119 < 0.75
@@ -156,7 +165,7 @@ class TestApplyRerankResults:
         """Should handle None source gracefully."""
         result = {"confidence": ConfidenceLevel.MEDIUM, "needs_reranking": True}
 
-        _apply_rerank_results(result, 0.0, None, 0.75)
+        _apply_rerank_results(result, 0.0, None, 0.75, 0.85)
 
         # Should still set needs_reranking to False
         assert result["needs_reranking"] is False
@@ -171,20 +180,21 @@ class TestCrossEncoderThreshold:
     def test_uses_settings_threshold(self, mock_get_encoder):
         """Should use settings.HAVF_CROSS_ENCODER_THRESHOLD by default."""
         mock_cross = MagicMock()
-        mock_cross.predict.return_value = [2.0]  # sigmoid(2) ≈ 0.88
+        mock_cross.predict.return_value = [1.5]  # sigmoid(1.5) ≈ 0.81
         mock_get_encoder.return_value = mock_cross
 
         uncertain_results = [{"claim": "test", "confidence": ConfidenceLevel.MEDIUM}]
 
         with patch("domain.verification.reranker.get_settings") as mock_settings:
             mock_settings.return_value.HAVF_CROSS_ENCODER_THRESHOLD = 0.75
+            mock_settings.return_value.HAVF_HIGH_THRESHOLD = 0.85
 
             result = rerank_claims(
                 uncertain_results,
                 source_sentences=[{"text": "source", "paragraph_id": "p1"}],
             )
 
-        # sigmoid(2) ≈ 0.88 > 0.75, so should be MEDIUM
+        # sigmoid(1.5) ≈ 0.81 > 0.75 and < 0.85, so should be MEDIUM
         assert result[0]["confidence"] == ConfidenceLevel.MEDIUM
 
     @patch("domain.verification.reranker._get_cross_encoder")
@@ -196,12 +206,14 @@ class TestCrossEncoderThreshold:
 
         uncertain_results = [{"claim": "test", "confidence": ConfidenceLevel.MEDIUM}]
 
-        # Use higher threshold - 0.62 < 0.80 should become LOW
-        result = rerank_claims(
-            uncertain_results,
-            source_sentences=[{"text": "source", "paragraph_id": "p1"}],
-            cross_encoder_threshold=0.80,
-        )
+        with patch("domain.verification.reranker.get_settings") as mock_settings:
+            mock_settings.return_value.HAVF_HIGH_THRESHOLD = 0.85
+            # Use higher threshold - 0.62 < 0.80 should become LOW
+            result = rerank_claims(
+                uncertain_results,
+                source_sentences=[{"text": "source", "paragraph_id": "p1"}],
+                cross_encoder_threshold=0.80,
+            )
 
         assert result[0]["confidence"] == ConfidenceLevel.LOW
 

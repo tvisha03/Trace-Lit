@@ -82,6 +82,7 @@ def _build_result(
         "page_number": best_source.get("page_number"),
         "full_context": best_source.get("full_context"),
         "needs_reranking": needs_reranking,
+        "semantic_score": best_score,
     }
 
 

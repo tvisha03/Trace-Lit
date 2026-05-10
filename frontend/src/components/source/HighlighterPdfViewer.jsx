@@ -23,6 +23,15 @@ export default function HighlighterPdfViewer({
   const [pageNumber, setPageNumber] = useState(
     targetPage !== undefined ? targetPage + 1 : 1,
   );
+  const [matchedPage, setMatchedPage] = useState(null);
+
+  // Sync pageNumber immediately when targetPage prop changes to prevent "jumping" from old pages
+  const prevTargetRef = useRef(targetPage);
+  if (prevTargetRef.current !== targetPage) {
+    prevTargetRef.current = targetPage;
+    setPageNumber(targetPage !== undefined ? targetPage + 1 : 1);
+    setMatchedPage(null); // Reset matched page until locatePage runs
+  }
   const [scale, setScale] = useState(0.9);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -61,6 +70,7 @@ export default function HighlighterPdfViewer({
 
           if (pageText.includes(normalizedSearch)) {
             setPageNumber(displayPage);
+            setMatchedPage(displayPage);
             return;
           }
 
@@ -92,9 +102,11 @@ export default function HighlighterPdfViewer({
             }
           }
           setPageNumber(bestPage);
+          setMatchedPage(bestPage);
         } catch (err) {
           console.warn("[HighlighterPdfViewer] Failed to scan pages for navigation:", err);
           setPageNumber(displayPage);
+          setMatchedPage(displayPage);
         }
       }
     }
@@ -222,7 +234,8 @@ export default function HighlighterPdfViewer({
    * Custom text renderer for highlighting.
    */
   function makeTextRenderer(searchTerm, fallbackTerm, claimTerm) {
-    const isTargetPage = pageNumber === (targetPage + 1);
+    // Highlight if it's the target page from props OR the page we successfully matched the text on
+    const isTargetPage = pageNumber === (targetPage + 1) || pageNumber === matchedPage;
     if (!isTargetPage || (!searchTerm && !fallbackTerm)) return undefined;
 
     // Pre-normalize terms
@@ -367,7 +380,7 @@ export default function HighlighterPdfViewer({
               Page {pageNumber} of {numPages || "—"}
             </span>
           </div>
-          {highlightText && pageNumber === targetPage && (
+          {highlightText && (pageNumber === (targetPage + 1) || pageNumber === matchedPage) && (
             <button
               onClick={handleCopyText}
               className="flex items-center gap-1.5 px-2 py-1 bg-tl-s3 border border-tl-b1 rounded text-[9px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-all"
@@ -493,7 +506,7 @@ export default function HighlighterPdfViewer({
                 onRenderSuccess={() => setLoading(false)}
               />
               {/* BBox Spatial Highlight Overlay & Hover Tooltip */}
-              {bbox && pageNumber === (targetPage + 1) && pageViewport && (
+              {bbox && (pageNumber === (targetPage + 1) || pageNumber === matchedPage) && pageViewport && (
                 <>
                   {typeof bbox === "object" && !Array.isArray(bbox) ? (
                     <>
@@ -717,7 +730,7 @@ export default function HighlighterPdfViewer({
       </div>
 
       {/* Highlight legend */}
-      {pageNumber === (targetPage + 1) && !loading && !loadError && (
+      {bbox && (pageNumber === (targetPage + 1) || pageNumber === matchedPage) && !loading && !loadError && (
         <div className="flex-shrink-0 px-3 py-1.5 bg-tl-s2 border-t border-tl-b1 text-[9px] font-mono text-tl-t4 flex items-center gap-2">
           <span
             className={`inline-block px-1.5 rounded uppercase tracking-wider font-bold ${

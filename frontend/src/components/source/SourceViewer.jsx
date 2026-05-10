@@ -285,6 +285,25 @@ export default function SourceViewer({
                     </div>
                   </div>
 
+                  {/* Transformation Classification */}
+                  {highlightedHavfItem.transformation_type && (
+                    <div className="mt-3 p-2 bg-tl-gold/5 border border-tl-gold/10 rounded-md">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-wider">
+                          Transformation:
+                        </span>
+                        <span className="text-[10px] font-bold text-tl-gold px-1.5 py-0.5 rounded bg-tl-gold/10 border border-tl-gold/10">
+                          {highlightedHavfItem.transformation_type.replace("_", " ").toUpperCase()}
+                        </span>
+                      </div>
+                      {highlightedHavfItem.transformation_reason && (
+                        <p className="text-[10px] text-tl-t2 font-mono leading-relaxed italic">
+                          "{highlightedHavfItem.transformation_reason}"
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Verification Metadata & Actions */}
                   <div className="flex items-center justify-between gap-2 py-1.5 border-t border-tl-b1/30">
                     <div className="flex items-center gap-4">

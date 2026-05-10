@@ -12,8 +12,23 @@ export default function ChatInterface({
   sessionError,
   onRetrySession,
   onCitationClick,
+  externalQuery,
+  onAskQuestion,
 }) {
   const [input, setInput] = useState("");
+
+  useEffect(() => {
+    if (externalQuery?.query) {
+      setInput(externalQuery.query);
+      setTimeout(() => {
+        // Find textarea and focus
+        const ta = document.querySelector('textarea');
+        if (ta) {
+          ta.focus();
+        }
+      }, 50);
+    }
+  }, [externalQuery]);
   const [streamingText, setStreamingText] = useState("");
   const [streamingHavf, setStreamingHavf] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);

@@ -149,7 +149,7 @@ export default function VerifyPanel({ sessionId, papers, initialHavfItem }) {
       {results.length > 0 && (
         <div className="flex-1 overflow-y-auto space-y-3">
           {results.map((item, idx) => {
-            const conf    = item.confidence ?? 'LOW';
+            const conf    = (item.confidence ?? 'low').toUpperCase();
             const verdict = VERDICT[conf]   ?? VERDICT.LOW;
             const barCls  = BAR_COLOR[conf] ?? BAR_COLOR.LOW;
             const pct     = item.score != null ? Math.round(item.score * 100) : null;
@@ -214,10 +214,33 @@ export default function VerifyPanel({ sessionId, papers, initialHavfItem }) {
                   </div>
                 )}
 
-                {/* Metadata */}
+                  {/* Transformation Classification */}
+                  {item.transformation_type && (
+                    <div className="mt-2 p-2 bg-tl-gold/5 border border-tl-gold/10 rounded-md">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-wider">
+                          Transformation:
+                        </span>
+                        <span className="text-[10px] font-bold text-tl-gold px-1.5 py-0.5 rounded bg-tl-gold/10">
+                          {item.transformation_type.replace("_", " ").toUpperCase()}
+                        </span>
+                      </div>
+                      {item.transformation_reason && (
+                        <p className="text-[10px] text-tl-t3 font-mono leading-snug italic">
+                          "{item.transformation_reason}"
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Metadata */}
                 <div className="flex gap-3 flex-wrap">
                   {item.paragraph_id && (
-                    <span className="font-mono text-[9.5px] text-tl-t3">
+                    <span 
+                      onClick={() => onCitationClick?.(item)}
+                      className="font-mono text-[9.5px] text-tl-t3 hover:text-tl-gold cursor-pointer transition-colors underline decoration-dotted underline-offset-2"
+                      title="Jump to source in PDF"
+                    >
                       Para: {item.paragraph_id}
                     </span>
                   )}

@@ -136,6 +136,12 @@ class VerificationItem(BaseModel):
     claim: str
     confidence: str
     score: float
+    cross_encoder_score: Optional[float] = None
+    transformation_type: Optional[str] = None
+    transformation_confidence: Optional[float] = None
+    transformation_reason: Optional[str] = None
+    semantic_score: Optional[float] = None
+
     source_sentence: Optional[str] = None
     paragraph_id: Optional[str] = None
     paper_id: Optional[str] = None
@@ -145,7 +151,7 @@ class VerificationItem(BaseModel):
     citation_ref: Optional[str] = None
     page_number: Optional[int] = None
     full_context: Optional[str] = None
-    bbox: Optional[list] = None
+    bbox: Optional[dict | list] = None
 
 
 
@@ -243,6 +249,11 @@ class ExportListResponse(BaseModel):
 class KeywordItem(BaseModel):
     keyword: str
     score: float
+    cross_encoder_score: Optional[float] = None
+    transformation_type: Optional[str] = None
+    transformation_confidence: Optional[float] = None
+    transformation_reason: Optional[str] = None
+
 
 
 class KeywordResponse(BaseModel):
@@ -250,18 +261,7 @@ class KeywordResponse(BaseModel):
     keywords: list[KeywordItem]
 
 
-class ThemeItem(BaseModel):
-    label: str
-    keywords: list[str]
-    papers_covering: Optional[list[str]] = None
-    coverage_ratio: float
 
-
-class GapAnalysisResponse(BaseModel):
-    themes: list[ThemeItem]
-    underexplored: list[ThemeItem]
-    narrative: Optional[str] = None
-    provider: Optional[str] = None
 
 
 class ReviewResponse(BaseModel):
@@ -316,6 +316,11 @@ class SSESourceItem(BaseModel):
     paragraph_id: str
     paper_id: str
     score: float
+    cross_encoder_score: Optional[float] = None
+    transformation_type: Optional[str] = None
+    transformation_confidence: Optional[float] = None
+    transformation_reason: Optional[str] = None
+
     page_number: Optional[int] = None
 
 

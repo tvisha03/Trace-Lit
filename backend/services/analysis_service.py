@@ -2,8 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import AsyncGenerator
 
 from domain.analysis.keyword_extractor import extract_keywords, extract_keywords_per_paper
-from domain.analysis.gap_finder import find_gaps, GapAnalysis
-from domain.analysis.review_generator import generate_review, stream_review, generate_gap_narrative
+from domain.analysis.review_generator import generate_review, stream_review
 from domain.generation.prompts import SUMMARY_PROMPT_TEMPLATE, SUMMARY_SYSTEM_PROMPT, build_context_block
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
 from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
@@ -58,59 +57,7 @@ async def get_paper_keywords(
     prepared_text = _prepare_keyword_text(chunks)
     return extract_keywords(prepared_text, top_n=top_n)
 
-async def get_session_gap_analysis(
-    session_id: str,
-    db: AsyncSession,
-    llm: FallbackChain | None = None,
-) -> dict:
-    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
-    if len(papers) < 2:
-        raise InsufficientDataError(
-            "Gap analysis requires at least 2 completed papers in the session. "
-            "Currently only {} completed paper(s) found. "
-            "Please upload and wait for more papers to finish processing, "
-            "then try again.".format(len(papers))
-        )
 
-    chunks_by_paper: dict[str, list] = {}
-    paper_texts: dict[str, str] = {}
-    for paper in papers:
-        chunks = await get_chunks_by_paper(db, str(paper.id))
-        chunks_by_paper[str(paper.id)] = chunks[:15]
-        paper_texts[str(paper.id)] = _prepare_keyword_text(chunks)
-
-    paper_keywords = extract_keywords_per_paper(paper_texts)
-    gap_result: GapAnalysis = find_gaps(paper_keywords)
-
-    result: dict = {
-        "themes": [
-            {
-                "label": t.theme_label,
-                "keywords": t.keywords,
-                "papers_covering": t.papers_covering,
-                "coverage_ratio": t.coverage_ratio,
-            }
-            for t in gap_result.themes
-        ],
-        "underexplored": [
-            {
-                "label": t.theme_label,
-                "keywords": t.keywords,
-                "coverage_ratio": t.coverage_ratio,
-            }
-            for t in gap_result.underexplored
-        ],
-    }
-
-    if llm and chunks_by_paper:
-        paper_titles = await _get_paper_titles(papers)
-        narrative, provider = await generate_gap_narrative(
-            chunks_by_paper, llm, paper_titles,
-        )
-        result["narrative"] = narrative
-        result["provider"] = provider.value
-
-    return result
 
 async def generate_literature_review(
     session_id: str,

@@ -1,0 +1,25 @@
+{
+  "claims": [
+    {
+      "id": "direct_quote_001",
+      "question_number": 1,
+      "claim": "Transformers use multi-head attention",
+      "source_sentence": "Transformers use multi-head attention",
+      "source_paper": "Paper_A",
+      "source_page": 3,
+      "transformation_type": "direct_quote",
+      "is_accurate": true,
+      "notes": "Exact match"
+    },
+    {
+      "id": "inference_001",
+      "question_number": 16,
+      "claim": "This approach is better for real-time systems",
+      "source_sentence": "The model achieves 95% accuracy in 5 seconds",
+      "source_paper": "Paper_A",
+      "transformation_type": "inference",
+      "is_accurate": true,
+      "notes": "Logical conclusion from performance metrics"
+    }
+  ]
+}

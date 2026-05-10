@@ -1,4 +1,4 @@
-
+from dataclasses import asdict
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,26 +50,24 @@ async def send_message(
             message=f"An error occurred while processing your request: {error_detail}. Please try again.",
             status_code=500,
         )
+
+    # ===== TRANSFORMATION TYPE CLASSIFICATION =====
+    # After HAVF verification, classify how each claim relates to its source
+    # This helps researchers understand the reliability of each attributed claim
+    # - Direct Quotes can be cited immediately
+    # - Paraphrases need wording verification
+    # - Syntheses require checking all sources
+    # - Inferences must be independently verified before citation
+    # ==============================================
+    if response.havf_results:
+        from domain.verification.transformation_classifier import classify_transformations
+        response.havf_results = await classify_transformations(response.havf_results)
+
     return ChatResponse(
         content=response.content,
         provider=response.provider.value,
         havf_results=[
-            VerificationItem(
-                claim=r.claim,
-                confidence=r.confidence.value,
-                score=r.score,
-                source_sentence=r.source_sentence,
-                paragraph_id=r.paragraph_id,
-                paper_id=r.paper_id,
-                sentence_key=r.sentence_key,
-                verification_method=r.verification_method.value if r.verification_method else None,
-                chunk_type=r.chunk_type,
-                citation_ref=r.citation_ref,
-                page_number=r.page_number,
-                bbox=r.bbox,
-                full_context=r.full_context,
-            )
-            for r in response.havf_results
+            VerificationItem(**(r if isinstance(r, dict) else asdict(r))) for r in response.havf_results
         ],
         token_count=response.token_count,
         latency_ms=response.latency_ms,

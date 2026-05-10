@@ -123,8 +123,9 @@ def _extract_figures_from_pages(
     figures: list[ExtractedFigure] = []
     seen_paths: set[str] = set()
     for page_data in page_chunks:
-        # Switch to 1-based indexing for internal consistency
-        page_num = page_data.get("metadata", {}).get("page", 0) + 1
+        # Always use 0-based indexing for internal consistency
+        raw_page = page_data.get("metadata", {}).get("page", 0)
+        page_num = raw_page - 1 if raw_page > 0 else 0
         page_text = page_data.get("text", "")
         for img_info in page_data.get("images", []):
             bbox = img_info.get("bbox") if isinstance(img_info, dict) else None
@@ -204,15 +205,16 @@ def _render_page_figures(
 ) -> list[ExtractedFigure]:
     import pymupdf
 
-    # Switch to 1-based indexing
-    page_num = page_data.get("metadata", {}).get("page", 0) + 1
+    # Normalize to 0-based indexing
+    raw_page = page_data.get("metadata", {}).get("page", 0)
+    page_num = raw_page - 1 if raw_page > 0 else 0
     picture_boxes = _get_picture_boxes(page_data)
 
     if not picture_boxes or page_num >= len(doc):
         return []
 
-    # doc index is still 0-based, but we use 1-based page_num for metadata
-    page = doc[page_num - 1]
+    # doc index is 0-based
+    page = doc[page_num]
     page_area = abs(page.rect.width * page.rect.height)
     rendered: list[ExtractedFigure] = []
 
@@ -255,22 +257,19 @@ def _render_missing_figures(
 
 def _build_pages(page_chunks: list[dict]) -> list[ExtractedPage]:
     pages: list[ExtractedPage] = []
-    for i, page_data in enumerate(page_chunks, start=1):
+    for i, page_data in enumerate(page_chunks, start=0):
         meta = page_data.get("metadata", {})
         # Robustly determine page number:
-        # 1. Try "page" from metadata (often 1-based in pymupdf4llm)
-        # 2. Fall back to loop index i
+        # We always want 0-based internal indexing.
+        # pymupdf4llm often provides 1-based "page" in metadata.
         raw_page = meta.get("page")
         try:
             if raw_page is not None:
                 p_num = int(raw_page)
-                # If it's already 1-based, use it. If 0-indexed, add 1.
-                # Heuristic: if p_num is 0, it's definitely 0-indexed.
-                # If it's within [1, len(page_chunks)], it might be 1-indexed.
-                if p_num == 0:
-                    page_number = 1
-                else:
-                    page_number = p_num
+                # If it looks like it was 1-based (starts at 1 or more), normalize to 0-based.
+                # If it's already 0, it's 0-based.
+                # This handles both pymupdf4llm (1-based) and our fallbacks (0-based).
+                page_number = p_num - 1 if p_num > 0 else 0
             else:
                 page_number = i
         except (ValueError, TypeError):
@@ -344,8 +343,11 @@ def _run_layout_extraction(file_path: Path, figure_dir: Path) -> list[dict]:
         kwargs["ocr"] = ocr_fn
 
     chunks = pymupdf4llm.to_markdown(str(file_path), **kwargs)
-    # We leave the metadata as is from pymupdf4llm and handle normalization 
-    # in _build_pages to avoid in-place corruption.
+    # Normalize metadata to 0-based indexing immediately
+    for chunk in chunks:
+        if "metadata" in chunk and "page" in chunk["metadata"]:
+            p = chunk["metadata"]["page"]
+            chunk["metadata"]["page"] = p - 1 if p > 0 else 0
     return chunks
 
 
@@ -358,6 +360,11 @@ def _run_layout_extraction_no_images(file_path: Path, figure_dir: Path) -> list[
         kwargs["ocr"] = ocr_fn
 
     chunks = pymupdf4llm.to_markdown(str(file_path), **kwargs)
+    # Normalize metadata to 0-based indexing immediately
+    for chunk in chunks:
+        if "metadata" in chunk and "page" in chunk["metadata"]:
+            p = chunk["metadata"]["page"]
+            chunk["metadata"]["page"] = p - 1 if p > 0 else 0
     return chunks
 
 
@@ -495,7 +502,7 @@ def _render_figures_by_rendering(
     figures: list[ExtractedFigure] = []
     try:
         for page_num_0, page in enumerate(doc):
-            page_num = page_num_0 + 1
+            page_num = page_num_0
             page_area = abs(page.rect.width * page.rect.height)
             try:
                 image_infos = page.get_image_info()

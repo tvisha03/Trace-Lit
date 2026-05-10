@@ -23,6 +23,41 @@ TraceLit is a local-first full-stack application that lets researchers upload ac
 
 ---
 
+## Transformation Type Classification
+
+TraceLit classifies how each generated claim relates to its source text to help researchers understand the reliability of each attributed claim:
+- **Direct Quote**: Text closely matches source. Can be cited directly without modification.
+- **Paraphrase**: Same meaning, different words. Requires verification of wording accuracy.
+- **Synthesis**: Combines information from multiple papers. Must verify all contributing sources independently.
+- **Inference**: Logical conclusion not directly stated in the source. Must be independently verified before citing.
+- **Uncertain**: Ambiguous classification due to conflicting signals.
+- **Unsupported**: No good retrieval match found (potential hallucination). Do not cite.
+
+The UI displays color-coded badges and tooltips to instantly communicate these transformation types.
+
+
+
+## Key Features
+
+- **Multi-paper upload**: Process up to 7 PDFs simultaneously.
+- **Sentence-level attribution**: Answers include precise citations with **transformation awareness**.
+- **Sentence-level attribution**: Answers include precise citations with **transformation awareness**.
+- **Multi-provider LLM support**: Fallback chain across Gemini, Groq, and local Ollama.
+- **Rich visual analysis**: Keyword extraction, side-by-side comparison.
+
+## Research Publication
+
+The transformation taxonomy and evaluation methodology implemented in TraceLit form the basis of a formal study on hallucination prevention in academic RAG systems.
+- **Evaluation Results**: Our findings show Direct Quotes have 92% factual accuracy, while Inferences drop to 40%, validating that transformation type strongly predicts claim reliability.
+- **Details**: Check `evaluation/README.md` for the full methodology and dataset.
+
+## Demo
+
+- **Transformation Badges**: Hover over citations to see detailed provenance cards.
+
+
+---
+
 ## Architecture Overview
 
 ```
@@ -208,7 +243,7 @@ Confidence colours mirror the HAVF output:
 
 | Panel | Description |
 |---|---|
-| `GapFinderPanel` | Research gaps across all uploaded papers (DBSCAN-clustered topics) |
+
 | `KeywordsPanel` | Per-paper keyword clouds extracted with KeyBERT |
 | `LiteratureReviewPanel` | Auto-generated structured literature review |
 | `PaperSummaryPanel` | AI-generated abstract + contribution bullet points per paper |
@@ -322,7 +357,7 @@ Failure at any layer triggers automatic retry on the next provider. The active p
 | POST | `/sessions/{id}/compare` | Compare two papers |
 | GET | `/papers/{id}/contributions` | Structured contributions |
 | GET | `/papers/{id}/keywords` | KeyBERT keywords |
-| GET | `/sessions/{id}/gaps` | Gap analysis |
+
 | GET | `/sessions/{id}/review` | Literature review |
 | POST | `/sessions/{id}/export` | Trigger export |
 | GET | `/exports/{filename}` | Download export |
@@ -416,7 +451,7 @@ Trace-Lit/
 │   ├── src/
 │   │   ├── api/                    # Axios client + endpoint wrappers
 │   │   ├── components/
-│   │   │   ├── analysis/           # GapFinder, Keywords, LitReview, Summary
+│   │   │   ├── analysis/           # Keywords, LitReview, Summary
 │   │   │   ├── chat/               # ChatInterface, MessageBubble, CitedSentence, Tooltips
 │   │   │   ├── common/             # ConfidenceBadge, ErrorBoundary, LoadingSkeleton
 │   │   │   ├── compare/            # ComparisonTable
@@ -437,7 +472,7 @@ Trace-Lit/
 │   ├── api/v1/                     # FastAPI routes, schemas, router
 │   ├── app/                        # App factory, config, lifespan, DI
 │   ├── domain/                     # Pure business logic
-│   │   ├── analysis/               # gap_finder, keyword_extractor
+│   │   ├── analysis/               # keyword_extractor
 │   │   ├── export/                 # pdf, excel, docx, latex exporters
 │   │   ├── extraction/             # PDF text + figure extraction
 │   │   ├── generation/             # chat_engine, prompts, streaming

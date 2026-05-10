@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import ConfidenceBadge from '../common/ConfidenceBadge';
 import CitedSentence from './CitedSentence';
 import {
@@ -63,34 +66,39 @@ export default function MessageBubble({ message, onCitationClick }) {
    * Custom component for react-markdown to handle text nodes.
    * It finds [P#] citations and replaces them with CitedSentence.
    */
+  const processTextNodes = (children) => {
+    return React.Children.map(children, (child) => {
+      if (typeof child === 'string') {
+        const segments = parseSentencesWithCitations(child, havfResults);
+        if (segments.length === 0) return child;
+        return (
+          <>
+            {segments.map((seg, i) => (
+              seg.citationRefs.length > 0 ? (
+                <CitedSentence
+                  key={i}
+                  text={seg.text}
+                  havfItems={seg.havfItems}
+                  onCitationClick={onCitationClick}
+                  isContested={detectContradiction(seg.havfItems)}
+                />
+              ) : (
+                <span key={i}>{seg.text} </span>
+              )
+            ))}
+          </>
+        );
+      }
+      if (React.isValidElement(child) && child.props.children) {
+        return React.cloneElement(child, {
+          children: processTextNodes(child.props.children),
+        });
+      }
+      return child;
+    });
+  };
+
   const components = {
-    // Override how text is rendered to inject CitedSentence components
-    text: ({ value }) => {
-      if (!value) return null;
-      
-      // We parse the text node into segments of sentences with citations
-      const segments = parseSentencesWithCitations(value, havfResults);
-      
-      if (segments.length === 0) return value;
-      
-      return (
-        <>
-          {segments.map((seg, i) => (
-            seg.citationRefs.length > 0 ? (
-              <CitedSentence
-                key={i}
-                text={seg.text}
-                havfItems={seg.havfItems}
-                onCitationClick={onCitationClick}
-                isContested={detectContradiction(seg.havfItems)}
-              />
-            ) : (
-              <span key={i}>{seg.text} </span>
-            )
-          ))}
-        </>
-      );
-    },
     // Style tables to look premium
     table: ({ children }) => (
       <div className="my-4 overflow-x-auto border border-tl-b1 rounded-lg shadow-sm">
@@ -102,16 +110,17 @@ export default function MessageBubble({ message, onCitationClick }) {
     thead: ({ children }) => <thead className="bg-tl-s3/50">{children}</thead>,
     th: ({ children }) => (
       <th className="px-3 py-2 text-left font-mono font-bold text-tl-gold uppercase tracking-tighter border-r border-tl-b1 last:border-0">
-        {children}
+        {processTextNodes(children)}
       </th>
     ),
     td: ({ children }) => (
       <td className="px-3 py-2 text-tl-t2 border-r border-t border-tl-b1 last:border-0 align-top">
-        {children}
+        {processTextNodes(children)}
       </td>
     ),
     // Standard markdown styling
-    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{processTextNodes(children)}</p>,
+    li: ({ children }) => <li>{processTextNodes(children)}</li>,
     code: ({ children }) => <code className="bg-tl-s3 px-1 rounded text-tl-gold font-mono">{children}</code>,
   };
 
@@ -132,13 +141,78 @@ export default function MessageBubble({ message, onCitationClick }) {
         <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-tl-s2 text-tl-t1 shadow-sm border border-tl-b1/20">
           <div className="text-[13.5px] leading-relaxed markdown-body">
             <ReactMarkdown 
-              remarkPlugins={[remarkGfm]} 
+              remarkPlugins={[remarkGfm, remarkMath]} 
+              rehypePlugins={[rehypeKatex]}
               components={components}
             >
               {message.content.replace(/\[(?:[a-z0-9\-_]+_)?([PFTEpfte]\d+)\]/gi, '[$1]')}
             </ReactMarkdown>
           </div>
         </div>
+
+        {/* ── Citation Quality Summary Bar (Priority 4) ──────────────────── */}
+        {havfResults.length > 0 && !abstaining && (
+          <div className="mx-1 mt-1 p-2 bg-tl-s3/40 rounded-lg border border-tl-b1/20 shadow-sm animate-in fade-in slide-in-from-top-1 duration-300">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-mono font-bold text-tl-t3 uppercase tracking-wider">
+                Response Attribution Summary
+              </span>
+              <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                <span className="text-tl-t4">Avg Confidence:</span>
+                <span className="text-tl-t1 font-bold">
+                  {Math.round((havfResults.reduce((acc, r) => acc + (r.score || 0), 0) / havfResults.length) * 100)}%
+                </span>
+              </div>
+            </div>
+            
+            <div className="flex h-1.5 rounded-full overflow-hidden bg-tl-s4/50 mb-2 ring-1 ring-tl-b1/10">
+              {['direct_quote', 'paraphrase', 'synthesis', 'inference', 'uncertain', 'unsupported'].map((type) => {
+                const count = havfResults.filter(r => (r.transformation_type?.toLowerCase() || 'uncertain') === type).length;
+                if (count === 0) return null;
+                const width = (count / havfResults.length) * 100;
+                const colors = {
+                  direct_quote: 'bg-[#10b981]',
+                  paraphrase: 'bg-[#3b82f6]',
+                  synthesis: 'bg-[#8b5cf6]',
+                  inference: 'bg-[#f59e0b]',
+                  uncertain: 'bg-[#6b7280]',
+                  unsupported: 'bg-[#ef4444]',
+                };
+                return (
+                  <div 
+                    key={type} 
+                    style={{ width: `${width}%` }} 
+                    className={colors[type]} 
+                    title={`${type.replace('_', ' ').toUpperCase()}: ${count}`}
+                  />
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono">
+              {[
+                { type: 'direct_quote', label: 'Direct Quotes', icon: '✓' },
+                { type: 'paraphrase', label: 'Paraphrases', icon: '⚠' },
+                { type: 'synthesis', label: 'Synthesis', icon: '⚘' },
+                { type: 'inference', label: 'Inferences', icon: '❌', alert: true },
+              ].map(({ type, label, icon, alert }) => {
+                const count = havfResults.filter(r => r.transformation_type?.toLowerCase() === type).length;
+                if (count === 0) return null;
+                return (
+                  <div key={type} className={`flex items-center gap-1 ${alert ? 'text-tl-low font-bold' : 'text-tl-t3'}`}>
+                    <span className="opacity-70">{icon}</span>
+                    <span>{count} {label}</span>
+                  </div>
+                );
+              })}
+              {havfResults.some(r => r.transformation_type?.toLowerCase() === 'inference') && (
+                <div className="ml-auto text-[9px] text-tl-low font-bold flex items-center gap-1 animate-pulse">
+                  <span>⚠️ verify claims</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Metadata row ───────────────────────────────────────────────── */}
         <div className="flex items-center gap-2 px-1 flex-wrap">
@@ -149,7 +223,7 @@ export default function MessageBubble({ message, onCitationClick }) {
           {message.latency_ms && (
             <span className="text-xs text-tl-t4 font-mono">{message.latency_ms}ms</span>
           )}
-          {dedupedSources.length > 0 && (
+          {dedupedSources.length > 0 && !abstaining && (
             <button
               onClick={() => setShowSources((v) => !v)}
               className="text-[10px] font-mono text-tl-t3 hover:text-tl-gold transition-colors"
@@ -160,7 +234,7 @@ export default function MessageBubble({ message, onCitationClick }) {
         </div>
 
         {/* ── Source evidence list (expandable) ─────────────────────────── */}
-        {showSources && dedupedSources.length > 0 && (
+        {showSources && dedupedSources.length > 0 && !abstaining && (
           <div className="ml-1 space-y-1.5">
             {dedupedSources.map((item, i) => (
               <div

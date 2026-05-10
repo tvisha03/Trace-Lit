@@ -6,7 +6,6 @@ import RightPanel from "./components/layout/RightPanel";
 import ChatInterface from "./components/chat/ChatInterface";
 import ComparisonTable from "./components/compare/ComparisonTable";
 import ExportPanel from "./components/export/ExportPanel";
-import GapFinderPanel from "./components/analysis/GapFinderPanel";
 import KeywordsPanel from "./components/analysis/KeywordsPanel";
 import LiteratureReviewPanel from "./components/analysis/LiteratureReviewPanel";
 import VerifyPanel from "./components/verify/VerifyPanel";
@@ -27,6 +26,7 @@ function App() {
   const { highlightedHavfItem, setHighlightedHavfItem } = useChatStore();
   const [activePaperId, setActivePaperId] = useState(null);
   const [sessionError, setSessionError] = useState(null);
+  const [externalQuery, setExternalQuery] = useState(null);
 
   // ── Comparison state ───────────────────────────────────────────────────────
   const [comparisonData, setComparisonData] = useState(null);
@@ -135,6 +135,11 @@ function App() {
     setRightTab("source"); // auto-switch right panel to source
   }, []);
 
+  const handleAskQuestion = useCallback((q) => {
+    setActiveTab("chat");
+    setExternalQuery({ query: q, t: Date.now() });
+  }, []);
+
   // ── Comparison generation ─────────────────────────────────────────────────
   const handleGenerateComparison = useCallback(async () => {
     if (!activeSession) return;
@@ -229,6 +234,8 @@ function App() {
             sessionError={sessionError}
             onRetrySession={initSession}
             onCitationClick={handleCitationClick}
+            externalQuery={externalQuery}
+            onAskQuestion={handleAskQuestion}
           />
         </div>
 
@@ -332,19 +339,17 @@ function App() {
               </p>
             </div>
           )}
-          <ComparisonTable data={comparisonData} />
+          <ComparisonTable data={comparisonData} onCitationClick={handleCitationClick} />
         </div>
 
-        {/* Gaps */}
-        <div className={`overflow-auto h-full p-5 ${activeTab === "gaps" ? "" : "hidden"}`}>
-          <GapFinderPanel sessionId={activeSession?.id} />
-        </div>
+
 
         {/* Review */}
         <div className={`overflow-auto h-full p-5 ${activeTab === "review" ? "" : "hidden"}`}>
           <LiteratureReviewPanel
             sessionId={activeSession?.id}
             papers={papers}
+            onCitationClick={handleCitationClick}
           />
         </div>
 
@@ -365,6 +370,7 @@ function App() {
             sessionId={activeSession?.id}
             papers={papers}
             initialHavfItem={highlightedHavfItem}
+            onCitationClick={handleCitationClick}
           />
         </div>
 
@@ -455,6 +461,7 @@ function App() {
             onRightTabChange={setRightTab}
             sessionError={sessionError}
             onRetrySession={handleRetrySession}
+            onAskQuestion={handleAskQuestion}
           />
         }
         mainPanel={mainPanel}
@@ -468,6 +475,7 @@ function App() {
             activePaperId={activePaperId}
             onPaperChange={setActivePaperId}
             highlightedHavfItem={highlightedHavfItem}
+            onAskQuestion={handleAskQuestion}
           />
         }
       />

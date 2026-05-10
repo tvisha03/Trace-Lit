@@ -198,9 +198,7 @@ export const analysisApi = {
   keywords: (sessionId, paperId) =>
     request(sp(sessionId, `/analysis/keywords/${paperId}`)),
 
-  // GET → { themes: ThemeItem[], underexplored: ThemeItem[], narrative, provider }
-  //        ThemeItem: { label, keywords: string[], papers_covering?: string[], coverage_ratio: float }
-  gaps: (sessionId) => request(sp(sessionId, '/analysis/gaps')),
+
 
   // GET → { paper_id, title, summary, provider }
   // Optional `question` focuses the summary (e.g. "What methodology is used?")
