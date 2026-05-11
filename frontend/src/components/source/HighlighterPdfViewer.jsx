@@ -32,7 +32,7 @@ export default function HighlighterPdfViewer({
     setPageNumber(targetPage !== undefined ? targetPage + 1 : 1);
     setMatchedPage(null); // Reset matched page until locatePage runs
   }
-  const [scale, setScale] = useState(0.9);
+  const [scale, setScale] = useState(1.0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [pageViewport, setPageViewport] = useState(null);
@@ -480,7 +480,7 @@ export default function HighlighterPdfViewer({
           </div>
         )}
 
-        <div style={{ minHeight: "600px" }} className="relative">
+        <div style={{ minHeight: "800px" }} className="relative">
           <Document
             file={url}
             onLoadSuccess={onDocumentLoadSuccess}

@@ -139,27 +139,22 @@ export default function ChatInterface({
 
   return (
     <div className="flex flex-col h-full bg-tl-s2">
-      {/* Panel header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-tl-s1 border-b border-tl-b1 flex-shrink-0">
-        <span className="font-mono text-xs text-tl-t3 uppercase tracking-wider">
-          Chat
-        </span>
-        {session && (
-          <span className="font-mono text-xs text-tl-t4 truncate max-w-[180px]">
-            {session.title ?? session.name}
-          </span>
-        )}
-      </div>
+
 
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div className="flex-1 overflow-y-auto px-6 py-6 scroll-smooth">
         {isEmpty && (
-          <div className="flex flex-col items-center justify-center h-full text-center px-8 space-y-1">
-            <p className="text-tl-t3 text-sm font-mono">
-              Upload a paper, then ask a question.
+          <div className="flex flex-col items-center justify-center h-full text-center px-12 space-y-3">
+            <div className="w-16 h-16 bg-tl-s3 rounded-3xl flex items-center justify-center shadow-inner mb-2 border border-tl-b1/50">
+              <svg className="w-8 h-8 text-tl-gold/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <p className="text-tl-t1 text-lg font-serif font-medium">
+              Start your research journey.
             </p>
-            <p className="text-tl-t4 text-xs font-mono">
-              Citations verified automatically with HAVF.
+            <p className="text-tl-t3 text-sm font-sans max-w-xs leading-relaxed">
+              Upload papers to your library and ask TraceLit to verify claims, find patterns, or synthesize findings.
             </p>
           </div>
         )}
@@ -214,47 +209,66 @@ export default function ChatInterface({
         </div>
       )}
 
+
+
       {/* Input bar */}
-      <div className="px-4 py-3 border-t border-tl-b1 bg-tl-s1 flex-shrink-0">
+      <div className="px-6 py-6 bg-tl-s2 flex-shrink-0">
         {!session && !sessionError && (
-          <div className="flex items-center gap-2 mb-2">
-            <span className="inline-block w-3 h-3 border-2 border-tl-gold border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs text-tl-t3 font-mono">
-              Initialising session…
+          <div className="flex items-center gap-3 mb-3 px-2">
+            <span className="inline-block w-4 h-4 border-2 border-tl-gold border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs text-tl-t3 font-mono tracking-tight">
+              Initializing neural session…
             </p>
           </div>
         )}
         {!session && sessionError && (
-          <div className="flex items-center gap-2 mb-2">
-            <p className="text-xs text-tl-low font-mono">
-              Session failed to load.
+          <div className="flex items-center gap-3 mb-3">
+            <p className="text-[14.5px] text-tl-t1 leading-relaxed font-sans font-medium italic selection:bg-tl-gold/20">
+              Session initialization failed.
             </p>
             <button
               onClick={onRetrySession}
-              className="text-xs font-mono font-semibold text-tl-gold hover:underline"
+              className="text-xs font-mono font-bold text-tl-gold hover:text-tl-t1 transition-colors uppercase tracking-widest"
             >
               Retry
             </button>
           </div>
         )}
-        <div className="flex gap-2 items-end">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about your papers… (Enter to send, Shift+Enter for new line)"
-            disabled={isBusy || !session}
-            rows={1}
-            className="flex-1 resize-none px-3 py-2 text-sm font-mono bg-tl-s2 border border-tl-b2 rounded-lg text-tl-t1 placeholder-tl-t4 focus:outline-none focus:border-tl-gold disabled:opacity-50 transition-colors"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            className="px-4 py-2 text-sm font-mono font-semibold text-tl-bg bg-tl-gold rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity flex-shrink-0"
-          >
-            Send
-          </button>
+
+        <div className="relative group max-w-4xl mx-auto">
+          <div className="relative flex flex-col bg-tl-s1 border border-tl-b1 rounded-2xl shadow-xl focus-within:border-tl-gold/40 transition-all duration-300">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask about your research papers…"
+              disabled={isBusy || !session}
+              rows={1}
+              className="w-full resize-none px-6 pt-5 pb-14 text-[14px] font-sans bg-transparent text-tl-t1 placeholder-tl-t4 focus:outline-none disabled:opacity-50 transition-all leading-relaxed"
+            />
+            <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between pointer-events-none">
+              <div className="flex gap-2 pointer-events-auto">
+                <span className="text-[9px] font-mono text-tl-t4 px-2 py-0.5 rounded bg-tl-s2/50 border border-tl-b1/30 uppercase tracking-wider">
+                  {isBusy ? 'Processing' : 'Verified'}
+                </span>
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={!canSend}
+                className={`
+                  pointer-events-auto flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-300
+                  ${canSend
+                    ? 'bg-tl-gold text-tl-bg shadow-lg shadow-tl-gold/20 hover:scale-105 active:scale-95'
+                    : 'bg-tl-s3 text-tl-t4 cursor-not-allowed'}
+                `}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

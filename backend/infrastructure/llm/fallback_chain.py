@@ -136,8 +136,8 @@ class FallbackChain:
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
-        max_tokens: int = 2048,
-        estimated_tokens: int = 4_000,
+        max_tokens: int = 4096,
+        estimated_tokens: int = 5_000,
     ) -> Tuple[str, LLMProvider, dict]:
         errors: List[str] = []
         deadline = time.monotonic() + self._request_timeout * 0.85
@@ -242,8 +242,8 @@ class FallbackChain:
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.3,
-        max_tokens: int = 2048,
-        estimated_tokens: int = 4_000,
+        max_tokens: int = 4096,
+        estimated_tokens: int = 5_000,
     ) -> AsyncGenerator[Tuple[str, LLMProvider], None]:
         errors: list[str] = []
 

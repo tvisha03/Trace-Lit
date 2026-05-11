@@ -38,46 +38,49 @@ class TransformationClassifier:
     SYNTHESIS_DOMINANCE_MARGIN = 0.10
     SYNTHESIS_MULTIPLE_THRESHOLD = 0.55
     PARAPHRASE_SEMANTIC_THRESHOLD = 0.70
-    INFERENCE_SEMANTIC_LOWER = 0.45
+    INFERENCE_SEMANTIC_LOWER = 0.40
     INFERENCE_SEMANTIC_UPPER = 0.70
-    INFERENCE_CE_THRESHOLD = 0.65
+    INFERENCE_CE_THRESHOLD = 0.55
 
     def _compute_string_similarity(self, a: str, b: str) -> float:
         if not a or not b:
             return 0.0
         return difflib.SequenceMatcher(None, a, b).ratio()
 
-    def _detect_source_dominance(self, all_retrieved_sources: List[Dict[str, Any]]) -> bool:
+    def _detect_source_dominance(self, winning_score: float, all_retrieved_sources: List[Dict[str, Any]]) -> bool:
         """
-        Determine if one source dominates or if multiple contribute (synthesis).
-        Returns True if a single source dominates (or insufficient data).
+        Determine if the current winning source dominates or if multiple contribute (synthesis).
+        Returns True if the current winner dominates significantly.
         Returns False if multiple sources contribute (synthesis).
         """
         if not all_retrieved_sources:
             return True
             
-        best_scores = {}
+        best_scores_by_paper = {}
         for src in all_retrieved_sources:
             paper_id = src.get("paper_id")
             score = src.get("score", src.get("semantic_score", 0.0))
             if paper_id is not None:
-                if paper_id not in best_scores or score > best_scores[paper_id]:
-                    best_scores[paper_id] = score
+                if paper_id not in best_scores_by_paper or score > best_scores_by_paper[paper_id]:
+                    best_scores_by_paper[paper_id] = score
                     
-        if len(best_scores) < 2:
+        # We need at least two papers for synthesis
+        if len(best_scores_by_paper) < 2:
             return True
             
-        sorted_scores = sorted(best_scores.values(), reverse=True)
-        best = sorted_scores[0]
-        second_best = sorted_scores[1]
+        all_paper_scores = sorted(best_scores_by_paper.values(), reverse=True)
+        top_score = all_paper_scores[0]
+        second_best = all_paper_scores[1]
         
-        # One paper dominates if: best_A > 0.75 AND second_best < best_A - 0.10
-        if best > self.SYNTHESIS_DOMINANCE_HIGH and second_best < (best - self.SYNTHESIS_DOMINANCE_MARGIN):
-            return True
+        # Current winner dominates if it's the top score AND significantly higher than second best
+        # Use a small epsilon to handle float precision issues
+        EPS = 1e-6
+        if winning_score >= (top_score - EPS):
+            if winning_score > self.SYNTHESIS_DOMINANCE_HIGH and second_best < (winning_score - self.SYNTHESIS_DOMINANCE_MARGIN + EPS):
+                return True
             
-        # Multiple sources contribute if: no single paper dominates but multiple > 0.55
-        if best > self.SYNTHESIS_MULTIPLE_THRESHOLD and second_best > self.SYNTHESIS_MULTIPLE_THRESHOLD:
-            return False
+            if winning_score > self.SYNTHESIS_MULTIPLE_THRESHOLD and second_best > self.SYNTHESIS_MULTIPLE_THRESHOLD:
+                return False
             
         return True
 
@@ -106,7 +109,7 @@ class TransformationClassifier:
         ce_score = cross_encoder_score if cross_encoder_score is not None else 0.0
         
         string_sim = self._compute_string_similarity(claim, source_sentence)
-        is_dominant = self._detect_source_dominance(all_retrieved_sources)
+        is_dominant = self._detect_source_dominance(sem_score, all_retrieved_sources)
         
         signals = {
             "string_similarity": string_sim,
@@ -257,34 +260,34 @@ def test_transformation_classifier():
     res3 = classifier.classify(
         claim="Dogs and cats make great pets.",
         source_sentence="Dogs are great companions.",
-        semantic_similarity=0.80, # Would be paraphrase, but synthesis should trigger first
+        semantic_similarity=0.65, # Moderate match for paper p1
         cross_encoder_score=0.60,
         all_retrieved_sources=[
-            {"paper_id": "p1", "score": 0.70}, # best < 0.75
-            {"paper_id": "p2", "score": 0.65}  # both > 0.55
+            {"paper_id": "p1", "score": 0.65}, # Current paper
+            {"paper_id": "p2", "score": 0.62}  # Second paper, very close score -> synthesis
         ]
     )
     assert res3.type == TransformationType.SYNTHESIS.value, f"Expected {TransformationType.SYNTHESIS.value}, got {res3.type}"
     
-    # 4. PARAPHRASE
+    # 4. PARAPHRASE (Dominant)
     res4 = classifier.classify(
         claim="Canines are wonderful friends.",
         source_sentence="Dogs make great companions.",
-        semantic_similarity=0.75, # > 0.70
+        semantic_similarity=0.85, # High match
         cross_encoder_score=0.80,
         all_retrieved_sources=[
-            {"paper_id": "p1", "score": 0.80}, # best > 0.75
-            {"paper_id": "p2", "score": 0.40}  # second < best - 0.10 -> dominant
+            {"paper_id": "p1", "score": 0.85}, # Current paper dominates
+            {"paper_id": "p2", "score": 0.40}  # second is weak
         ]
     )
     assert res4.type == TransformationType.PARAPHRASE.value, f"Expected {TransformationType.PARAPHRASE.value}, got {res4.type}"
     
-    # 5. INFERENCE
+    # 5. INFERENCE (Lowered threshold)
     res5 = classifier.classify(
         claim="He must have been tired.",
         source_sentence="He ran a marathon.",
-        semantic_similarity=0.60, # 0.45 < x < 0.70
-        cross_encoder_score=0.70, # > 0.65
+        semantic_similarity=0.55, # Moderate
+        cross_encoder_score=0.60, # Above new 0.55 threshold
         all_retrieved_sources=[]
     )
     assert res5.type == TransformationType.INFERENCE.value, f"Expected {TransformationType.INFERENCE.value}, got {res5.type}"

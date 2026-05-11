@@ -50,31 +50,29 @@ function refLabel(ref) {
 }
 
 const TRANSFORMATION_BADGE = {
-  direct_quote: { text: "DQ", color: "bg-[#10b981] text-white", tooltip: "Direct Quote — Text closely matches source. \n Can be cited directly. Confidence: HIGH ✓✓" },
-  paraphrase: { text: "P", color: "bg-[#3b82f6] text-white", tooltip: "Paraphrase — Same meaning, different words.\n Verify wording before citing. Confidence: MEDIUM ✓" },
-  synthesis: { text: "S", color: "bg-[#8b5cf6] text-white", tooltip: "Synthesis — Combines information from multiple papers.\n Check all cited sources independently. Confidence: MEDIUM ⚘" },
-  inference: { text: "I", color: "bg-[#f59e0b] text-gray-900", tooltip: "⚠️ Inference — Logical conclusion not directly stated.\n Must verify before citing. Confidence: MEDIUM-LOW ⚠" },
-  uncertain: { text: "?", color: "bg-[#6b7280] text-white", tooltip: "Uncertain — Ambiguous classification, check manually." },
-  unsupported: { text: "🚨", color: "bg-[#ef4444] text-white", tooltip: "🚨 No source found — This claim could not be attributed.\n Potential hallucination. Do not cite without verification." },
+  direct_quote: { text: "DQ", color: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.1)]", tooltip: "Direct Quote — Can be cited directly without modification. Confidence: HIGH" },
+  paraphrase: { text: "P", color: "bg-blue-500/10 text-blue-400 border border-blue-500/20 shadow-[0_0_8px_rgba(59,130,246,0.1)]", tooltip: "Paraphrase — Requires verification of wording accuracy. Confidence: MEDIUM" },
+  synthesis: { text: "S", color: "bg-purple-500/10 text-purple-400 border border-purple-500/20 shadow-[0_0_8px_rgba(139,92,246,0.1)]", tooltip: "Synthesis — Must verify all contributing sources independently. Confidence: MEDIUM" },
+  inference: { text: "I", color: "bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[0_0_8px_rgba(245,158,11,0.1)]", tooltip: "Inference — Must be independently verified before citing. Confidence: MEDIUM-LOW" },
+  uncertain: { text: "?", color: "bg-gray-500/10 text-gray-400 border border-gray-500/20", tooltip: "Uncertain — Ambiguous classification, check manually." },
+  unsupported: { text: "!", color: "bg-red-500/10 text-red-400 border border-red-500/20", tooltip: "No source found — Potential hallucination. Do not cite." },
 };
 
 export default function CitedSentence({ text, havfItems = [], onCitationClick, isContested }) {
   const [hoveredItem, setHoveredItem] = useState(null);
   const [expandedItem, setExpandedItem] = useState(null);
 
-  // Strip inline citations from display text — both full [59d08199_P15] and short [P15] forms.
-  // Robust regex: matches [ID_P123] or [P123] case-insensitively and handles varying ID lengths/characters
-  // Also cleans up trailing commas/whitespace left after stripping multiple citations
+  // Strip inline citations from display text
   const displayText = text
     .replace(/\s*\[(?:[a-z0-9\-_]+_)?([PFTEpfte]\d+)\]/gi, '')
-    .replace(/,\s*\./g, '.') // Fix ", ." -> "."
-    .replace(/,\s*,/g, ',')   // Fix ", ," -> ","
+    .replace(/,\s*\./g, '.')
+    .replace(/,\s*,/g, ',')
     .trim();
 
-  // Determine overall confidence for this sentence from the best-scoring HAVF item.
+  // Determine overall confidence
   const score = bestScore(havfItems);
 
-  // Deduplicate citation refs; associate each with its HAVF item(s).
+  // Deduplicate citation refs
   const seenRefs = new Set();
   const uniqueRefs = [];
   for (const item of havfItems) {
@@ -85,10 +83,9 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
     }
   }
 
-  // Fallback to 'low' if there are citations but no matching HAVF items (indicates extraction gap)
+  // Fallback level
   const level = score != null ? confidenceLevel(score) : (havfItems.length === 0 && uniqueRefs.length > 0 ? 'low' : null);
 
-  // First HAVF item for each unique ref (used for tooltip).
   const itemByRef = {};
   for (const item of havfItems) {
     if (item.citation_ref && !itemByRef[item.citation_ref]) {
@@ -100,7 +97,6 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
     e.stopPropagation();
     const item = itemByRef[ref];
     if (item) {
-      // Pass the full HAVF item so App/SourceViewer can show source_sentence
       onCitationClick?.(item);
     }
   };
@@ -109,9 +105,7 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
     <span className="inline-block relative w-full">
       <span
         onClick={(e) => uniqueRefs.length > 0 && handleClick(uniqueRefs[0], e)}
-        className={`inline transition-all duration-300 cursor-pointer ${
-          level ? UNDERLINE_CLASS[level] : ''
-        }`}
+        className="inline transition-all duration-300 cursor-pointer"
         title={uniqueRefs.length > 0 ? 'Click to view source' : ''}
       >
         {displayText}
@@ -150,12 +144,9 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
               <span
                 onClick={(e) => { e.stopPropagation(); setExpandedItem(expandedItem === ref ? null : ref); }}
                 title={badge?.tooltip || transType}
-                className={`ml-1 text-[9px] font-bold px-1 py-0.5 rounded cursor-pointer ring-1 ring-offset-1 ring-transparent hover:ring-tl-gold/50 transition-all flex items-center gap-1 ${badge?.color || 'bg-tl-s3 text-tl-t4 border border-tl-b1'}`}
+                className={`ml-1 text-[9px] font-bold px-1 rounded cursor-pointer ring-1 ring-inset ring-black/5 hover:opacity-80 transition-all flex items-center gap-1 ${badge?.color || 'bg-tl-s3 text-tl-t4 border border-tl-b1'}`}
               >
-                <span>{badge?.text || transType.slice(0, 2).toUpperCase()}</span>
-                <span className="opacity-70 border-l border-white/20 pl-1">
-                  {item ? Math.round((item.score ?? 0) * 100) : ''}%
-                </span>
+                {badge?.text || transType.slice(0, 2).toUpperCase()}
               </span>
             )}
           </span>
@@ -169,7 +160,7 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
                      border border-tl-med/40 rounded px-1 py-0.5 align-middle"
           title="Sources disagree on this claim"
         >
-          ⚠ contested
+          <span>Contested Source</span>
         </span>
       )}
 
@@ -198,20 +189,20 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
           <div className="grid grid-cols-2 gap-4 mb-3">
             <div className="space-y-1">
               <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">Type</span>
-              <div className="text-[12px] font-bold text-tl-t1 flex items-center gap-2">
+              <div className="text-[11px] font-bold text-tl-t1 flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${TRANSFORMATION_BADGE[itemByRef[expandedItem].transformation_type?.toLowerCase()]?.color || 'bg-tl-gold'}`} />
                 {itemByRef[expandedItem].transformation_type?.replace("_", " ").toUpperCase()}
               </div>
               <p className="text-[9px] text-tl-hi font-medium">
-                {itemByRef[expandedItem].transformation_type?.toLowerCase() === 'direct_quote' ? '✓ Can be cited directly' : 
-                 itemByRef[expandedItem].transformation_type?.toLowerCase() === 'paraphrase' ? '⚠ Verify wording accuracy' :
-                 itemByRef[expandedItem].transformation_type?.toLowerCase() === 'synthesis' ? '⚠ Check all cited sources' :
-                 itemByRef[expandedItem].transformation_type?.toLowerCase() === 'inference' ? '❌ MUST verify before citing' : ''}
+                {itemByRef[expandedItem].transformation_type?.toLowerCase() === 'direct_quote' ? '✓ Can be cited directly without modification' : 
+                 itemByRef[expandedItem].transformation_type?.toLowerCase() === 'paraphrase' ? '⚠ Requires verification of wording accuracy' :
+                 itemByRef[expandedItem].transformation_type?.toLowerCase() === 'synthesis' ? '⚠ Must verify all contributing sources independently' :
+                 itemByRef[expandedItem].transformation_type?.toLowerCase() === 'inference' ? '❌ MUST be independently verified before citing' : ''}
               </p>
             </div>
             <div className="space-y-1">
               <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">Confidence</span>
-              <div className="text-[12px] font-bold text-tl-t1">
+              <div className="text-[11px] font-bold text-tl-t1">
                 {Math.round((itemByRef[expandedItem].score || 0) * 100)}% Verified
               </div>
             </div>
@@ -238,7 +229,7 @@ export default function CitedSentence({ text, havfItems = [], onCitationClick, i
           <div className="space-y-3">
             <div>
               <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">Reasoning</span>
-              <p className="text-[11px] text-tl-t2 leading-relaxed bg-tl-s2/50 p-2 rounded border border-tl-b1/30 italic">
+              <p className="text-[10px] text-tl-t2 leading-relaxed bg-tl-s2/50 p-2 rounded border border-tl-b1/30 italic">
                 "{itemByRef[expandedItem].transformation_reason || "No detailed reasoning provided."}"
               </p>
             </div>

@@ -28,7 +28,7 @@ export default function StreamingMessage({
 
   return (
     <div className="flex justify-start mb-3">
-      <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-tl-s2 text-tl-t1 text-sm leading-relaxed">
+      <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-tl-s2 text-tl-t1 text-[13.5px] leading-relaxed">
         {segments.length > 0 && hasCitations ? (
           // Render with citation badges — same as final MessageBubble
           <span>

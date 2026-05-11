@@ -254,6 +254,28 @@ export const analysisApi = {
 
     return () => ctrl.abort();
   },
+
+  /** Stream research gaps. Events: token → {token}, done → {provider, full_text} */
+  gapsStream: (sessionId, handlers = {}) => {
+    const ctrl = new AbortController();
+    const { onToken, onDone, onError } = handlers;
+
+    fetch(`${API_BASE}${sp(sessionId, '/analysis/gaps/stream')}`, {
+      method: 'GET',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) { onError?.(new Error(`HTTP ${res.status}`)); return; }
+        await consumeSseStream(res, {
+          token: (d) => onToken?.(typeof d === 'string' ? d : d.token ?? ''),
+          done: (d) => onDone?.(d),
+          error: (d) => onError?.(new Error(typeof d === 'string' ? d : JSON.stringify(d))),
+        });
+      })
+      .catch((err) => { if (err.name !== 'AbortError') onError?.(err); });
+
+    return () => ctrl.abort();
+  },
 };
 
 // ─── Export ───────────────────────────────────────────────────────────────────

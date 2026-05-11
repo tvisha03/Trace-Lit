@@ -270,6 +270,12 @@ class ReviewResponse(BaseModel):
     provider: str
 
 
+class GapAnalysisResponse(BaseModel):
+    gaps: str
+    paper_count: int
+    provider: str
+
+
 class SummaryResponse(BaseModel):
     paper_id: str
     title: Optional[str] = None

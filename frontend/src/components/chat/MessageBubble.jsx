@@ -36,9 +36,9 @@ export default function MessageBubble({ message, onCitationClick }) {
   // ── User bubble ──────────────────────────────────────────────────────────
   if (isUser) {
     return (
-      <div className="flex justify-end mb-3">
-        <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm bg-tl-s3 text-tl-t1 shadow-sm">
-          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+      <div className="flex justify-end mb-6">
+        <div className="max-w-[80%] px-6 py-4 rounded-3xl rounded-tr-sm bg-tl-s3 text-tl-t1 shadow-md border border-tl-b1/20 transition-all hover:shadow-lg">
+          <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
         </div>
       </div>
     );
@@ -102,7 +102,7 @@ export default function MessageBubble({ message, onCitationClick }) {
     // Style tables to look premium
     table: ({ children }) => (
       <div className="my-4 overflow-x-auto border border-tl-b1 rounded-lg shadow-sm">
-        <table className="min-w-full divide-y divide-tl-b1 border-collapse text-[12px]">
+        <table className="min-w-full divide-y divide-tl-b1 border-collapse text-[11px]">
           {children}
         </table>
       </div>
@@ -119,9 +119,9 @@ export default function MessageBubble({ message, onCitationClick }) {
       </td>
     ),
     // Standard markdown styling
-    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{processTextNodes(children)}</p>,
-    li: ({ children }) => <li>{processTextNodes(children)}</li>,
-    code: ({ children }) => <code className="bg-tl-s3 px-1 rounded text-tl-gold font-mono">{children}</code>,
+    p: ({ children }) => <p className="mb-4 last:mb-0 leading-loose">{processTextNodes(children)}</p>,
+    li: ({ children }) => <li className="mb-2">{processTextNodes(children)}</li>,
+    code: ({ children }) => <code className="bg-tl-s3 px-1.5 py-0.5 rounded text-tl-gold font-mono text-[14px]">{children}</code>,
   };
 
   return (
@@ -130,7 +130,9 @@ export default function MessageBubble({ message, onCitationClick }) {
         {/* ── Abstention warning ─────────────────────────────────────────── */}
         {abstaining && (
           <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-tl-med/10 border border-tl-med/30 mb-1">
-            <span className="text-tl-med text-sm mt-0.5">⚠</span>
+            <svg className="w-3.5 h-3.5 text-tl-med mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
             <p className="text-[11px] font-mono text-tl-med leading-relaxed">
               Model confidence is low for this response. Verify carefully.
             </p>
@@ -138,8 +140,8 @@ export default function MessageBubble({ message, onCitationClick }) {
         )}
 
         {/* ── Message bubble ─────────────────────────────────────────────── */}
-        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-tl-s2 text-tl-t1 shadow-sm border border-tl-b1/20">
-          <div className="text-[13.5px] leading-relaxed markdown-body">
+        <div className="px-8 py-7 rounded-[2rem] rounded-tl-sm bg-tl-s1 text-tl-t1 shadow-xl border border-tl-b1/30 transition-all hover:border-tl-gold/20">
+          <div className="text-[14.5px] leading-loose markdown-body font-sans selection:bg-tl-gold/30">
             <ReactMarkdown 
               remarkPlugins={[remarkGfm, remarkMath]} 
               rehypePlugins={[rehypeKatex]}
@@ -191,10 +193,10 @@ export default function MessageBubble({ message, onCitationClick }) {
 
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono">
               {[
-                { type: 'direct_quote', label: 'Direct Quotes', icon: '✓' },
-                { type: 'paraphrase', label: 'Paraphrases', icon: '⚠' },
-                { type: 'synthesis', label: 'Synthesis', icon: '⚘' },
-                { type: 'inference', label: 'Inferences', icon: '❌', alert: true },
+                { type: 'direct_quote', label: 'Direct Quotes', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> },
+                { type: 'paraphrase', label: 'Paraphrases', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+                { type: 'synthesis', label: 'Synthesis', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg> },
+                { type: 'inference', label: 'Inferences', icon: 'X', alert: true },
               ].map(({ type, label, icon, alert }) => {
                 const count = havfResults.filter(r => r.transformation_type?.toLowerCase() === type).length;
                 if (count === 0) return null;
@@ -207,7 +209,7 @@ export default function MessageBubble({ message, onCitationClick }) {
               })}
               {havfResults.some(r => r.transformation_type?.toLowerCase() === 'inference') && (
                 <div className="ml-auto text-[9px] text-tl-low font-bold flex items-center gap-1 animate-pulse">
-                  <span>⚠️ verify claims</span>
+                  <span>Check Verification</span>
                 </div>
               )}
             </div>

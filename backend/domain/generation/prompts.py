@@ -68,12 +68,15 @@ Return ONLY a markdown table with this exact header:
 | {table_separator} |
 
 Rules for the table:
+- Return ONLY a markdown table using the pipe symbol (|) for columns.
 - The rows must appear in exactly this order: Research problem and motivation, Methodology and approach, Key findings and results, Datasets used, Limitations acknowledged.
 - The first column must be the dimension name.
-- Each paper cell must contain 1-2 concise sentences and preserve citations using the exact paragraph IDs from the context (e.g. [abc12345_P12]).
-- The final synthesis column must summarize the cross-paper comparison for that row in 1 concise sentence with citations.
-- Use <br> inside a cell instead of adding extra newlines.
-- Do not add any prose before or after the table."""
+- IMPORTANT: Every table row MUST be a single line of text. Never use newlines or multiple lines for a single row.
+- Each paper cell must contain 1-2 concise sentences. The citation (e.g. [abc12345_P12]) MUST appear on the SAME LINE as the text, immediately following the sentence.
+- Use <br> inside a cell if you need a line break, but ensure the entire row remains one physical line in your response.
+- Do not add any prose, "Strategic Overview" headers, or intro/outro text. Return ONLY the table.
+- Do not use tabs. Use pipes (|) only.
+- Ensure the synthesis column is the final column in the table."""
 
 SUMMARY_PROMPT_TEMPLATE = """Context from the paper:
 {context}

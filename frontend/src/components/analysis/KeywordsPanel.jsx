@@ -11,7 +11,7 @@ export default function KeywordsPanel({ papers = [], sessionId }) {
   // Sync / Load cached keywords on papers or session change
   useEffect(() => {
     if (readyPapers.length === 0) return;
-    
+
     // Auto-select all by default when loaded
     setSelectedIds(new Set(readyPapers.map((p) => p.id)));
 
@@ -23,7 +23,7 @@ export default function KeywordsPanel({ papers = [], sessionId }) {
         if (saved) {
           cachedState[paper.id] = { loading: false, error: null, keywords: JSON.parse(saved) };
         }
-      } catch {}
+      } catch { }
     }
     setState((prev) => ({ ...prev, ...cachedState }));
   }, [papers]);
@@ -57,7 +57,7 @@ export default function KeywordsPanel({ papers = [], sessionId }) {
       setState((s) => ({ ...s, [paperId]: { loading: false, error: null, keywords: kws } }));
       try {
         localStorage.setItem(`tracelit_cached_keywords_${paperId}`, JSON.stringify(kws));
-      } catch {}
+      } catch { }
     } catch (err) {
       setState((s) => ({
         ...s,
@@ -88,84 +88,125 @@ export default function KeywordsPanel({ papers = [], sessionId }) {
   }
 
   return (
-    <section className="bg-tl-s1 border border-tl-b1 rounded-lg p-4 font-sans">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+    <section className="bg-tl-s1 border border-tl-b1 rounded-2xl p-6 md:p-8 shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-500">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8 bg-tl-s3/20 p-6 rounded-2xl border border-tl-b1/50">
         <div>
-          <h3 className="text-sm font-semibold text-tl-t1 uppercase tracking-wider font-sans">
+          <h1 className="text-xl font-serif font-bold text-tl-t1 tracking-tight">
             Keyword Analysis
-          </h3>
-          <p className="text-xs text-tl-t3 font-sans mt-0.5">
-            Select one or more papers to extract keywords.
+          </h1>
+          <p className="text-[13px] text-tl-t3 font-sans mt-1">
+            Map research trends and extract key terminology across your papers.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             onClick={toggleSelectAll}
-            className="px-2.5 py-1 text-xs font-sans bg-tl-s2 border border-tl-b1 text-tl-t2 rounded hover:bg-tl-b2 transition-all"
+            className="px-3 py-1.5 text-xs font-sans font-bold bg-tl-s2 border border-tl-b1 text-tl-t2 rounded-xl hover:bg-tl-b2 hover:text-tl-t1 transition-all duration-300 shadow-sm"
           >
             {selectedIds.size === readyPapers.length ? 'Deselect All' : 'Select All'}
           </button>
           <button
             onClick={handleExtractSelected}
             disabled={anyLoading || !sessionId || selectedIds.size === 0}
-            className="px-3 py-1 text-xs font-sans bg-tl-gold text-tl-bg rounded hover:opacity-90 disabled:opacity-40 transition-opacity"
+            className={`
+              flex items-center gap-2 px-5 py-2 rounded-xl font-sans text-xs font-bold uppercase tracking-widest transition-all duration-300
+              ${anyLoading || !sessionId || selectedIds.size === 0
+                ? 'bg-tl-s3 text-tl-t4 cursor-not-allowed opacity-50'
+                : 'bg-tl-gold text-tl-bg shadow-lg shadow-tl-gold/20 hover:scale-[1.02] active:scale-95'
+              }
+            `}
           >
-            {analysing ? 'Analysing…' : 'Analyse Selected'}
+            {anyLoading ? (
+              <>
+                <span className="w-3 h-3 border-2 border-tl-bg/30 border-t-tl-bg rounded-full animate-spin" />
+                Processing...
+              </>
+            ) : (
+              <span>Analyze Selected</span>
+            )}
           </button>
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {readyPapers.map((paper) => {
           const ps = state[paper.id];
           const isSelected = selectedIds.has(paper.id);
           const title = paper.title ?? paper.filename ?? paper.id;
 
           return (
-            <div key={paper.id} className={`bg-tl-s2 border rounded-md p-3 transition-all ${isSelected ? 'border-tl-gold/40' : 'border-tl-b1'}`}>
-              <div className="flex items-center justify-between mb-2 gap-2">
-                <div className="flex items-center gap-2 max-w-[75%] overflow-hidden">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggleSelect(paper.id)}
-                    className="w-3.5 h-3.5 rounded accent-tl-gold border-tl-b1 bg-tl-bg text-tl-gold focus:ring-tl-gold"
-                  />
-                  <p className="text-xs text-tl-t2 font-sans truncate select-none cursor-pointer" title={title} onClick={() => toggleSelect(paper.id)}>
-                    {title}
-                  </p>
+            <div
+              key={paper.id}
+              className={`
+                flex flex-col bg-tl-s2 border rounded-2xl p-5 transition-all duration-300 group
+                ${isSelected ? 'border-tl-gold/40 shadow-lg shadow-tl-gold/5' : 'border-tl-b1 hover:border-tl-b2'}
+              `}
+            >
+              <div className="flex items-start justify-between mb-4 gap-3">
+                <div className="flex items-start gap-3 flex-1 overflow-hidden">
+                  <div
+                    className="mt-1 cursor-pointer"
+                    onClick={() => toggleSelect(paper.id)}
+                  >
+                    <div className={`
+                      w-4 h-4 rounded-md border flex items-center justify-center transition-all
+                      ${isSelected ? 'bg-tl-gold border-tl-gold shadow-md' : 'bg-tl-bg border-tl-b1 group-hover:border-tl-b2'}
+                    `}>
+                      {isSelected && (
+                        <svg className="w-2.5 h-2.5 text-tl-bg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <p
+                      className={`text-[12px] font-sans font-semibold truncate select-none cursor-pointer leading-tight ${isSelected ? 'text-tl-t1' : 'text-tl-t2'}`}
+                      title={title}
+                      onClick={() => toggleSelect(paper.id)}
+                    >
+                      {title}
+                    </p>
+                    <p className="text-[9px] font-mono text-tl-t4 mt-1 uppercase tracking-widest">
+                      Paper Reference ID: {paper.id.slice(0, 8)}
+                    </p>
+                  </div>
                 </div>
                 <button
                   onClick={() => fetchKeywords(paper.id)}
                   disabled={ps?.loading}
-                  className="text-[11px] font-sans text-tl-gold hover:underline disabled:opacity-40"
+                  className="flex items-center gap-1 text-[10px] font-bold font-sans text-tl-gold hover:text-tl-t1 transition-colors disabled:opacity-40"
                 >
-                  {ps?.loading ? 'Loading…' : ps?.keywords ? 'Refresh' : 'Load'}
+                  {ps?.loading ? '...' : (ps?.keywords ? 'REFRESH' : 'LOAD')}
                 </button>
               </div>
 
               {ps?.error && (
-                <p className="text-xs text-tl-low font-sans mt-1">{ps.error}</p>
+                <div className="p-2 bg-tl-low/10 border border-tl-low/30 rounded-lg mt-1">
+                  <p className="text-[10px] text-tl-low font-sans font-medium">{ps.error}</p>
+                </div>
               )}
 
               {ps?.loading && (
-                <div className="flex gap-1 mt-1 animate-pulse">
-                  {[1, 2, 3].map((n) => (
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {[40, 60, 44, 72].map((w, i) => (
                     <div
-                      key={n}
-                      className="h-5 rounded bg-tl-b2"
-                      style={{ width: `${40 + n * 12}px` }}
+                      key={i}
+                      className="h-7 rounded-lg bg-tl-s1 animate-pulse"
+                      style={{ width: `${w}px` }}
                     />
                   ))}
                 </div>
               )}
 
               {ps?.keywords && ps.keywords.length === 0 && (
-                <p className="text-xs text-tl-t3 font-sans mt-1 select-none">No keywords extracted.</p>
+                <div className="h-12 flex items-center justify-center bg-tl-s1/30 rounded-xl border border-dashed border-tl-b1">
+                  <p className="text-[9px] text-tl-t4 font-mono uppercase tracking-widest">No evidence mapping found</p>
+                </div>
               )}
 
               {ps?.keywords && ps.keywords.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
+                <div className="flex flex-wrap gap-2 mt-auto">
                   {ps.keywords.map((kw) => {
                     const text = typeof kw === 'string' ? kw : kw.keyword ?? JSON.stringify(kw);
                     const score = typeof kw === 'object' ? (kw.score ?? null) : null;
@@ -173,11 +214,14 @@ export default function KeywordsPanel({ papers = [], sessionId }) {
                       <span
                         key={text}
                         title={score != null ? `Relevance: ${(score * 100).toFixed(0)}%` : undefined}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-sans bg-tl-gold/10 text-tl-gold border border-tl-gold/20 select-none"
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-sans font-medium bg-tl-s1 text-tl-t2 border border-tl-b1 hover:border-tl-gold/30 hover:text-tl-gold transition-all duration-300 select-none shadow-sm"
                       >
                         {text}
                         {score != null && (
-                          <span className="text-[10px] opacity-60">{(score * 100).toFixed(0)}%</span>
+                          <div className="flex items-center gap-1 border-l border-tl-b1 pl-2">
+                            <div className="w-1 h-1 rounded-full bg-tl-gold animate-pulse" />
+                            <span className="text-[9px] text-tl-gold font-bold">{(score * 100).toFixed(0)}%</span>
+                          </div>
                         )}
                       </span>
                     );

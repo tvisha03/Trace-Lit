@@ -153,6 +153,12 @@ export default function CitationTooltip({ havfItem, refLabel }) {
               {havfItem.transformation_type.replace("_", " ").toUpperCase()}
             </span>
           </div>
+          <p className="text-[10px] text-tl-hi font-bold mb-1">
+            {havfItem.transformation_type?.toLowerCase() === 'direct_quote' ? '✓ Can be cited directly without modification' : 
+             havfItem.transformation_type?.toLowerCase() === 'paraphrase' ? '⚠ Requires verification of wording accuracy' :
+             havfItem.transformation_type?.toLowerCase() === 'synthesis' ? '⚠ Must verify all contributing sources independently' :
+             havfItem.transformation_type?.toLowerCase() === 'inference' ? '❌ MUST be independently verified before citing' : ''}
+          </p>
           {havfItem.transformation_reason && (
             <p className="text-[10px] text-tl-t3 font-mono leading-snug italic">
               "{havfItem.transformation_reason}"

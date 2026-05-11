@@ -72,6 +72,7 @@ async def generate_review(
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
+        max_tokens=4096,
     )
 
     logger.info(f"Generated literature review using {provider.value}")
@@ -87,6 +88,7 @@ async def generate_gap_narrative(
     response_text, provider, _ = await llm.generate(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
+        max_tokens=4096,
     )
 
     logger.info(f"Generated gap analysis narrative using {provider.value}")
@@ -102,6 +104,7 @@ async def stream_review(
     async for token, provider_obj in llm.generate_streaming(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=user_prompt,
+        max_tokens=4096,
     ):
         yield (token, provider_obj)
 
