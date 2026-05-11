@@ -1,7 +1,7 @@
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from domain.generation.chat_engine import generate_response, ChatResponse
+from domain.generation.chat_engine import generate_response, ChatResponse, generate_suggested_questions
 from domain.generation.streaming import stream_chat_response
 from domain.verification.transformation_classifier import TransformationClassifier
 from infrastructure.db.crud.message_crud import create_message, get_recent_messages
@@ -244,3 +244,42 @@ async def chat_stream(
     except Exception as exc:
         logger.error(f"Error during chat stream setup: {exc}")
         raise
+
+
+async def get_suggested_questions(
+    session_id: str,
+    db: AsyncSession,
+    llm: FallbackChain,
+) -> list[str]:
+    """
+    Get suggested questions for a session, relevant to context and history.
+    """
+    from domain.generation.prompts import build_history_block
+    try:
+        # Fetch papers for context
+        papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+        
+        # Fetch recent chat history for session-specific relevance
+        messages = await get_recent_messages(db, session_id, max_turns=3)
+        history_text = build_history_block(messages, max_turns=3)
+
+        if not papers:
+            # If no papers, just use history to suggest follow-ups (if any)
+            return await generate_suggested_questions([], llm, history=history_text)
+
+        paper_metadata = [
+            {
+                "title": p.title,
+                "abstract": p.abstract,
+            }
+            for p in papers
+        ]
+
+        return await generate_suggested_questions(paper_metadata, llm, history=history_text)
+    except Exception as exc:
+        logger.error(f"Failed to get suggested questions: {exc}")
+        return [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]

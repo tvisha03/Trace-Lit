@@ -3,10 +3,8 @@ You help researchers understand, compare, and analyse academic papers.
 
 STRICT RULES:
 1. ONLY use information from the provided source paragraphs, figure descriptions, tables, and equations.
-2. EVERY factual claim MUST be cited using the EXACT paragraph ID shown in the context in square brackets
-   (for example: [abc12345_P12], [abc12345_F3], [abc12345_T2], [abc12345_E5]).
-   Copy the ID verbatim — do NOT invent IDs or use generic numbers like [P1] or [P2].
-3. If the answer is NOT in the provided context, say: "This information is not available in the uploaded papers."
+2. DO NOT use your pre-trained general knowledge. If the answer is NOT in the provided context, state: "This information is not available in the uploaded papers."
+3. EVERY factual claim MUST be cited using the EXACT paragraph ID shown in the context in square brackets (e.g. [abc12345_P12]).
 4. NEVER fabricate, assume, or infer information beyond what the sources state.
 5. When comparing papers, cite both sources for each comparison point.
 6. Use precise academic language. Be concise and specific.
@@ -39,8 +37,8 @@ Conversation history:
 
 User question: {question}
 
-Respond using ONLY the context above. Cite every claim with the EXACT paragraph ID from the context
-(e.g. [abc12345_P12]). Do NOT use generic numbers like [P1] — copy the full ID verbatim.
+Respond using ONLY the provided context. If the context does not contain enough information to answer, state: "This information is not available in the uploaded papers."
+DO NOT use your pre-trained knowledge to fill in gaps. EVERY factual claim MUST be cited with the EXACT paragraph ID from the context (e.g. [abc12345_P12]).
 """
 
 COMPARISON_PROMPT_TEMPLATE = """You are comparing {paper_count} academic papers.
@@ -94,23 +92,23 @@ Write in a clear, narrative style. Do NOT include paragraph IDs or citation brac
 """
 
 GAP_ANALYSIS_PROMPT_TEMPLATE = """You are analysing {paper_count} academic papers together.
-
-Papers under analysis:
-{paper_listing}
-
-Context from the papers:
-{context}
-
-Analyse the research landscape represented by ALL {paper_count} papers above:
-1. **Common themes**: What topics do multiple papers address? Identify which specific papers cover each theme.
-2. **Methodological gaps**: What approaches are underexplored across the set of papers? Which papers use which methods?
-3. **Missing perspectives**: What viewpoints, datasets, or populations are absent from the collective body of work?
-4. **Contradictions & agreements**: Where do the papers agree or disagree? Cite specific papers for each point.
-5. **Future directions**: Based on the limitations mentioned across ALL papers, what should be studied next?
-
-Ensure you reference ALL {paper_count} papers in your analysis, not just a subset.
-Cite every observation with the EXACT paragraph ID from the context (e.g. [abc12345_P12]).
+...
 Do NOT use generic numbers like [P1] — copy the full ID verbatim."""
+
+SUGGESTED_QUESTIONS_PROMPT_TEMPLATE = """You are a research assistant helping a scientist explore their paper library.
+Based on the following abstracts, generate 3-4 foundational and introductory research questions that help the user start their exploration.
+
+Papers:
+{metadata}
+
+STRICT RULES:
+1. Questions should be broad, high-level, and introductory (e.g., "What are the primary research gaps identified?", "Compare the core objectives of these papers.").
+2. DO NOT dive into deep technical nuances or specific experimental metrics.
+3. Ensure the questions are relevant to the papers' specific topics but maintain an accessible, 'bird's-eye view' perspective.
+4. Be concise and conversational.
+
+Return ONLY the questions, one per line, starting with a dash (-). No introductory or concluding text."""
+
 
 LITERATURE_REVIEW_PROMPT_TEMPLATE = """Context from multiple papers:
 {context}

@@ -131,12 +131,12 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
         <div className="max-w-4xl mx-auto px-8">
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
             <div className="flex-1">
-              <h1 className="text-xl md:text-2xl font-serif text-tl-t1 font-bold leading-tight tracking-tight mb-3">
+              <h1 className="text-lg md:text-xl font-serif text-tl-t1 font-bold leading-tight tracking-tight mb-3">
                 {title}
               </h1>
               <div className="flex flex-wrap items-center gap-4">
                 {meta && (
-                  <p className="font-mono text-[10px] text-tl-t4 uppercase tracking-[0.2em] font-bold">
+                  <p className="font-mono text-[9.5px] text-tl-t4 uppercase tracking-[0.2em] font-bold">
                     {meta}
                   </p>
                 )}
@@ -177,7 +177,7 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
                 onClick={() => fetchSummary()}
                 disabled={!isReady || loading}
                 className={`
-                  flex items-center justify-center gap-2 px-5 py-2 rounded-xl transition-all duration-300 font-sans text-xs font-bold uppercase tracking-widest shadow-lg
+                  flex items-center justify-center gap-2 px-4 py-1.5 rounded-lg transition-all duration-300 font-sans text-[11px] font-bold uppercase tracking-widest shadow-lg
                   ${!isReady || loading
                     ? 'bg-tl-s3 text-tl-t4 cursor-not-allowed'
                     : 'bg-tl-gold text-tl-bg shadow-tl-gold/20 hover:scale-[1.02] active:scale-95'}
@@ -185,7 +185,7 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
               >
                 {loading ? (
                   <>
-                    <div className="w-3.5 h-3.5 border-2 border-tl-bg/30 border-t-tl-bg rounded-full animate-spin" />
+                    <div className="w-3 h-3 border-2 border-tl-bg/30 border-t-tl-bg rounded-full animate-spin" />
                     <span>Processing</span>
                   </>
                 ) : (
@@ -202,11 +202,8 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
         <div className="max-w-4xl mx-auto px-8 py-10">
 
           {error && (
-            <div className="p-4 bg-tl-low/10 border border-tl-low/30 rounded-2xl mb-8 flex items-start gap-3">
-               <svg className="w-5 h-5 text-tl-low mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <p className="font-sans text-sm text-tl-low leading-relaxed font-medium">{error}</p>
+            <div className="p-4 bg-tl-low/10 border border-tl-low/30 rounded-xl mb-8 flex items-start gap-3">
+              <p className="font-sans text-[13px] text-tl-low leading-relaxed font-medium">{error}</p>
             </div>
           )}
 
@@ -264,10 +261,10 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
             <div className="pb-20">
               <div className="markdown-body-summary prose prose-invert prose-tl max-w-none 
                 prose-headings:font-serif prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-tl-t1
-                prose-p:text-tl-t2 prose-p:leading-relaxed prose-p:font-sans prose-p:text-[14px]
+                prose-p:text-tl-t2 prose-p:leading-relaxed prose-p:font-sans prose-p:text-[13px]
                 prose-strong:text-tl-t1 prose-strong:font-bold
                 prose-blockquote:border-l-tl-gold prose-blockquote:bg-tl-s1/30 prose-blockquote:px-6 prose-blockquote:py-1 prose-blockquote:rounded-r-xl
-                prose-li:text-tl-t2 prose-li:font-sans prose-li:text-[14px]
+                prose-li:text-tl-t2 prose-li:font-sans prose-li:text-[13px]
                 selection:bg-tl-gold/30">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {summary.summary}

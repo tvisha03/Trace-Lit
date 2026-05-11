@@ -27,7 +27,7 @@ const ANALYSIS_TOOLS = [
 ];
 
 const PAPER_TOOLS = [
-  { id: "source", icon: "", label: "Source", key: "S" },
+  { id: "papers", icon: "", label: "Papers", key: "P" },
 ];
 
 export default function Sidebar({

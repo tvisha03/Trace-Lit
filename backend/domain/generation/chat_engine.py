@@ -8,6 +8,7 @@ from domain.generation.prompts import (
     SUMMARY_PROMPT_TEMPLATE,
     build_context_block,
     build_history_block,
+    SUGGESTED_QUESTIONS_PROMPT_TEMPLATE,
 )
 from domain.retrieval.query_router import classify_query
 from domain.retrieval.retriever import retrieve, RetrievedChunk
@@ -702,3 +703,61 @@ async def generate_summary(
         max_tokens=settings.OLLAMA_CLOUD_MAX_TOKENS,
     )
     return response_text, provider
+
+
+async def generate_suggested_questions(
+    paper_metadata: list[dict],
+    llm: FallbackChain,
+    history: str = "(No conversation history)",
+) -> list[str]:
+    """
+    Generate 3-4 suggested questions based on paper metadata and conversation history.
+    """
+    if not paper_metadata:
+        return [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]
+
+    formatted_meta = []
+    for i, meta in enumerate(paper_metadata, 1):
+        title = meta.get("title") or f"Paper {i}"
+        abstract = meta.get("abstract") or "No abstract available."
+        formatted_meta.append(f"Paper {i}: {title}\nAbstract: {abstract[:400]}...")
+
+    metadata_text = "\n\n".join(formatted_meta)
+    
+    user_prompt = SUGGESTED_QUESTIONS_PROMPT_TEMPLATE.format(
+        metadata=metadata_text,
+        history=history
+    )
+    
+    try:
+        response_text, _, _ = await llm.generate(
+            system_prompt="You are a research assistant. Return ONLY a list of questions starting with -.",
+            user_prompt=user_prompt,
+            max_tokens=256
+        )
+        
+        # Parse questions starting with -
+        questions = []
+        for line in response_text.split("\n"):
+            line = line.strip()
+            if line.startswith("-"):
+                q = line.lstrip("-").strip()
+                if q:
+                    questions.append(q)
+        
+        return questions[:4] if questions else [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]
+    except Exception as exc:
+        logger.warning(f"Failed to generate suggested questions: {exc}")
+        return [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]

@@ -30,8 +30,15 @@ export default function ComparisonTable({ data = null }) {
   
   // If we have a structured table, we ONLY want to show the narrative overview, 
   // not the raw comparison text (which contains a redundant/incorrect markdown table).
-  const displayNarrative = (comparison_table.length > 0 ? (narrative || "") : (narrative || comparison || ""))
+  let displayNarrative = (comparison_table.length > 0 ? (narrative || "") : (narrative || comparison || ""))
     .replace(/<br\s*\/?>/gi, '\n');
+
+  // STRIP MARKDOWN TABLES from narrative if we have a structured table
+  if (comparison_table.length > 0) {
+    // Regex to match markdown tables: lines starting with | and containing |
+    displayNarrative = displayNarrative.replace(/(\r?\n|^)\|[^\n]+\|\r?\n\|[ \-:|]+\|(\r?\n\|[^\n]+\|)+/g, '');
+    displayNarrative = displayNarrative.trim();
+  }
 
   if (comparison_table.length === 0) {
     return (

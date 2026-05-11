@@ -16,6 +16,19 @@ async def get_chunks_by_paper(db: AsyncSession, paper_id: str) -> list[Chunk]:
     )
     return list(result.scalars().all())
 
+async def get_non_text_chunks_by_paper(db: AsyncSession, paper_id: str) -> list[Chunk]:
+    # In the database, Chunk.chunk_type is likely an enum or string. 
+    # We check for common non-text types.
+    from shared.enums import ChunkType
+    non_text_types = [ChunkType.FIGURE, ChunkType.TABLE, ChunkType.FORMULA]
+    result = await db.execute(
+        select(Chunk).where(
+            Chunk.paper_id == paper_id,
+            Chunk.chunk_type.in_(non_text_types)
+        )
+    )
+    return list(result.scalars().all())
+
 async def get_chunk_by_paragraph_id(
     db: AsyncSession, paper_id: str, paragraph_id: str
 ) -> Chunk | None:
@@ -26,7 +39,21 @@ async def get_chunk_by_paragraph_id(
     )
     return result.scalar_one_or_none()
 
+async def get_chunks_by_paragraph_ids(
+    db: AsyncSession, paper_id: str, paragraph_ids: list[str]
+) -> list[Chunk]:
+    if not paragraph_ids:
+        return []
+    result = await db.execute(
+        select(Chunk).where(
+            Chunk.paper_id == paper_id, Chunk.paragraph_id.in_(paragraph_ids)
+        )
+    )
+    return list(result.scalars().all())
+
 async def get_chunks_by_ids(db: AsyncSession, chunk_ids: list[str]) -> list[Chunk]:
+    if not chunk_ids:
+        return []
     result = await db.execute(select(Chunk).where(Chunk.id.in_(chunk_ids)))
     return list(result.scalars().all())
 

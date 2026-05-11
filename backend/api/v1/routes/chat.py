@@ -9,10 +9,11 @@ from api.v1.schemas import (
     VerificationItem,
     MessageListResponse,
     MessageResponse,
+    SuggestedQuestionsResponse,
 )
 from app.dependencies import get_db, get_faiss_store
 from infrastructure.llm.fallback_chain import FallbackChain
-from services.chat_service import chat, chat_stream
+from services.chat_service import chat, chat_stream, get_suggested_questions
 from infrastructure.db.crud.message_crud import get_messages_by_session, count_messages_by_session
 from shared.errors import TraceLitError
 from shared.utils.rate_limiter import SlidingWindowRateLimiter
@@ -125,5 +126,19 @@ async def get_messages(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get("/suggested-questions", response_model=SuggestedQuestionsResponse)
+async def suggested_questions(
+    session_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    llm = _get_llm(request)
+    questions = await get_suggested_questions(session_id, db, llm)
+    return SuggestedQuestionsResponse(
+        session_id=session_id,
+        questions=questions,
     )
 

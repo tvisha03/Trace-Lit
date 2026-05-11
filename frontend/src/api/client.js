@@ -175,6 +175,9 @@ export const chatApi = {
 
     return () => ctrl.abort();
   },
+
+  getSuggestedQuestions: (sessionId) =>
+    request(sp(sessionId, '/chat/suggested-questions')),
 };
 
 // ─── Comparison ───────────────────────────────────────────────────────────────

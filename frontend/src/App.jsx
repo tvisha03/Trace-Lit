@@ -496,7 +496,10 @@ function App() {
           isRightPanelOpen ? (
             <RightPanel
               rightTab={rightTab}
-              onRightTabChange={setRightTab}
+              onRightTabChange={(t) => {
+            setRightTab(t);
+            setIsRightPanelOpen(true);
+          }}
               papers={papers}
               progressMap={progressMap}
               sessionId={activeSession?.id}

@@ -40,17 +40,37 @@ export default function ChatInterface({
     useChatStore();
   const papers = usePaperStore((s) => s.papers);
 
-  // Backend uses uppercase enum values: COMPLETED, QUEUED, EXTRACTING, CHUNKING, EMBEDDING, FAILED
-  const readyPaperIds = papers
-    .filter((p) => p.status?.toUpperCase() === "COMPLETED")
-    .map((p) => p.id);
+  const [suggestedQuestions, setSuggestedQuestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  const fetchSuggestions = useCallback(async () => {
+    if (!session?.id) return;
+    setLoadingSuggestions(true);
+    try {
+      const res = await chatApi.getSuggestedQuestions(session.id);
+      setSuggestedQuestions(res.questions || []);
+    } catch (err) {
+      console.error("Failed to fetch suggested questions:", err);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }, [session?.id]);
 
   // Load chat history whenever the active session changes
   useEffect(() => {
     if (session?.id) {
       loadHistory(session.id);
+      fetchSuggestions();
     }
-  }, [session?.id, loadHistory]);
+  }, [session?.id, loadHistory, fetchSuggestions]);
+
+  // Refresh suggestions when papers change significantly
+  useEffect(() => {
+    const readyCount = papers.filter(p => p.status?.toUpperCase() === 'COMPLETED').length;
+    if (readyCount > 0) {
+      fetchSuggestions();
+    }
+  }, [papers.length]);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -110,6 +130,7 @@ export default function ChatInterface({
           useChatStore.setState({ loading: false });
           capturedHavf = [];
           accumulated = "";
+          fetchSuggestions();
         },
         onError: (err) => {
           setStreamingText("");
@@ -136,26 +157,61 @@ export default function ChatInterface({
   const isBusy = isStreaming || loading;
   const canSend = input.trim().length > 0 && !isBusy && !!session;
   const isEmpty = messages.length === 0 && !isStreaming;
+  const hasPapers = papers.some(p => p.status?.toUpperCase() === 'COMPLETED');
 
   return (
     <div className="flex flex-col h-full bg-tl-s2">
-
-
       {/* Message list */}
       <div className="flex-1 overflow-y-auto px-6 py-6 scroll-smooth">
         {isEmpty && (
-          <div className="flex flex-col items-center justify-center h-full text-center px-12 space-y-3">
-            <div className="w-16 h-16 bg-tl-s3 rounded-3xl flex items-center justify-center shadow-inner mb-2 border border-tl-b1/50">
-              <svg className="w-8 h-8 text-tl-gold/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
+          <div className="flex flex-col items-center justify-center h-full text-center px-12 space-y-6">
+            <div className="flex flex-col items-center">
+              <div className="w-16 h-16 bg-tl-s3 rounded-3xl flex items-center justify-center shadow-inner mb-4 border border-tl-b1/50 transition-transform duration-500 hover:scale-110">
+                <svg className="w-8 h-8 text-tl-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <p className="text-tl-t1 text-xl font-serif font-medium">
+                {hasPapers ? "Start your research journey." : "Welcome to TraceLit."}
+              </p>
+              <p className="text-tl-t3 text-sm font-sans max-w-xs leading-relaxed mt-1">
+                {hasPapers 
+                  ? "Ask TraceLit to verify claims, find patterns, or synthesize findings across your library." 
+                  : "Upload and index research papers to begin your collaborative literature analysis."}
+              </p>
             </div>
-            <p className="text-tl-t1 text-lg font-serif font-medium">
-              Start your research journey.
-            </p>
-            <p className="text-tl-t3 text-sm font-sans max-w-xs leading-relaxed">
-              Upload papers to your library and ask TraceLit to verify claims, find patterns, or synthesize findings.
-            </p>
+
+            {!hasPapers ? (
+              <div className="flex flex-col items-center gap-4 p-8 bg-tl-s2/30 border border-dashed border-tl-b1/50 rounded-3xl max-w-sm">
+                <div className="p-3 bg-tl-s3/50 rounded-full text-tl-t4">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                </div>
+                <p className="text-xs text-tl-t4 font-mono uppercase tracking-widest">Awaiting Knowledge Base</p>
+                <p className="text-[13px] text-tl-t3 leading-relaxed">
+                  Suggested questions will appear here once your papers are processed and ready for analysis.
+                </p>
+              </div>
+            ) : suggestedQuestions.length > 0 && (
+              <div className="flex flex-col items-center w-full max-w-2xl">
+                <span className="text-[10px] font-mono text-tl-t4 uppercase tracking-[0.2em] mb-4">Suggested Starters</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                  {suggestedQuestions.map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setInput(q)}
+                      className="group flex flex-col items-start gap-2 p-5 bg-tl-s2/30 backdrop-blur-sm border border-tl-b1/50 rounded-2xl hover:border-tl-gold/40 hover:bg-tl-s3 transition-all duration-500 shadow-sm hover:shadow-xl hover:-translate-y-1"
+                    >
+                      <div className="w-6 h-6 rounded-lg bg-tl-gold/5 flex items-center justify-center border border-tl-gold/10 group-hover:bg-tl-gold/10 transition-colors">
+                        <svg className="w-3 h-3 text-tl-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                      </div>
+                      <p className="text-[13px] text-tl-t2 group-hover:text-tl-t1 transition-colors leading-relaxed font-medium">
+                        {q}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -216,8 +272,8 @@ export default function ChatInterface({
         {!session && !sessionError && (
           <div className="flex items-center gap-3 mb-3 px-2">
             <span className="inline-block w-4 h-4 border-2 border-tl-gold border-t-transparent rounded-full animate-spin" />
-            <p className="text-xs text-tl-t3 font-mono tracking-tight">
-              Initializing neural session…
+            <p className="text-sm text-tl-gold font-mono uppercase tracking-[0.2em] animate-pulse">
+              Initializing session…
             </p>
           </div>
         )}

@@ -163,6 +163,12 @@ class ChatResponse(BaseModel):
     latency_ms: float
 
 
+class SuggestedQuestionsResponse(BaseModel):
+    session_id: str
+    questions: list[str]
+
+
+
 class MessageResponse(BaseModel):
     id: str
     role: str

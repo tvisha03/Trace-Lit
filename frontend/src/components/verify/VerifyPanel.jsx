@@ -150,13 +150,13 @@ export default function VerifyPanel({ sessionId, papers, initialHavfItem, onUplo
           </p>
           <p className="text-tl-t3 text-sm font-sans max-w-sm leading-relaxed mb-1">
             {readyPapers.length === 0
-              ? 'Upload and process PDFs to enable neural verification of custom claims.'
+              ? 'Upload and process PDFs to enable verification of custom claims.'
               : 'Enter any technical claim or observation to verify its groundedness across your indexed library.'}
           </p>
           {readyPapers.length === 0 && (
             <button
               onClick={onUpload}
-              className="mt-6 px-6 py-2 rounded-xl text-[10px] font-sans font-bold uppercase tracking-[0.15em] text-tl-bg bg-tl-hi hover:bg-tl-hi/90 transition-all shadow-lg"
+              className="mt-6 px-4 py-1.5 rounded-lg text-[9.5px] font-sans font-bold uppercase tracking-[0.12em] text-tl-bg bg-tl-hi hover:bg-tl-hi/90 transition-all shadow-lg"
             >
               Upload Papers
             </button>

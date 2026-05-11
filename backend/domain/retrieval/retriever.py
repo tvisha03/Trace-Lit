@@ -78,22 +78,14 @@ async def _build_chunks(
     score_map: dict[str, float],
     db_session,
 ) -> list[RetrievedChunk]:
+    from infrastructure.db.crud.chunk_crud import get_chunks_by_paragraph_ids
     retrieved: list[RetrievedChunk] = []
     for paper_id, para_ids in para_by_paper.items():
-        chunks = await get_chunks_by_paper(db_session, paper_id)
-        para_set = set(para_ids)
+        # Optimization: Only fetch the chunks we actually found in FAISS
+        chunks = await get_chunks_by_paragraph_ids(db_session, paper_id, para_ids)
         for chunk in chunks:
-            if chunk.paragraph_id not in para_set:
-                continue
             cid = f"{paper_id}::{chunk.paragraph_id}"
-            if cid in score_map:
-                score = score_map[cid]
-            else:
-                logger.warning(
-                    f"Score map miss for {cid} — using 0.0. "
-                    "Possible ID format mismatch between FAISS and DB."
-                )
-                score = 0.0
+            score = score_map.get(cid, 0.0)
             retrieved.append(RetrievedChunk(
                 paragraph_id=chunk.paragraph_id,
                 paper_id=str(chunk.paper_id),
@@ -117,24 +109,25 @@ async def _boost_non_text_chunks(
     paper_ids: list[str],
     query: str = "",
 ) -> list[RetrievedChunk]:
+    from infrastructure.db.crud.chunk_crud import get_non_text_chunks_by_paper
     existing_pids = {(c.paper_id, c.paragraph_id) for c in retrieved}
     non_text_added: list[RetrievedChunk] = []
     query_words = [w.lower() for w in query.split() if len(w) >= 3] if query else []
+    
     for paper_id in paper_ids:
         paper_count = 0
-        all_chunks = await get_chunks_by_paper(db_session, paper_id)
-        # Score each chunk by keyword matching
+        # Optimization: Only fetch non-text chunks (figures, tables, etc.)
+        all_non_text = await get_non_text_chunks_by_paper(db_session, paper_id)
+        
         scored_candidates = []
-        for chunk in all_chunks:
-            if not _is_non_text_chunk(chunk):
-                continue
+        for chunk in all_non_text:
             if (str(chunk.paper_id), chunk.paragraph_id) in existing_pids:
                 continue
+            
             match_count = sum(1 for w in query_words if w in (chunk.enriched_text or "").lower()) if query_words else 0
             score = _NON_TEXT_MIN_SCORE + (match_count * 0.1)
             scored_candidates.append((score, chunk))
         
-        # Sort candidates by their match score descending
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
         for score, chunk in scored_candidates:
             non_text_added.append(_chunk_to_retrieved(chunk, score=score))
