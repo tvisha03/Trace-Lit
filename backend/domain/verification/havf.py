@@ -9,8 +9,11 @@ from shared.enums import ConfidenceLevel, VerificationMethod
 from shared.utils.text_utils import split_into_sentences
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
+# pyrefly: ignore [missing-import]
 import numpy as np
+# pyrefly: ignore [missing-import]
 from sqlalchemy import select
+# pyrefly: ignore [missing-import]
 import pymupdf
 from infrastructure.db.database import async_session_factory
 from infrastructure.db.models.paper import Paper

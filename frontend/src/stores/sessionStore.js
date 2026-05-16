@@ -17,7 +17,7 @@ const useSessionStore = create((set, get) => ({
       return list;
     } catch (err) {
       set({ error: err.message, loading: false });
-      return [];
+      throw err;
     }
   },
 

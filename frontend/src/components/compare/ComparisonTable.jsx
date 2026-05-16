@@ -109,8 +109,8 @@ export default function ComparisonTable({ data = null }) {
           <table className="min-w-full border-collapse">
             <thead>
               <tr className="bg-tl-s2/50">
-                <th className="sticky left-0 z-10 bg-tl-s2/80 backdrop-blur-md px-6 py-5 text-left font-mono text-[11px] font-bold text-tl-t3 uppercase tracking-[0.15em] border-b border-tl-b1 w-48 shrink-0">
-                  Dimension
+                <th className="sticky left-0 z-10 bg-tl-s2/80 backdrop-blur-md px-6 py-5 text-left font-mono text-[11px] font-bold text-tl-gold uppercase tracking-[0.15em] border-b border-tl-b1 w-48 shrink-0">
+                  Dimensions
                 </th>
                 {paperCols.map((title, i) => (
                   <th

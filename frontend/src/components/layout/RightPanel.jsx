@@ -204,7 +204,6 @@ function PapersTab({ papers, progressMap, activePaperId, onPaperChange, onUpload
                   className="text-[9px] font-mono text-tl-t4 hover:text-tl-low uppercase tracking-widest font-bold flex items-center gap-1.5 transition-colors"
                 >
                   <span>Delete Source</span>
-                  <span>Delete Source</span>
                 </button>
               </div>
             </div>

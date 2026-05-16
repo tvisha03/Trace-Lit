@@ -75,7 +75,8 @@ function App() {
           setActiveSession(matched);
         } else if (fetchedSessions?.length > 0) {
           setActiveSession(fetchedSessions[0]);
-        } else {
+        } else if (fetchedSessions?.length === 0 && !savedId) {
+          // Only create Session 1 if truly empty and no previous session was tracked
           try {
             await createSession("Session 1");
           } catch (createErr) {
@@ -85,6 +86,10 @@ function App() {
               "Failed to create session. Is the backend running?",
             );
           }
+        } else if (fetchedSessions?.length === 0 && savedId) {
+          // If we have a saved ID but no sessions returned, maybe the backend is still loading
+          // or the sessions were deleted. For now, just don't create a new one automatically.
+          console.warn("[App] Saved session ID exists but no sessions returned from backend.");
         }
       }
     } catch (err) {
