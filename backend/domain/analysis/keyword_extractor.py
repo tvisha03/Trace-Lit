@@ -34,6 +34,7 @@ class KeywordModelFactory:
             from app.config import get_settings
             keybert_model_name = get_settings().KEYBERT_MODEL
             with timer("Load KeyBERT model"):
+                # pyrefly: ignore [missing-import]
                 from keybert import KeyBERT
                 self._model = KeyBERT(model=keybert_model_name)
                 logger.info(f"KeyBERT model loaded into memory ({keybert_model_name})")

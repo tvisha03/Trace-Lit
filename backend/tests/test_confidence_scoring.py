@@ -7,7 +7,9 @@ Covers:
 - Citation correction logic
 """
 
+# pyrefly: ignore [missing-import]
 import pytest
+# pyrefly: ignore [missing-import]
 import numpy as np
 from unittest.mock import patch, MagicMock
 

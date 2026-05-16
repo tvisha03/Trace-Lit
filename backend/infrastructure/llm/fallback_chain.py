@@ -21,12 +21,12 @@ logger = get_logger(__name__)
 
 class FallbackChain:
 
-    def __init__(self) -> None:
+    def __init__(self, use_local_only: bool | None = None) -> None:
         settings = get_settings()
         self._max_retries = settings.LLM_MAX_RETRIES
         self._retry_delay = settings.LLM_RETRY_DELAY_BASE
         self._request_timeout = settings.REQUEST_TIMEOUT
-        self._providers = self._build_chain()
+        self._providers = self._build_chain(use_local_llm=use_local_only)
         self._rate_monitor = RateLimitMonitor()
 
     @property
@@ -75,8 +75,8 @@ class FallbackChain:
                 ]
             else:
                 order = [
-                    LLMProvider.GEMINI,
                     LLMProvider.GROQ,
+                    LLMProvider.GEMINI,
                     LLMProvider.OLLAMA,
                 ]
 
@@ -176,6 +176,10 @@ class FallbackChain:
                     logger.info(f"Skipping {provider.provider.value} — over rate budget")
                     errors.append(f"{provider.provider.value}: rate_budget_exceeded")
                     continue
+
+            # Trim prompt if falling back to local to avoid Ollama internal truncation
+            if provider.provider == LLMProvider.OLLAMA:
+                user_prompt = self._trim_prompt_for_local(user_prompt, max_tokens)
 
             result = await self._try_provider(
                 provider, system_prompt, user_prompt, temperature, max_tokens,
@@ -294,6 +298,55 @@ class FallbackChain:
 
         logger.error(f"All providers failed for streaming: {errors}")
         raise AllProvidersFailedError()
+
+    def _trim_prompt_for_local(self, user_prompt: str, max_tokens: int) -> str:
+        """Trim the context portion of the prompt to fit within local model context limits."""
+        settings = get_settings()
+        limit = max(512, settings.OLLAMA_NUM_CTX - max_tokens - 100)  # Safety margin
+        
+        # Simple token estimation (4 chars per token)
+        current_est = len(user_prompt) // 4
+        if current_est <= limit:
+            return user_prompt
+            
+        logger.info(f"Trimming prompt for local model: {current_est} -> ~{limit} tokens")
+        
+        # Look for "Context from uploaded papers:" marker
+        parts = user_prompt.split("Context from uploaded papers:")
+        if len(parts) < 2:
+            return user_prompt[:limit * 4]
+            
+        header = parts[0] + "Context from uploaded papers:\n"
+        rest = parts[1]
+        
+        # Look for the question/history footer
+        footer_parts = rest.split("\n\nConversation history:")
+        if len(footer_parts) < 2:
+            # No history, maybe just question
+            footer_parts = rest.split("\n\nUser question:")
+            if len(footer_parts) < 2:
+                return user_prompt[:limit * 4]
+            
+            context = footer_parts[0]
+            footer = "\n\nUser question:" + footer_parts[1]
+        else:
+            context = footer_parts[0]
+            footer = "\n\nConversation history:" + footer_parts[1]
+            
+        # Keep as much of the context as fits
+        available_chars = (limit * 4) - len(header) - len(footer)
+        if available_chars <= 0:
+            return header + footer # Worst case
+            
+        # Trim from the beginning of the context (usually oldest/least relevant chunks)
+        # but keep full paragraphs
+        trimmed_context = context[-available_chars:]
+        # Find the first full [P#] block
+        first_p = trimmed_context.find("[P")
+        if first_p != -1:
+            trimmed_context = trimmed_context[first_p:]
+            
+        return header + trimmed_context + footer
 
     async def _should_retry_server_error(
         self,

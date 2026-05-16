@@ -2,7 +2,8 @@ import asyncio
 import uuid
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+# pyrefly: ignore [missing-import]
+from sqlalchemy.ext.asyncio import AsyncSession # pyreflow: ignore
 
 from domain.extraction.pdf_processor import extract_pdf
 from domain.extraction.section_parser import parse_sections

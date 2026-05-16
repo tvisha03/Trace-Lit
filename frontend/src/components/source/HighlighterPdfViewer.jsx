@@ -32,7 +32,7 @@ export default function HighlighterPdfViewer({
     setPageNumber(targetPage !== undefined ? targetPage + 1 : 1);
     setMatchedPage(null); // Reset matched page until locatePage runs
   }
-  const [scale, setScale] = useState(1.0);
+  const [scale, setScale] = useState(0.9);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [pageViewport, setPageViewport] = useState(null);
@@ -292,8 +292,7 @@ export default function HighlighterPdfViewer({
       const isNumeric = /[\d]/.test(rawItem) && rawItem.trim().length <= 10;
       if (isNumeric && normalizedItem.length >= 1) {
         if (
-          normalizedSearch.includes(normalizedItem) ||
-          normalizedClaim.includes(normalizedItem)
+          normalizedSearch.includes(normalizedItem)
         ) {
           highlightCountRef.current++;
           return `<mark class="pdf-highlight" id="highlight-${highlightCountRef.current}">${rawItem}</mark>`;
@@ -729,48 +728,6 @@ export default function HighlighterPdfViewer({
         </div>
       </div>
 
-      {/* Highlight legend */}
-      {bbox && (pageNumber === (targetPage + 1) || pageNumber === matchedPage) && !loading && !loadError && (
-        <div className="flex-shrink-0 px-3 py-1.5 bg-tl-s2 border-t border-tl-b1 text-[9px] font-mono text-tl-t4 flex items-center gap-2">
-          <span
-            className={`inline-block px-1.5 rounded uppercase tracking-wider font-bold ${
-              chunkType === "table" || chunkType === "figure" || chunkType === "equation"
-                ? "bg-amber-500/20 text-amber-400"
-                : useParagraphFallback
-                ? "bg-tl-med/20 text-tl-med"
-                : "bg-tl-gold/40 text-tl-bg"
-            }`}
-          >
-            {chunkType === "table"
-              ? "Table"
-              : chunkType === "figure"
-              ? "Figure"
-              : chunkType === "equation"
-              ? "Equation"
-              : useParagraphFallback
-              ? "Paragraph Fallback"
-              : "Direct Match"}
-          </span>
-          <span className="truncate max-w-[80%] text-tl-t2">
-            {chunkType === "table"
-              ? (bbox?.caption_text ? `${bbox.caption_text} — Table rendered as image, row-level highlighting unavailable` : "Table rendered as image — row-level highlighting unavailable")
-              : chunkType === "figure"
-              ? "Figure content referenced - caption and surrounding context highlighted."
-              : useParagraphFallback
-              ? "Showing paragraph - exact sentence could not be isolated."
-              : highlightText || "Exact retrieved source chunk highlighted."}
-          </span>
-          {chunkType === "table" && highlightText && (
-            <button
-              onClick={handleCopyText}
-              className="ml-auto flex items-center gap-1 px-2 py-0.5 bg-tl-s3 border border-tl-b1 rounded text-[8px] font-mono text-tl-t3 hover:text-tl-gold transition-all"
-              title="Copy table data"
-            >
-              📋 Copy Data
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

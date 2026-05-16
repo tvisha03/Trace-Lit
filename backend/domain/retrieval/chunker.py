@@ -148,10 +148,13 @@ def _build_chunk(
 
     prefix_parts = []
     if paper_title:
-        prefix_parts.append(f"[Paper: {paper_title}]")
+        prefix_parts.append(f"[{paper_title}]")
     if section_title:
-        prefix_parts.append(f"[Section: {section_title}]")
+        prefix_parts.append(f"[{section_title}]")
     prefix = " ".join(prefix_parts)
+    
+    # Prepend to both text (for UI/Context) and enriched_text (for LLM)
+    text = f"{prefix} {text}" if prefix else text
     enriched_text = f"{prefix} {text}" if prefix else text
 
     return Chunk(
@@ -263,14 +266,15 @@ def create_figure_chunks(
 
         prefix_parts = []
         if paper_title:
-            prefix_parts.append(f"[Paper: {paper_title}]")
+            prefix_parts.append(f"[{paper_title}]")
         prefix_parts.append(f"[Figure on page {fig.page_number}, type: {fig_type}]")
         if caption:
             prefix_parts.append(f"[Caption: {caption}]")
         prefix = " ".join(prefix_parts)
-        enriched_text = f"{prefix} {text}"
-
+        
         display_text = f"{caption}\n{text}" if caption else text
+        display_text = f"{prefix} {display_text}"
+        enriched_text = f"{prefix} {text}"
 
         sentence_map = {
             f"{paragraph_id}_S0": {
@@ -326,9 +330,8 @@ def _build_table_text_variants(
     table_content: str,
 ) -> tuple[str, str, str]:
     prefix_parts = []
-    prefix_parts = []
     if paper_title:
-        prefix_parts.append(f"[Paper: {paper_title}]")
+        prefix_parts.append(f"[{paper_title}]")
     prefix_parts.append(f"[TABLE, page {page_number}, {rows} rows × {cols} cols]")
     if caption:
         prefix_parts.append(f"[Caption: {caption}]")
@@ -337,6 +340,8 @@ def _build_table_text_variants(
     semantic_desc = _build_table_semantic_description(paper_title, caption, rows, cols)
 
     display_text = f"{caption}\n{table_content}" if caption else table_content
+    display_text = f"{prefix}\n{display_text}"
+    
     enriched_text = (
         f"{prefix}\n{semantic_desc}\n{table_content}"
         if semantic_desc
@@ -417,7 +422,7 @@ def create_formula_chunks(
 
         prefix_parts = []
         if paper_title:
-            prefix_parts.append(f"[Paper: {paper_title}]")
+            prefix_parts.append(f"[{paper_title}]")
         prefix_parts.append(
             f"[Equation on page {formula.page_number}, type: {formula_type}]"
         )
@@ -427,6 +432,7 @@ def create_formula_chunks(
 
         display_text = f"{context}\n{text}" if context else text
         clean_text = _strip_image_markdown(display_text)
+        clean_text = f"{prefix}\n{clean_text}"
         enriched_text = f"{prefix}\n{clean_text}"
 
         sentence_map = {

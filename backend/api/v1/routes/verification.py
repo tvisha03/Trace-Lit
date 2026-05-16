@@ -12,7 +12,7 @@ from shared.utils.rate_limiter import SlidingWindowRateLimiter
 router = APIRouter()
 
 _verify_limiter = SlidingWindowRateLimiter(
-    max_calls=10, window_seconds=60.0, resource_name="verification requests",
+    max_calls=20, window_seconds=60.0, resource_name="verification requests",
 )
 
 @router.post("/{session_id}", response_model=VerifyResponse)

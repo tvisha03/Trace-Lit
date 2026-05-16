@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import AsyncGenerator
 
@@ -181,8 +182,9 @@ async def generate_paper_summary(
     selected = _select_summary_chunks(chunks)
     context = build_context_block(selected)
     user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
-        context=context, question=user_question
+        context=context, question=user_question, paper_title=paper.title or paper.filename
     )
+
 
     import re
     summary_text, provider, _ = await llm.generate(
@@ -233,8 +235,9 @@ async def stream_paper_summary(
         selected = _select_summary_chunks(chunks)
         context = build_context_block(selected)
         user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
-            context=context, question=user_question
+            context=context, question=user_question, paper_title=paper.title or paper.filename
         )
+
 
         async for token, provider_obj in llm.generate_streaming(
             system_prompt=SUMMARY_SYSTEM_PROMPT,

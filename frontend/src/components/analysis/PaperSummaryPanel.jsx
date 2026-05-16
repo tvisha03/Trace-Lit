@@ -57,14 +57,16 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
             ...prev,
             summary: (prev?.summary || '') + token,
           };
+          // Robust stripping of all citation formats
           next.summary = next.summary
-            .replace(/\[[a-zA-Z0-9_\-]+_[PFTEpfte]\d+\]/g, '')
-            .replace(/\[P\d+\]/g, '');
+            .replace(/\s*\[(?:[a-f0-9]{6,}_)?(?:[PTFEptfe]\d+)\]/g, '');
+
           try {
             localStorage.setItem(`tracelit_cached_summary_${paper.id}`, JSON.stringify(next));
           } catch { }
           return next;
         });
+
       },
       onDone: (data) => {
         setLoading(false);
@@ -73,8 +75,8 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
           setSummary(null);
         } else {
           const cleaned = data.full_text
-            .replace(/\[[a-zA-Z0-9_\-]+_[PFTEpfte]\d+\]/g, '')
-            .replace(/\[P\d+\]/g, '');
+            .replace(/\s*\[(?:[a-f0-9]{6,}_)?(?:[PTFEptfe]\d+)\]/g, '');
+
           const next = {
             summary: cleaned,
             title: data.title || paper.title,
@@ -261,11 +263,15 @@ export default function PaperSummaryPanel({ sessionId, paper }) {
             <div className="pb-20">
               <div className="markdown-body-summary prose prose-invert prose-tl max-w-none 
                 prose-headings:font-serif prose-headings:font-bold prose-headings:tracking-tight prose-headings:text-tl-t1
-                prose-p:text-tl-t2 prose-p:leading-relaxed prose-p:font-sans prose-p:text-[13px]
-                prose-strong:text-tl-t1 prose-strong:font-bold
+                prose-h1:text-3xl prose-h1:text-center prose-h1:bg-gradient-to-r prose-h1:from-tl-t1 prose-h1:to-tl-t3 prose-h1:bg-clip-text prose-h1:text-transparent prose-h1:mb-8
+                prose-h2:text-2xl prose-h2:border-b-2 prose-h2:border-tl-gold/30 prose-h2:pb-2 prose-h2:mt-10
+                prose-h3:text-lg prose-h3:mt-8
+                prose-p:text-tl-t2 prose-p:leading-relaxed prose-p:font-sans prose-p:text-[14px] prose-p:text-justify
+                prose-strong:text-tl-gold prose-strong:font-bold
                 prose-blockquote:border-l-tl-gold prose-blockquote:bg-tl-s1/30 prose-blockquote:px-6 prose-blockquote:py-1 prose-blockquote:rounded-r-xl
-                prose-li:text-tl-t2 prose-li:font-sans prose-li:text-[13px]
+                prose-li:text-tl-t2 prose-li:font-sans prose-li:text-[14px]
                 selection:bg-tl-gold/30">
+
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {summary.summary}
                 </ReactMarkdown>

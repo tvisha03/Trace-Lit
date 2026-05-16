@@ -1,4 +1,5 @@
 import difflib
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Any, List
@@ -31,21 +32,71 @@ class TransformationClassifier:
     6. Default to UNCERTAIN
     """
     
-    UNSUPPORTED_SEMANTIC_THRESHOLD = 0.45
-    DIRECT_QUOTE_STRING_THRESHOLD = 0.85
-    DIRECT_QUOTE_SEMANTIC_THRESHOLD = 0.85
+    UNSUPPORTED_SEMANTIC_THRESHOLD = 0.40
+    DIRECT_QUOTE_STRING_THRESHOLD = 0.75
+    DIRECT_QUOTE_SEMANTIC_THRESHOLD = 0.80
     SYNTHESIS_DOMINANCE_HIGH = 0.75
-    SYNTHESIS_DOMINANCE_MARGIN = 0.10
-    SYNTHESIS_MULTIPLE_THRESHOLD = 0.55
-    PARAPHRASE_SEMANTIC_THRESHOLD = 0.70
-    INFERENCE_SEMANTIC_LOWER = 0.40
-    INFERENCE_SEMANTIC_UPPER = 0.70
-    INFERENCE_CE_THRESHOLD = 0.55
+    SYNTHESIS_DOMINANCE_MARGIN = 0.12
+    SYNTHESIS_MULTIPLE_THRESHOLD = 0.45  # Lowered to capture narrative comparisons
+    PARAPHRASE_SEMANTIC_THRESHOLD = 0.70  # More permissive handoff
+    INFERENCE_SEMANTIC_LOWER = 0.40  
+    INFERENCE_SEMANTIC_UPPER = 0.70  
+    INFERENCE_CE_THRESHOLD = 0.50  # More permissive for logical jumps
+
+    @staticmethod
+    def _strip_llm_prefixes(text: str) -> str:
+        """Remove common LLM prefix phrases before comparing."""
+        prefixes_to_strip = [
+            "in the paper, ",
+            "in the transformer paper, ",
+            "in this paper, ",
+            "according to the paper, ",
+            "the paper states that ",
+            "the paper states ",
+            "based on the paper, ",
+            "as described in the paper, ",
+            "as described in the transformer paper, ",
+            "the paper mentions that ",
+            "the paper mentions ",
+            "according to vaswani et al., ",
+            "according to devlin et al., ",
+            "according to radford et al., ",
+            "in the transformer architecture, ",
+            "in the original transformer, ",
+        ]
+        
+        text_lower = text.lower().strip()
+        
+        for prefix in prefixes_to_strip:
+            if text_lower.startswith(prefix):
+                text = text[len(prefix):]
+                break
+        
+        return text.strip()
 
     def _compute_string_similarity(self, a: str, b: str) -> float:
         if not a or not b:
             return 0.0
-        return difflib.SequenceMatcher(None, a, b).ratio()
+            
+        # Strip LLM prefixes from generated text (a)
+        cleaned_a = self._strip_llm_prefixes(a)
+        
+        # Normalize: lower, strip, and REMOVE punctuation/extra spaces
+        def normalize(text):
+            t = text.lower().strip()
+            # Remove punctuation
+            t = re.sub(r'[^\w\s]', '', t)
+            # Collapse multiple spaces
+            t = re.sub(r'\s+', ' ', t)
+            return t.strip()
+        
+        norm_a = normalize(cleaned_a)
+        norm_b = normalize(b)
+        
+        if not norm_a or not norm_b:
+            return 0.0
+            
+        return difflib.SequenceMatcher(None, norm_a, norm_b).ratio()
 
     def _detect_source_dominance(self, winning_score: float, all_retrieved_sources: List[Dict[str, Any]]) -> bool:
         """
@@ -111,12 +162,15 @@ class TransformationClassifier:
         string_sim = self._compute_string_similarity(claim, source_sentence)
         is_dominant = self._detect_source_dominance(sem_score, all_retrieved_sources)
         
+        comparative_keywords = bool(re.search(r"\b(both|while|whereas|differ|compare|contrast|instead|similar|unlike)\b", claim.lower()))
+        
         signals = {
             "string_similarity": string_sim,
             "semantic_similarity": sem_score,
             "cross_encoder_score": ce_score,
             "is_dominant": is_dominant,
-            "all_sources_count": len(all_retrieved_sources)
+            "all_sources_count": len(all_retrieved_sources),
+            "comparative_keywords": comparative_keywords
         }
         
         # 1. Check UNSUPPORTED first
@@ -138,11 +192,13 @@ class TransformationClassifier:
             )
             
         # 3. Then SYNTHESIS
-        if not is_dominant:
+        # Trigger if multiple contribute (is_dominant=False) OR 
+        # if the claim explicitly compares and we have multiple papers available
+        if not is_dominant or (signals["comparative_keywords"] and signals["all_sources_count"] > 1):
             return TransformationResult(
                 type=TransformationType.SYNTHESIS.value, 
-                confidence=0.78, 
-                reason="Multiple papers contribute significantly, none dominates", 
+                confidence=0.82, 
+                reason="Synthesis of multiple paper ideas or comparative analysis", 
                 signals=signals
             )
             

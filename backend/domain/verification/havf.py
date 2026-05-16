@@ -37,6 +37,10 @@ _TABLE_DESC_LINE_RE = re.compile(
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _MAX_DISPLAY_CHARS = 300
 
+# Cache for table enhancement results to avoid redundant LLM calls during a request
+# Key: (paper_id, paragraph_id), Value: bbox dict
+_TABLE_ENHANCEMENT_CACHE: dict[tuple[str, str], dict] = {}
+
 
 def _clean_table_source(stripped: str, caption: str | None) -> str:
     stripped = _TABLE_DESC_LINE_RE.sub("", stripped).strip()
@@ -183,14 +187,30 @@ def _extract_cited_para_id(claim: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
-    index: dict[str, dict] = {}
+def _build_para_source_index(source_sentences: list[dict]) -> dict[str, list[dict]]:
+    # Change: Store a list of candidates for each ID to handle multi-paper collisions
+    index: dict[str, list[dict]] = {}
     for src in source_sentences:
         pid = src.get("paragraph_id")
-        if pid and pid not in index:
-            # Also handle the sentence-level key if needed, 
-            # but primary index is by paragraph_id for citation matching
-            index[pid] = src
+        if not pid:
+            continue
+            
+        # Index by full ID (abc12345_P12)
+        if pid not in index:
+            index[pid] = [src]
+        else:
+            index[pid].append(src)
+            
+        # Also index by short ID (P12)
+        short_id = pid.split("_")[-1] if "_" in pid else pid
+        if short_id not in index:
+            index[short_id] = [src]
+        else:
+            # If P12 already exists (from another paper), add this one as a candidate
+            # Avoid adding the same exact src twice if pid was already short
+            if src not in index[short_id]:
+                index[short_id].append(src)
+                
     return index
 
 
@@ -206,22 +226,38 @@ def _apply_citation_correction(
     corrected = []
     for result in results:
         cited_pid = _extract_cited_para_id(result.claim)
+        
+        # Check all candidates for this ID
+        candidates = []
         if cited_pid and cited_pid in para_source_index:
-            src = para_source_index[cited_pid]
+            candidates = para_source_index[cited_pid]
+
+        if candidates:
+            if len(candidates) == 1:
+                src = candidates[0]
+            else:
+                # Disambiguate across multiple papers using the reranker.
+                # We wrap the claim in a dict as expected by rerank_claims.
+                temp_results = [{"claim": result.claim}]
+                rerank_claims(temp_results, source_sentences=candidates)
+                
+                # The reranker updates the dict in-place with the winning paragraph_id.
+                winner_pid = temp_results[0].get("paragraph_id")
+                src = next((c for c in candidates if c["paragraph_id"] == winner_pid), candidates[0])
+
             
-            # If the current result already matched the cited PID, keep it
-            if result.paragraph_id == cited_pid:
+            # If the current result already matched the winner, keep it
+            if result.paragraph_id == src["paragraph_id"]:
                 corrected.append(result)
                 continue
 
-            # If it matched something ELSE, we must re-evaluate against the cited PID
-            # to ensure the 'Source' shown in UI actually matches the claim.
-            logger.debug(f"Citation correction: overriding match {result.paragraph_id} with cited {cited_pid}")
+            logger.debug(f"Citation correction: mapped {cited_pid} to {src['paragraph_id']}")
             
-            # Simple embedding check for the corrected source
+            # Use the score we might have already calculated if we did collision resolution
+            # but for consistency we re-calculate or use the one from candidate search
             claim_vec = encode_texts([result.claim])
             src_vec = encode_texts([src["text"]])
-            new_score = (claim_vec @ src_vec.T).item()
+            new_score = float((claim_vec @ src_vec.T).flatten()[0])
             
             settings = get_settings()
             new_conf = ConfidenceLevel.LOW
@@ -410,17 +446,38 @@ async def verify_response(
             level1_results, valid_claims, source_sentences, ce_thresh, h_thresh
         )
         all_results = short_results + results
+        # Level 2: Citation Correction & Table Enhancement
         para_index = _build_para_source_index(source_sentences)
         all_results = _apply_citation_correction(all_results, para_index, ce_thresh)
         all_results = _postprocess_display_sources(all_results)
 
+        # Level 3: Visual Enhancement (BBoxes)
         try:
-            enhanced_results = []
+            # Group by paper+para to avoid redundant processing
+            unique_table_citations = {}
             for r in all_results:
-                if r.chunk_type == "table":
-                    r = await _enhance_table_result(r)
-                enhanced_results.append(r)
-            all_results = enhanced_results
+                if r.chunk_type == "table" and r.paper_id and r.paragraph_id:
+                    key = (r.paper_id, r.paragraph_id)
+                    if key not in unique_table_citations:
+                        unique_table_citations[key] = r
+
+            # Process unique table citations (results are cached in module)
+            for key, representative_r in unique_table_citations.items():
+                if key not in _TABLE_ENHANCEMENT_CACHE:
+                    enhanced = await _enhance_table_result(representative_r)
+                    if enhanced.bbox:
+                        _TABLE_ENHANCEMENT_CACHE[key] = enhanced.bbox
+
+            # Apply cached enhancements to all matching results
+            for r in all_results:
+                if r.chunk_type == "table" and r.paper_id and r.paragraph_id:
+                    cached_bbox = _TABLE_ENHANCEMENT_CACHE.get((r.paper_id, r.paragraph_id))
+                    if cached_bbox:
+                        r.bbox = cached_bbox
+                        # Also update page number if it was corrected
+                        if "page" in cached_bbox:
+                            r.page_number = cached_bbox["page"]
+
         except Exception as exc:
             logger.warning(f"Failed to enhance table bboxes: {exc}")
 
@@ -455,7 +512,7 @@ Rules:
 - If no table is identified, return all fields as null"""
 
     try:
-        llm = FallbackChain()
+        llm = FallbackChain(use_local_only=True)
         res_text, provider, _ = await llm.generate(
             system_prompt="You are a helpful academic assistant that extracts info in JSON.",
             user_prompt=prompt,
@@ -620,7 +677,7 @@ Return JSON:
 }}"""
 
     try:
-        llm = FallbackChain()
+        llm = FallbackChain(use_local_only=True)
         res_text, provider, _ = await llm.generate(
             system_prompt="You are a helpful academic assistant that returns verification in JSON.",
             user_prompt=prompt,

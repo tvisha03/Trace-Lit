@@ -9,6 +9,7 @@ from infrastructure.db.crud.message_crud import get_messages_by_session
 
 async def main():
     async with async_session_factory() as db:
+        # pyrefly: ignore [missing-import]
         from sqlalchemy import select
         from infrastructure.db.models.message import Message
         stmt = select(Message).order_by(Message.created_at.desc()).limit(1)

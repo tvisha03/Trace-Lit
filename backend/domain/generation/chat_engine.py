@@ -282,6 +282,26 @@ async def generate_response(
         paper_count=len(paper_ids),
     )
 
+    # Filter papers based on query keywords to avoid including irrelevant papers in comparison
+    try:
+        from domain.retrieval.paper_detector import detect_target_papers
+        from infrastructure.db.crud.paper_crud import get_paper
+        
+        papers_meta = []
+        for pid in paper_ids:
+            paper = await get_paper(db_session, pid)
+            if paper:
+                papers_meta.append({"id": str(paper.id), "title": paper.title or ""})
+        
+        paper_boosts = detect_target_papers(query, papers_meta)
+        targeted_pids = [pid for pid, score in paper_boosts.items() if score > 1.0]
+        
+        if targeted_pids:
+            logger.info(f"Filtering papers for query: {len(paper_ids)} -> {len(targeted_pids)}")
+            paper_ids = targeted_pids
+    except Exception as e:
+        logger.warning(f"Failed to filter papers in generate_response: {e}")
+
     if classification.query_type == QueryType.METADATA:
         return await _handle_metadata_query(
             query,
@@ -305,6 +325,7 @@ async def generate_response(
 
     if is_eval_query:
         try:
+            # pyrefly: ignore [missing-import]
             from sqlalchemy import select
             from infrastructure.db.models.evaluation import EvaluationCache
 
@@ -346,6 +367,13 @@ async def generate_response(
         classification,
         keywords,
     )
+
+    # Final sanity check: only include papers in the prompt that actually provided context
+    if chunks:
+        retrieved_pids = {c.paper_id for c in chunks}
+        if len(retrieved_pids) < len(paper_ids):
+            logger.info(f"Pruning papers with no retrieval hits: {len(paper_ids)} -> {len(retrieved_pids)}")
+            paper_ids = [pid for pid in paper_ids if pid in retrieved_pids]
 
     if is_eval_query:
         try:
@@ -411,6 +439,10 @@ Your response MUST be ONLY valid JSON array. Do NOT add extra text.
             papers_data = json.loads(res_text)
             if isinstance(papers_data, dict):
                 papers_data = [papers_data]
+            
+            if not isinstance(papers_data, list):
+                logger.warning(f"Unexpected JSON structure from extraction LLM: {type(papers_data)}")
+                raise ValueError("LLM did not return a JSON array or object")
 
             # Format output for all papers
             formatted_parts = []

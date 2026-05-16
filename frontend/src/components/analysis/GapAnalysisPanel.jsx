@@ -6,7 +6,8 @@ import { analysisApi } from '../../api/client';
  * for all ready papers in the session.
  */
 
-const PARA_ID_RE = /\s*\[[a-f0-9]{6,}_[PTFEptfe]\d+\]/g;
+// Robust regex to strip any citation IDs like [P12] or [abc12345_P12]
+const PARA_ID_RE = /\s*\[(?:[a-f0-9]{6,}_)?(?:[PTFEptfe]\d+)\]/g;
 function stripParaIds(text) {
   return text ? text.replace(PARA_ID_RE, '') : text;
 }
@@ -104,35 +105,46 @@ export default function GapAnalysisPanel({ sessionId, papers }) {
     if (!text) return null;
     return text.split('\n').map((line, i) => {
       const trimmed = stripParaIds(line.trim());
-      if (!trimmed) return <br key={i} />;
+      if (!trimmed) return <div key={i} className="h-4" />;
+
+       // Handle Bold markers **text**
+       const parts = trimmed.split(/(\*\*.*?\*\*)/g);
+       const content = parts.map((part, pi) => {
+         if (part.startsWith('**') && part.endsWith('**')) {
+           return <strong key={pi} className="text-tl-gold font-bold">{part.slice(2, -2)}</strong>;
+         }
+         return part;
+       });
+
       if (trimmed.startsWith('### ')) {
         return (
-          <h3 key={i} className="font-serif text-base font-semibold text-tl-t1 mt-5 mb-1.5">
+          <h3 key={i} className="font-serif text-lg font-bold text-tl-t1 mt-8 mb-3">
             {trimmed.slice(4)}
           </h3>
         );
       }
       if (trimmed.startsWith('## ')) {
         return (
-          <h2 key={i} className="font-serif text-lg font-semibold text-tl-t1 mt-6 mb-2 border-b border-tl-b1 pb-1">
+          <h2 key={i} className="font-serif text-2xl font-bold text-tl-t1 mt-12 mb-4 border-b-2 border-tl-gold/30 pb-2">
             {trimmed.slice(3)}
           </h2>
         );
       }
       if (trimmed.startsWith('# ')) {
         return (
-          <h1 key={i} className="font-serif text-xl font-bold text-tl-t1 mt-2 mb-3">
+          <h1 key={i} className="font-serif text-3xl font-extrabold text-tl-t1 mt-4 mb-8 text-center bg-gradient-to-r from-tl-t1 to-tl-t3 bg-clip-text text-transparent">
             {trimmed.slice(2)}
           </h1>
         );
       }
       return (
-        <p key={i} className="text-[13px] text-tl-t1 leading-relaxed mb-2">
-          {trimmed}
+        <p key={i} className="text-[14px] text-tl-t2 leading-relaxed mb-4 text-justify">
+          {content}
         </p>
       );
     });
   }
+
 
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto px-6 py-4 animate-in fade-in slide-in-from-bottom-2 duration-500">

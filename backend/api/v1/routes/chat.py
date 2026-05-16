@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 _chat_limiter = SlidingWindowRateLimiter(
-    max_calls=15, window_seconds=60.0, resource_name="chat requests",
+    max_calls=30, window_seconds=60.0, resource_name="chat requests",
 )
 
 def _get_llm(request: Request) -> FallbackChain:
