@@ -1,182 +1,109 @@
-# Trace-Lit Backend
+# Trace-Lit Backend — The Intelligence Engine
 
-Intelligent academic literature assistant with **sentence-level verified attribution** (HAVF — Hallucination-Aware Verification Framework).
+> **High-performance academic RAG pipeline with multi-stage verification and layout-aware document intelligence.**
 
-## Quick Start
+The TraceLit backend is an asynchronous Python service built on FastAPI. It manages the entire lifecycle of research analysis—from layout-aware PDF extraction and sentence-level vector indexing to multi-document synthetic reasoning and automated hallucination verification.
+
+---
+
+## 🚀 Quick Start
 
 ### 1. Install dependencies
-
 ```bash
-cd backend
 python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS / Linux
+source .venv/bin/activate  # macOS / Linux
+# .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
 ```
 
 ### 2. Configure environment
-
 ```bash
 cp .env.example .env
-# Edit .env with your API keys (GEMINI_API_KEY, GROQ_API_KEY, etc.)
+# Edit .env with your API keys (GEMINI_API_KEY, etc.)
 ```
 
-### 3. Download ML models (one-time)
-
+### 3. Run the server
 ```bash
-python -m scripts.download_models
-```
-
-### 4. Run the server
-
-```bash
+python -m scripts.download_models  # One-time model download
 uvicorn app.main:app --reload --port 8000
 ```
 
-The API is available at `http://localhost:8000/api/v1`.  
-Interactive docs at `http://localhost:8000/docs`.
+---
+
+## 🛠️ Backend Tech Stack
+
+| Layer | Technology | Rationale |
+| :--- | :--- | :--- |
+| **Framework** | FastAPI | High-performance, async-first, and native OpenAPI support. |
+| **Database** | SQLite + SQLAlchemy 2.0 | Local-first persistence with modern async ORM patterns. |
+| **Vector Store** | FAISS | Efficient sentence-level similarity search for academic retrieval. |
+| **ML Runtime** | Sentence-Transformers | Local execution of embedding and cross-encoder models. |
+| **PDF Intelligence** | PyMuPDF + rapidocr | Robust text, table, and figure extraction from academic PDFs. |
+| **LLM Orchestration**| Custom Fallback Chain | Resilient routing: Gemini → Groq → Ollama (local fallback). |
+| **Reporting** | WeasyPrint + openpyxl | Professional PDF/Excel export for research summaries. |
 
 ---
 
-## Architecture
+## 🏗️ Core Domain Logic (`domain/`)
 
-```
-backend/
-├── api/v1/          # FastAPI routes, schemas, router
-├── app/             # Application factory, config, lifespan, dependencies
-├── domain/          # Pure business logic (extraction, retrieval, verification, generation, analysis, export)
-├── infrastructure/  # External integrations (DB, LLM providers, FAISS, file storage)
-├── services/        # Orchestration layer connecting domain + infrastructure
-├── workers/         # Background processing (paper queue, export pool)
-├── shared/          # Constants, enums, errors, logger, utilities
-└── scripts/         # CLI helpers (download models, benchmark, seed DB)
-```
+The backend is structured around a domain-driven design to isolate complex research logic:
 
-### Key Layers
+### 1. HAVF (Hallucination-Aware Verification Framework)
+The flagship feature of Trace-Lit. It implements a multi-stage verification pipeline for every claim:
+*   **Level 1 (Direct Match)**: Batch similarity search using the primary embedding model.
+*   **Level 2 (Neural Rerank)**: Cross-encoder reranking (`BAAI/bge-reranker-base`) for complex paraphrases.
+*   **Verification**: Categorizes claims into HIGH, MEDIUM, or LOW confidence.
 
-| Layer | Responsibility |
-|---|---|
-| **shared/** | Constants, enums, custom errors, logger, text/file/time/streaming utils |
-| **infrastructure/** | SQLite (async SQLAlchemy), FAISS vector store, LLM providers (Gemini → Groq → Ollama fallback chain), file storage |
-| **domain/** | PDF extraction, sentence-aware chunking, embedding indexing, budget-aware retrieval, HAVF 2-stage verification, RAG chat engine, keyword/gap analysis, PDF/Excel export |
-| **services/** | Paper processing pipeline, chat orchestration, session management, comparison, export, analysis, verification |
-| **workers/** | SmartPaperQueue (max 3 parallel, asyncio priority queue), export thread pool |
-| **api/v1/** | REST endpoints + WebSocket for real-time progress |
+### 2. Layout-Aware Extraction
+Unlike standard "blind" chunking, Trace-Lit understands academic structure:
+*   **Section Detection**: Prefixes chunks with their corresponding section (e.g., *Methods*, *Results*).
+*   **Visual Elements**: Detects and extracts tables and figures, linking them to their textual references.
+*   **Sentence-Level Indexing**: Indexes every individual sentence to enable hyper-precise attribution.
+
+### 3. Multi-Paper Intelligence
+Orchestrates synthetic reasoning across a user's library:
+*   **Gap Finder**: Uses KeyBERT for keyword extraction and DBSCAN for topic clustering to identify research voids.
+*   **Structured Comparison**: Extracts methodology, findings, and limitations for side-by-side analysis.
+*   **Literature Synthesis**: Merges disparate sources into a cohesive narrative review.
 
 ---
 
-## Core Features
+## 🚦 Background Processing & Workers
 
-- **Multi-paper RAG chat** with sentence-level citation `[P#]`
-- **HAVF verification** — 2-stage pipeline:
-  - Level 1: Batch embedding similarity (handles ~89% of claims)
-  - Level 2: Cross-encoder reranking for uncertain claims
-- **LLM fallback chain**: Gemini 2.0 Flash → Groq Llama 3.1 70B → Ollama (local)
-- **Sentence-aware chunking** with section-enriched prefixes
-- **Budget-aware retrieval** (configurable token limits)
-- **Paper comparison** with structured contribution extraction
-- **Literature review & gap analysis** (KeyBERT + DBSCAN clustering)
-- **Export** to PDF (WeasyPrint) and Excel (openpyxl)
-- **WebSocket** real-time processing progress
-- **SSE streaming** for chat responses
+Trace-Lit is designed to handle heavy workloads on consumer hardware:
+
+*   **SmartPaperQueue**: A memory-aware asyncio priority queue that manages document ingestion. It limits parallelism to prevent CPU/RAM exhaustion and provides real-time progress via WebSockets.
+*   **ExportPool**: A dedicated thread pool for generating intensive PDF and Excel reports without blocking the main event loop.
+*   **Memory Safeguards**: Automatically pauses processing if system RAM exceeds 75%, resuming only when resources are available.
 
 ---
 
-## API Endpoints
+## 🔧 Environment & Configuration
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/sessions` | Create session |
-| GET | `/sessions` | List sessions |
-| GET | `/sessions/{id}` | Get session detail |
-| PATCH | `/sessions/{id}` | Rename session |
-| DELETE | `/sessions/{id}` | Delete session + all data |
-| POST | `/sessions/{id}/papers` | Upload PDF |
-| GET | `/sessions/{id}/papers` | List papers |
-| DELETE | `/papers/{id}` | Delete paper |
-| POST | `/sessions/{id}/chat` | Chat (supports `stream=true` for SSE) |
-| GET | `/sessions/{id}/messages` | Get chat history |
-| POST | `/sessions/{id}/compare` | Compare papers |
-| GET | `/papers/{id}/contributions` | Get paper contributions |
-| POST | `/sessions/{id}/export` | Export chat/comparison |
-| GET | `/exports/{filename}` | Download export file |
-| GET | `/papers/{id}/keywords` | Extract keywords |
-| GET | `/sessions/{id}/gaps` | Gap analysis |
-| GET | `/sessions/{id}/review` | Literature review |
-| POST | `/verify` | Verify text against papers |
-| WS | `/ws/{session_id}` | Real-time progress |
-| GET | `/health` | Health check |
+Trace-Lit supports different hardware profiles via `.env`:
+
+### Standard Profile (≥ 16 GB RAM / GPU)
+Targets high-fidelity retrieval with larger models.
+*   **Embedding**: `mixedbread-ai/mxbai-embed-large-v1` (1024d)
+*   **Reranker**: `BAAI/bge-reranker-base`
+
+### Low-RAM Profile (Mac M1/M2 or 8 GB RAM)
+Optimized for efficiency without sacrificing core utility.
+*   **Embedding**: `BAAI/bge-small-en-v1.5` (384d)
+*   **Reranker**: `ms-marco-MiniLM-L-6-v2`
 
 ---
 
-## Environment Variables
+## 📜 API at a Glance
 
-See `.env.example` for the full list. Key variables:
-
-| Variable | Default | Description |
-|---|---|---|
-| `GEMINI_API_KEY` | — | Google Gemini API key |
-| `GROQ_API_KEY` | — | Groq API key |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `USE_LOCAL_LLM` | `false` | Prefer local Ollama first |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./data/tracelite.db` | Database path |
-| `MAX_FILE_SIZE_MB` | `50` | Max upload size |
-| `MAX_FILES_PER_SESSION` | `7` | Max papers per session |
-| `MAX_PARALLEL_PAPERS` | `3` | Concurrent processing limit |
-| `EMBEDDING_MODEL` | `mixedbread-ai/mxbai-embed-large-v1` | Sentence embedding model |
-| `EMBEDDING_DIMENSIONS` | `1024` | Must match the chosen model's output size |
-| `CROSS_ENCODER_MODEL` | `BAAI/bge-reranker-base` | HAVF Level-2 reranker |
-| `KEYBERT_MODEL` | `all-mpnet-base-v2` | KeyBERT backbone for keyword extraction |
+| Endpoint | Type | Description |
+| :--- | :--- | :--- |
+| `/api/v1/sessions` | REST | CRUD for research sessions. |
+| `/api/v1/papers` | REST/Upload | Ingest and manage PDF sources. |
+| `/api/v1/chat` | SSE Stream | Verified research Q&A with real-time streaming. |
+| `/api/v1/analysis` | REST | Access Gaps, Reviews, and Comparisons. |
+| `/api/v1/ws` | WebSocket | Live document processing progress updates. |
 
 ---
 
-## Scripts
-
-```bash
-# Download embedding + cross-encoder models
-python -m scripts.download_models
-
-# Benchmark HAVF verification latency
-python -m scripts.benchmark_havf
-
-# Seed database with demo session
-python -m scripts.seed_db
-```
-
----
-
-## Hardware Target
-
-### Windows / Linux (≥ 16 GB RAM or CUDA GPU) — default
-
-The default `.env.example` values target this profile for the best retrieval quality.
-
-| Component | Memory |
-|---|---|
-| Embedding model (`mixedbread-ai/mxbai-embed-large-v1`, 1024d) | ~430 MB |
-| Cross-encoder (`BAAI/bge-reranker-base`, lazy-loaded) | ~90 MB |
-| FAISS index (7 papers) | ~10 MB |
-| SQLite + app overhead | ~100 MB |
-| **Total** | **~630 MB** |
-
-### Mac M1/M2 (8 GB unified memory) — lower-RAM alternative
-
-Switch to the smaller models in `.env` to keep memory usage under 1 GB:
-
-```dotenv
-EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-EMBEDDING_DIMENSIONS=384
-CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-KEYBERT_MODEL=all-MiniLM-L6-v2
-```
-
-| Component | Memory |
-|---|---|
-| Embedding model (`BAAI/bge-small-en-v1.5`, 384d) | ~90 MB |
-| Cross-encoder (`ms-marco-MiniLM-L-6-v2`, lazy-loaded) | ~50 MB |
-| FAISS index (7 papers) | ~4 MB |
-| SQLite + app overhead | ~100 MB |
-| **Total** | **~244 MB** |
-
-> ⚠️ **After switching models**, delete `data/faiss_indexes/` and reprocess all papers.
-> The FAISS index dimension must match `EMBEDDING_DIMENSIONS` or the server will crash on startup.
+*Trace-Lit Backend: Engineering Rigor for Academic Excellence.*
