@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import ConfidenceBadge from '../common/ConfidenceBadge';
 import CitedSentence from './CitedSentence';
 import {
@@ -33,9 +36,9 @@ export default function MessageBubble({ message, onCitationClick }) {
   // ── User bubble ──────────────────────────────────────────────────────────
   if (isUser) {
     return (
-      <div className="flex justify-end mb-3">
-        <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm bg-tl-s3 text-tl-t1 shadow-sm">
-          <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+      <div className="flex justify-end mb-6">
+        <div className="max-w-[80%] px-6 py-4 rounded-3xl rounded-tr-sm bg-tl-s3 text-tl-t1 shadow-md border border-tl-b1/20 transition-all hover:shadow-lg">
+          <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
         </div>
       </div>
     );
@@ -63,38 +66,43 @@ export default function MessageBubble({ message, onCitationClick }) {
    * Custom component for react-markdown to handle text nodes.
    * It finds [P#] citations and replaces them with CitedSentence.
    */
+  const processTextNodes = (children) => {
+    return React.Children.map(children, (child) => {
+      if (typeof child === 'string') {
+        const segments = parseSentencesWithCitations(child, havfResults);
+        if (segments.length === 0) return child;
+        return (
+          <>
+            {segments.map((seg, i) => (
+              seg.citationRefs.length > 0 ? (
+                <CitedSentence
+                  key={i}
+                  text={seg.text}
+                  havfItems={seg.havfItems}
+                  onCitationClick={onCitationClick}
+                  isContested={detectContradiction(seg.havfItems)}
+                />
+              ) : (
+                <span key={i}>{seg.text} </span>
+              )
+            ))}
+          </>
+        );
+      }
+      if (React.isValidElement(child) && child.props.children) {
+        return React.cloneElement(child, {
+          children: processTextNodes(child.props.children),
+        });
+      }
+      return child;
+    });
+  };
+
   const components = {
-    // Override how text is rendered to inject CitedSentence components
-    text: ({ value }) => {
-      if (!value) return null;
-      
-      // We parse the text node into segments of sentences with citations
-      const segments = parseSentencesWithCitations(value, havfResults);
-      
-      if (segments.length === 0) return value;
-      
-      return (
-        <>
-          {segments.map((seg, i) => (
-            seg.citationRefs.length > 0 ? (
-              <CitedSentence
-                key={i}
-                text={seg.text}
-                havfItems={seg.havfItems}
-                onCitationClick={onCitationClick}
-                isContested={detectContradiction(seg.havfItems)}
-              />
-            ) : (
-              <span key={i}>{seg.text} </span>
-            )
-          ))}
-        </>
-      );
-    },
     // Style tables to look premium
     table: ({ children }) => (
       <div className="my-4 overflow-x-auto border border-tl-b1 rounded-lg shadow-sm">
-        <table className="min-w-full divide-y divide-tl-b1 border-collapse text-[12px]">
+        <table className="min-w-full divide-y divide-tl-b1 border-collapse text-[11px]">
           {children}
         </table>
       </div>
@@ -102,17 +110,18 @@ export default function MessageBubble({ message, onCitationClick }) {
     thead: ({ children }) => <thead className="bg-tl-s3/50">{children}</thead>,
     th: ({ children }) => (
       <th className="px-3 py-2 text-left font-mono font-bold text-tl-gold uppercase tracking-tighter border-r border-tl-b1 last:border-0">
-        {children}
+        {processTextNodes(children)}
       </th>
     ),
     td: ({ children }) => (
       <td className="px-3 py-2 text-tl-t2 border-r border-t border-tl-b1 last:border-0 align-top">
-        {children}
+        {processTextNodes(children)}
       </td>
     ),
     // Standard markdown styling
-    p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
-    code: ({ children }) => <code className="bg-tl-s3 px-1 rounded text-tl-gold font-mono">{children}</code>,
+    p: ({ children }) => <p className="mb-4 last:mb-0 leading-loose">{processTextNodes(children)}</p>,
+    li: ({ children }) => <li className="mb-2">{processTextNodes(children)}</li>,
+    code: ({ children }) => <code className="bg-tl-s3 px-1.5 py-0.5 rounded text-tl-gold font-mono text-[14px]">{children}</code>,
   };
 
   return (
@@ -121,7 +130,9 @@ export default function MessageBubble({ message, onCitationClick }) {
         {/* ── Abstention warning ─────────────────────────────────────────── */}
         {abstaining && (
           <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-tl-med/10 border border-tl-med/30 mb-1">
-            <span className="text-tl-med text-sm mt-0.5">⚠</span>
+            <svg className="w-3.5 h-3.5 text-tl-med mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
             <p className="text-[11px] font-mono text-tl-med leading-relaxed">
               Model confidence is low for this response. Verify carefully.
             </p>
@@ -129,16 +140,105 @@ export default function MessageBubble({ message, onCitationClick }) {
         )}
 
         {/* ── Message bubble ─────────────────────────────────────────────── */}
-        <div className="px-4 py-3 rounded-2xl rounded-tl-sm bg-tl-s2 text-tl-t1 shadow-sm border border-tl-b1/20">
-          <div className="text-[13.5px] leading-relaxed markdown-body">
+        <div className="px-8 py-7 rounded-[2rem] rounded-tl-sm bg-tl-s1 text-tl-t1 shadow-xl border border-tl-b1/30 transition-all hover:border-tl-gold/20 relative group">
+          {/* Global Transformation Badges (Top Right) */}
+          {(message.query_type === 'comparison' || 
+            havfResults.some(r => r.transformation_type?.toLowerCase() === 'synthesis') ||
+            havfResults.some(r => r.transformation_type?.toLowerCase() === 'inference')) && (
+            <div className="flex justify-end gap-2 mb-6">
+              {(message.query_type === 'comparison' || 
+                havfResults.some(r => r.transformation_type?.toLowerCase() === 'synthesis')) && (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 text-[10px] font-bold border border-purple-500/20 shadow-sm animate-in fade-in slide-in-from-right-2 duration-500">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  SYNTHESIS
+                </span>
+              )}
+              {havfResults.some(r => r.transformation_type?.toLowerCase() === 'inference') && (
+                <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-bold border border-amber-500/20 shadow-sm animate-in fade-in slide-in-from-right-2 duration-500 delay-100">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
+                  INFERENCE
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="text-[14.5px] leading-loose markdown-body font-sans selection:bg-tl-gold/30">
             <ReactMarkdown 
-              remarkPlugins={[remarkGfm]} 
+              remarkPlugins={[remarkGfm, remarkMath]} 
+              rehypePlugins={[rehypeKatex]}
               components={components}
             >
               {message.content.replace(/\[(?:[a-z0-9\-_]+_)?([PFTEpfte]\d+)\]/gi, '[$1]')}
             </ReactMarkdown>
           </div>
         </div>
+
+        {/* ── Citation Quality Summary Bar (Priority 4) ──────────────────── */}
+        {havfResults.length > 0 && !abstaining && (
+          <div className="mx-1 mt-1 p-2 bg-tl-s3/40 rounded-lg border border-tl-b1/20 shadow-sm animate-in fade-in slide-in-from-top-1 duration-300">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-mono font-bold text-tl-t3 uppercase tracking-wider">
+                Response Attribution Summary
+              </span>
+              <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                <span className="text-tl-t4">Avg Confidence:</span>
+                <span className="text-tl-t1 font-bold">
+                  {Math.round((havfResults.reduce((acc, r) => acc + (r.score || 0), 0) / havfResults.length) * 100)}%
+                </span>
+              </div>
+            </div>
+            
+            <div className="flex h-1.5 rounded-full overflow-hidden bg-tl-s4/50 mb-2 ring-1 ring-tl-b1/10">
+              {['direct_quote', 'paraphrase', 'synthesis', 'inference', 'uncertain', 'unsupported'].map((type) => {
+                const count = havfResults.filter(r => (r.transformation_type?.toLowerCase() || 'uncertain') === type).length;
+                if (count === 0) return null;
+                const width = (count / havfResults.length) * 100;
+                const colors = {
+                  direct_quote: 'bg-[#10b981]',
+                  paraphrase: 'bg-[#3b82f6]',
+                  synthesis: 'bg-[#8b5cf6]',
+                  inference: 'bg-[#f59e0b]',
+                  uncertain: 'bg-[#6b7280]',
+                  unsupported: 'bg-[#ef4444]',
+                };
+                return (
+                  <div 
+                    key={type} 
+                    style={{ width: `${width}%` }} 
+                    className={colors[type]} 
+                    title={`${type.replace('_', ' ').toUpperCase()}: ${count}`}
+                  />
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono">
+              {[
+                { type: 'direct_quote', label: 'Direct Quotes', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg> },
+                { type: 'paraphrase', label: 'Paraphrases', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+                { type: 'synthesis', label: 'Synthesis', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg> },
+                { type: 'inference', label: 'Inferences', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>, alert: true },
+                { type: 'uncertain', label: 'Uncertain', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+                { type: 'unsupported', label: 'Unsupported', icon: <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>, alert: true },
+              ].map(({ type, label, icon, alert }) => {
+                const count = havfResults.filter(r => r.transformation_type?.toLowerCase() === type).length;
+                if (count === 0 && !(type === 'synthesis' && message.query_type === 'comparison')) return null;
+                return (
+                  <div key={type} className={`flex items-center gap-1 ${alert ? 'text-[#f59e0b] font-bold' : 'text-tl-t3'}`}>
+                    <span className="opacity-70">{icon}</span>
+                    <span>{count} {label}</span>
+                  </div>
+                );
+              })}
+              {havfResults.some(r => r.transformation_type?.toLowerCase() === 'inference') && (
+                <div className="ml-auto text-[9px] text-[#f59e0b] font-bold flex items-center gap-1 animate-pulse">
+                  <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg>
+                  <span>Verify Logical Inference</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Metadata row ───────────────────────────────────────────────── */}
         <div className="flex items-center gap-2 px-1 flex-wrap">
@@ -149,7 +249,7 @@ export default function MessageBubble({ message, onCitationClick }) {
           {message.latency_ms && (
             <span className="text-xs text-tl-t4 font-mono">{message.latency_ms}ms</span>
           )}
-          {dedupedSources.length > 0 && (
+          {dedupedSources.length > 0 && !abstaining && (
             <button
               onClick={() => setShowSources((v) => !v)}
               className="text-[10px] font-mono text-tl-t3 hover:text-tl-gold transition-colors"
@@ -160,7 +260,7 @@ export default function MessageBubble({ message, onCitationClick }) {
         </div>
 
         {/* ── Source evidence list (expandable) ─────────────────────────── */}
-        {showSources && dedupedSources.length > 0 && (
+        {showSources && dedupedSources.length > 0 && !abstaining && (
           <div className="ml-1 space-y-1.5">
             {dedupedSources.map((item, i) => (
               <div

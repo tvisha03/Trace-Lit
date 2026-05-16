@@ -1,8 +1,8 @@
+# pyrefly: ignore [missing-import]
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import AsyncGenerator
 
 from domain.analysis.keyword_extractor import extract_keywords, extract_keywords_per_paper
-from domain.analysis.gap_finder import find_gaps, GapAnalysis
 from domain.analysis.review_generator import generate_review, stream_review, generate_gap_narrative
 from domain.generation.prompts import SUMMARY_PROMPT_TEMPLATE, SUMMARY_SYSTEM_PROMPT, build_context_block
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
@@ -58,59 +58,7 @@ async def get_paper_keywords(
     prepared_text = _prepare_keyword_text(chunks)
     return extract_keywords(prepared_text, top_n=top_n)
 
-async def get_session_gap_analysis(
-    session_id: str,
-    db: AsyncSession,
-    llm: FallbackChain | None = None,
-) -> dict:
-    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
-    if len(papers) < 2:
-        raise InsufficientDataError(
-            "Gap analysis requires at least 2 completed papers in the session. "
-            "Currently only {} completed paper(s) found. "
-            "Please upload and wait for more papers to finish processing, "
-            "then try again.".format(len(papers))
-        )
 
-    chunks_by_paper: dict[str, list] = {}
-    paper_texts: dict[str, str] = {}
-    for paper in papers:
-        chunks = await get_chunks_by_paper(db, str(paper.id))
-        chunks_by_paper[str(paper.id)] = chunks[:15]
-        paper_texts[str(paper.id)] = _prepare_keyword_text(chunks)
-
-    paper_keywords = extract_keywords_per_paper(paper_texts)
-    gap_result: GapAnalysis = find_gaps(paper_keywords)
-
-    result: dict = {
-        "themes": [
-            {
-                "label": t.theme_label,
-                "keywords": t.keywords,
-                "papers_covering": t.papers_covering,
-                "coverage_ratio": t.coverage_ratio,
-            }
-            for t in gap_result.themes
-        ],
-        "underexplored": [
-            {
-                "label": t.theme_label,
-                "keywords": t.keywords,
-                "coverage_ratio": t.coverage_ratio,
-            }
-            for t in gap_result.underexplored
-        ],
-    }
-
-    if llm and chunks_by_paper:
-        paper_titles = await _get_paper_titles(papers)
-        narrative, provider = await generate_gap_narrative(
-            chunks_by_paper, llm, paper_titles,
-        )
-        result["narrative"] = narrative
-        result["provider"] = provider.value
-
-    return result
 
 async def generate_literature_review(
     session_id: str,
@@ -234,8 +182,9 @@ async def generate_paper_summary(
     selected = _select_summary_chunks(chunks)
     context = build_context_block(selected)
     user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
-        context=context, question=user_question
+        context=context, question=user_question, paper_title=paper.title or paper.filename
     )
+
 
     import re
     summary_text, provider, _ = await llm.generate(
@@ -286,8 +235,9 @@ async def stream_paper_summary(
         selected = _select_summary_chunks(chunks)
         context = build_context_block(selected)
         user_prompt = SUMMARY_PROMPT_TEMPLATE.format(
-            context=context, question=user_question
+            context=context, question=user_question, paper_title=paper.title or paper.filename
         )
+
 
         async for token, provider_obj in llm.generate_streaming(
             system_prompt=SUMMARY_SYSTEM_PROMPT,
@@ -312,6 +262,67 @@ async def stream_paper_summary(
 
     except Exception as exc:
         logger.error(f"Streaming paper summary error for paper {paper_id}: {exc}")
+        yield sse_event("error", str(exc))
+        yield sse_event("done", json.dumps({
+            "provider": provider or "unknown",
+            "full_text": full_text,
+            "error": True,
+        }))
+async def generate_research_gaps(
+    session_id: str,
+    db: AsyncSession,
+    llm: FallbackChain,
+) -> dict:
+    chunks_by_paper = await _gather_review_chunks(session_id, db)
+    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+    paper_titles = await _get_paper_titles(papers)
+
+    gaps_text, provider = await generate_gap_narrative(chunks_by_paper, llm, paper_titles)
+
+    return {
+        "gaps": gaps_text,
+        "paper_count": len(papers),
+        "provider": provider.value,
+    }
+
+async def stream_research_gaps(
+    session_id: str,
+    db: AsyncSession,
+    llm: FallbackChain,
+) -> AsyncGenerator[str, None]:
+    import json
+    from domain.analysis.review_generator import _build_gap_prompt
+    from domain.generation.prompts import SYSTEM_PROMPT
+    from shared.utils.streaming_utils import sse_event
+
+    full_text = ""
+    provider = ""
+
+    try:
+        chunks_by_paper = await _gather_review_chunks(session_id, db)
+        papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+        paper_titles = await _get_paper_titles(papers)
+
+        user_prompt = _build_gap_prompt(chunks_by_paper, paper_titles)
+
+        async for token, provider_obj in llm.generate_streaming(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            max_tokens=4096,
+        ):
+            full_text += token
+            provider = provider_obj.value
+            yield sse_event("token", {"token": token})
+
+        resolved_provider = provider or "unknown"
+        yield sse_event("done", json.dumps({
+            "provider": resolved_provider,
+            "full_text": full_text,
+            "paper_count": len(chunks_by_paper),
+        }))
+
+    except Exception as exc:
+        logger.error(f"Streaming gap analysis error for session {session_id}: {exc}")
         yield sse_event("error", str(exc))
         yield sse_event("done", json.dumps({
             "provider": provider or "unknown",

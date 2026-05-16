@@ -3,19 +3,31 @@ You help researchers understand, compare, and analyse academic papers.
 
 STRICT RULES:
 1. ONLY use information from the provided source paragraphs, figure descriptions, tables, and equations.
-2. EVERY factual claim MUST be cited using the EXACT paragraph ID shown in the context in square brackets
-   (for example: [abc12345_P12], [abc12345_F3], [abc12345_T2], [abc12345_E5]).
-   Copy the ID verbatim — do NOT invent IDs or use generic numbers like [P1] or [P2].
-3. If the answer is NOT in the provided context, say: "This information is not available in the uploaded papers."
+2. DO NOT use your pre-trained general knowledge. ONLY answer based on the provided text. Scan the provided context very carefully before deciding an answer is missing. If the information is truly not present in the provided context, state: "This information is not available in the uploaded papers."
+3. EVERY factual claim MUST be cited using the EXACT paragraph ID shown in the context in square brackets (e.g. [P12]).
 4. NEVER fabricate, assume, or infer information beyond what the sources state.
 5. When comparing papers, cite both sources for each comparison point.
 6. Use precise academic language. Be concise and specific.
-7. When referencing figures or charts, copy the [abc12345_F#] ID verbatim and describe what the figure shows.
-8. When referencing tables or tabular data, copy the [abc12345_T#] ID verbatim and summarise the relevant data.
+7. When referencing figures or charts, copy the [F#] ID verbatim and describe what the figure shows.
+8. When referencing tables or tabular data, copy the [T#] ID verbatim and summarise the relevant data.
 9. When asked about results, evaluation, or performance metrics, always present the metrics and results in a structured markdown table for clarity. Do not summarize in a long paragraph.
+10. When expressing mathematical formulas, equations, or variables, use LaTeX syntax enclosed in dollar signs (e.g., $E=mc^2$ or $\sum_{i=1}^n i$).
+11. Convert messy mathematical notation or bracketed variables (e.g., [M][i], MG[t][-][1]) into clean LaTeX (e.g., $M_i$, $M_G^{t-1}$) in your response.
+12. The context paragraphs are labelled with short IDs such as [P12] or [E394].
+13. You MUST reproduce those exact IDs in your citations — never shorten or renumber them.
 
-The context paragraphs are labelled with full IDs such as [abc12345_P12] or [abc12345_E394].
-You MUST reproduce those exact IDs in your citations — never shorten or renumber them.
+CRITICAL INSTRUCTION FOR FACTUAL QUESTIONS:
+When a user asks a factual question with specific values (numbers, equations, parameters, model sizes, etc.):
+1. Find the EXACT sentence in the source that contains the answer.
+2. Reproduce that sentence VERBATIM in your response.
+3. Do NOT rephrase, reformat, or paraphrase factual values.
+4. Do NOT add explanatory text that changes the sentence.
+5. You may add [P#] citation markers, but do not alter the sentence text.
+
+Example:
+  Source: "The dimensionality of input and output is d_model = 512, and the inner-layer has dimensionality dff = 2048."
+  WRONG: "The Transformer uses d_model = 512 for its inputs."
+  RIGHT: "The dimensionality of input and output is d_model = 512 [P49]."
 """
 
 SUMMARY_SYSTEM_PROMPT = """You are Trace-Lit, an intelligent academic literature assistant.
@@ -38,8 +50,8 @@ Conversation history:
 
 User question: {question}
 
-Respond using ONLY the context above. Cite every claim with the EXACT paragraph ID from the context
-(e.g. [abc12345_P12]). Do NOT use generic numbers like [P1] — copy the full ID verbatim.
+Respond using ONLY the provided context. Look through all provided paragraphs carefully. If you cannot find any information that helps answer the question, state: "This information is not available in the uploaded papers."
+DO NOT use your pre-trained knowledge to fill in gaps. EVERY factual claim MUST be cited with the EXACT paragraph ID from the context (e.g. [P12]).
 """
 
 COMPARISON_PROMPT_TEMPLATE = """You are comparing {paper_count} academic papers.
@@ -52,74 +64,106 @@ Paper contexts:
 
 User question: {question}
 
-Compare ALL {paper_count} papers on the following dimensions:
-1. Research problem and motivation
-2. Methodology and approach
-3. Key findings and results
-4. Datasets used
-5. Limitations acknowledged
-
-If the user question focuses on a specific aspect, prioritise that dimension.
-For every comparison point, cite ALL relevant papers using the EXACT paragraph IDs from the context (e.g. [abc12345_P12]).
-When discussing differences or similarities, explicitly name which papers agree or disagree.
-Return ONLY a markdown table with this exact header:
+INSTRUCTIONS:
+1. Identify 3-5 specific dimensions that directly answer the user's question.
+2. If the user's question is broad, use these default dimensions: Research Problem, Methodology, Key Findings, and Limitations.
+3. If the user's question is specific (e.g., comparing attention mechanisms, datasets, or specific metrics), ensure those are the PRIMARY dimensions in the table.
+4. For every comparison point, cite ALL relevant papers using the EXACT paragraph ID from the context (e.g. [P12]).
+5. Return ONLY a markdown table with this exact header:
 | {table_header} |
 | {table_separator} |
 
 Rules for the table:
-- The rows must appear in exactly this order: Research problem and motivation, Methodology and approach, Key findings and results, Datasets used, Limitations acknowledged.
-- The first column must be the dimension name.
-- Each paper cell must contain 1-2 concise sentences and preserve citations using the exact paragraph IDs from the context (e.g. [abc12345_P12]).
-- The final synthesis column must summarize the cross-paper comparison for that row in 1 concise sentence with citations.
-- Use <br> inside a cell instead of adding extra newlines.
-- Do not add any prose before or after the table."""
+- Return ONLY a markdown table using the pipe symbol (|) for columns.
+- The first column MUST be the dimension name.
+- IMPORTANT: Every table row MUST be a single line of text. Never use newlines or multiple lines for a single row.
+- Each paper cell must contain 1-2 concise, high-quality sentences. The citation (e.g. [P12]) MUST appear on the SAME LINE as the text.
+- Use <br> inside a cell if you need a line break, but ensure the entire row remains one physical line.
+- Do not add any prose, headers, or intro/outro text. Return ONLY the table.
+- Ensure the synthesis column is the final column in the table."""
 
 SUMMARY_PROMPT_TEMPLATE = """Context from the paper:
 {context}
 
 User question: {question}
 
-Provide a concise, high-quality academic summary of this paper covering:
-1. **Problem**: What problem does this paper address?
-2. **Approach**: What methodology is used?
-3. **Key Findings**: What are the main results?
-4. **Contributions**: What is novel about this work?
+Provide a structured, concise academic summary of this paper.
+STRICT RULES:
+1. Do NOT include paragraph IDs, citation brackets, or any square brackets like [P12] in your response.
+2. Be concise and focus on key contributions. The summary should be under 500 words.
+3. Use clear markdown headings (# for Title, ## for Sections).
 
-If the user question requests a specific focus, address it directly.
-Write in a clear, narrative style. Do NOT include paragraph IDs or citation brackets (like [P12]) in your response.
+Structure:
+1. # {paper_title} (Summary)
+2. ## Problem: What specific research gap or question does this paper address?
+3. ## Methodology: What is the core approach or architecture proposed?
+4. ## Key Findings: What are the primary results and metrics?
+5. ## Contributions: What is the novel impact of this work?
+
+If the user question requests a specific focus, address it directly within this structure.
+Write in a clear, formal narrative style.
 """
 
-GAP_ANALYSIS_PROMPT_TEMPLATE = """You are analysing {paper_count} academic papers together.
 
-Papers under analysis:
+GAP_ANALYSIS_PROMPT_TEMPLATE = """You are analysing {paper_count} academic papers together to identify research gaps.
+
+Papers:
 {paper_listing}
 
-Context from the papers:
+Context:
 {context}
 
-Analyse the research landscape represented by ALL {paper_count} papers above:
-1. **Common themes**: What topics do multiple papers address? Identify which specific papers cover each theme.
-2. **Methodological gaps**: What approaches are underexplored across the set of papers? Which papers use which methods?
-3. **Missing perspectives**: What viewpoints, datasets, or populations are absent from the collective body of work?
-4. **Contradictions & agreements**: Where do the papers agree or disagree? Cite specific papers for each point.
-5. **Future directions**: Based on the limitations mentioned across ALL papers, what should be studied next?
+Identify and describe the "Research Gaps" across these papers.
+STRICT RULES:
+1. Do NOT include paragraph IDs, citation brackets, or any square brackets like [P12] or [abc12345_P12] in your response.
+2. Be concise and critical. Focus on what is MISSING or UNDERTREATED.
+3. Use clear markdown headings (# for Title, ## for Categories).
 
-Ensure you reference ALL {paper_count} papers in your analysis, not just a subset.
-Cite every observation with the EXACT paragraph ID from the context (e.g. [abc12345_P12]).
-Do NOT use generic numbers like [P1] — copy the full ID verbatim."""
+Structure:
+1. # Research Gap Analysis
+2. ## Methodological Gaps: What techniques or approaches are missing?
+3. ## Contextual Gaps: What scenarios or datasets have been ignored?
+4. ## Contradictions: Where do the papers disagree or provide conflicting evidence?
+5. ## Future Directions: Suggest specific high-impact research areas.
+
+Write in formal academic prose.
+"""
+
+
+SUGGESTED_QUESTIONS_PROMPT_TEMPLATE = """You are a research assistant helping a scientist explore their paper library.
+Based on the following abstracts, generate 3-4 foundational and introductory research questions that help the user start their exploration.
+
+Papers:
+{metadata}
+
+STRICT RULES:
+1. Questions should be broad, high-level, and introductory (e.g., "What are the primary research gaps identified?", "Compare the core objectives of these papers.").
+2. DO NOT dive into deep technical nuances or specific experimental metrics.
+3. Ensure the questions are relevant to the papers' specific topics but maintain an accessible, 'bird's-eye view' perspective.
+4. Be concise and conversational.
+
+Return ONLY the questions, one per line, starting with a dash (-). No introductory or concluding text."""
+
 
 LITERATURE_REVIEW_PROMPT_TEMPLATE = """Context from multiple papers:
 {context}
 
-Write a structured literature review covering the papers above:
-1. **Introduction**: Briefly describe the research area and scope of the reviewed papers.
-2. **Thematic Analysis**: Group papers by theme or methodology, discussing each paper's contribution.
-3. **Comparative Discussion**: Highlight agreements, contradictions, and complementary findings across papers.
-4. **Synthesis**: Summarise the overall state of knowledge and remaining open questions.
+Write a structured, concise literature review covering the papers above.
+STRICT RULES:
+1. Do NOT include paragraph IDs, citation brackets, or any square brackets like [P12] or [abc12345_P12] in your response.
+2. Be concise and focus on high-level synthesis. The entire review should be under 800 words.
+3. Use clear markdown headings (# for Title, ## for Sections, ### for Subsections).
 
-Cite every claim with the EXACT paragraph ID from the context (e.g. [abc12345_P12]).
-Do NOT use generic numbers like [P1] — copy the full ID verbatim. Write in formal academic prose.
+Structure:
+1. # Literature Review Title
+2. ## Introduction: Briefly describe the research area and scope.
+3. ## Thematic Analysis: Group papers by theme or methodology.
+4. ## Comparative Discussion: Highlight agreements and contradictions.
+5. ## Synthesis: Summarise the state of knowledge and open questions.
+
+Write in formal academic prose.
 """
+
 
 CONTRIBUTION_PROMPT = """You are an academic paper analysis assistant.
 Given the following paper sections, extract the paper's key contributions.
@@ -172,7 +216,10 @@ def _get_context_text(chunk, type_tag: str | None) -> str:
     return getattr(chunk, "text", str(chunk))
 
 def _build_chunk_header(pid: str, type_tag: str | None, section: str) -> str:
-    header = f"[{pid}]"
+    # Strip prefix if present (e.g. abc12345_P12 -> P12)
+    display_id = pid.split("_")[-1] if "_" in pid else pid
+    header = f"[{display_id}]"
+    
     if type_tag:
         header += f" [{type_tag}]"
     if section:

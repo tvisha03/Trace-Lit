@@ -53,6 +53,7 @@ export default function SourceViewer({
   const [chunks, setChunks] = useState([]);
   const [chunksLoading, setChunksLoading] = useState(false);
   const [chunksError, setChunksError] = useState(null);
+  const [isContextExpanded, setIsContextExpanded] = useState(false);
   const sectionEntries = buildSectionEntries(chunks);
 
   // Resolve which paper to display in the source viewer:
@@ -77,6 +78,8 @@ export default function SourceViewer({
     if (highlightedHavfItem) {
       // Auto-open PDF viewer when citation is clicked
       setShowPdf(true);
+      // Collapsed by default to show PDF clearly
+      setIsContextExpanded(false);
       // Also switch the active paper tab to the one referenced by this citation
       if (highlightedHavfItem.paper_id) {
         onPaperChange?.(highlightedHavfItem.paper_id);
@@ -130,43 +133,30 @@ export default function SourceViewer({
   const active = papers.find((p) => p.id === sourcePaperId) ?? null;
 
   return (
-    <div className="flex flex-col h-full bg-tl-s1 border-r border-tl-b1">
-      {/* Paper selector tabs */}
+    <div className="flex flex-col h-full bg-tl-s1 animate-in fade-in duration-500 overflow-hidden">
+      {/* Paper selector tabs - Premium Pill Style */}
       {tabPapers.length > 0 && (
-        <div className="flex gap-0.5 px-2 pt-2 bg-tl-bg border-b border-tl-b1 overflow-x-auto flex-shrink-0">
+        <div className="flex items-center gap-1.5 px-4 pt-4 pb-3 bg-tl-bg/80 backdrop-blur-md border-b border-tl-b1/30 overflow-x-auto flex-shrink-0 scrollbar-hide">
           {tabPapers.map((p) => {
+            const isActive = sourcePaperId === p.id;
             const label = p.title ?? p.filename ?? p.id;
             return (
               <button
                 key={p.id}
                 onClick={() => onPaperChange?.(p.id)}
-                className={`px-3 py-1.5 text-xs font-mono rounded-t-md whitespace-nowrap flex-shrink-0 transition-colors ${
-                  activePaperId === p.id
-                    ? "bg-tl-s1 border border-b-tl-s1 border-tl-b1 text-tl-gold font-semibold"
-                    : "text-tl-t3 hover:text-tl-t2 hover:bg-tl-s2"
-                }`}
+                className={`
+                  px-3 py-1 text-[9px] font-sans font-bold uppercase tracking-widest rounded-full whitespace-nowrap flex-shrink-0 transition-all duration-300 border
+                  ${isActive
+                    ? "bg-tl-gold text-tl-bg border-tl-gold shadow-md shadow-tl-gold/10"
+                    : "bg-tl-s2 text-tl-t3 border-tl-b1/50 hover:text-tl-t1 hover:border-tl-b2"}
+                `}
               >
-                {label.length > 28 ? `${label.slice(0, 28)}…` : label}
+                {label.length > 24 ? `${label.slice(0, 24)}…` : label}
               </button>
             );
           })}
         </div>
       )}
-
-      {/* Panel header */}
-      <div className="flex items-center px-4 py-2 bg-tl-bg border-b border-tl-b1 flex-shrink-0">
-        <span className="text-xs font-mono font-semibold text-tl-t3 uppercase tracking-wider">
-          Source
-        </span>
-        {active && (
-          <span className="ml-2 text-xs text-tl-t3 font-mono">
-            {active.page_count != null ? `${active.page_count}pp` : ""}
-            {active.chunk_count != null
-              ? ` · ${active.chunk_count} chunks`
-              : ""}
-          </span>
-        )}
-      </div>
 
       {/* Content */}
       <div
@@ -196,25 +186,35 @@ export default function SourceViewer({
         {/* If completed, show persistent citation info + toggle-able viewer */}
         {active && active.status?.toUpperCase() === "COMPLETED" ? (
           <div className="flex-1 flex flex-col h-full overflow-hidden">
-            {/* Header: Paper Title */}
-            <div className="flex-shrink-0 px-4 py-2 bg-tl-bg border-b border-tl-b1 flex items-center justify-between">
-              <h2
-                className="text-[12px] font-bold text-tl-t1 leading-tight font-serif truncate"
-                title={active.title ?? active.filename}
-              >
-                {active.title ?? active.filename}
-              </h2>
-              {/* Global PDF Toggle */}
-              <button
+            {/* Header: Focus Control */}
+            <div className="flex-shrink-0 px-6 py-4 bg-tl-bg/50 border-b border-tl-b1/50 flex items-center justify-between backdrop-blur-sm">
+              <div className="flex flex-col min-w-0">
+                <span className="text-[9px] font-mono text-tl-gold uppercase tracking-[0.2em] font-bold mb-1">Active Focus</span>
+                <h2
+                  className="text-[13px] font-bold text-tl-t1 leading-tight font-serif truncate"
+                  title={active.title ?? active.filename}
+                >
+                  {active.title ?? active.filename}
+                </h2>
+              </div>
+              
+                <button
                 onClick={() => setShowPdf(!showPdf)}
-                className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono transition-all ${
-                  showPdf
-                    ? "bg-tl-gold text-tl-bg"
-                    : "bg-tl-s3 text-tl-t3 border border-tl-b1 hover:bg-tl-s2"
-                }`}
+                className={`
+                  flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-sans font-bold uppercase tracking-[0.1em] transition-all duration-300 shadow-sm border
+                  ${showPdf
+                    ? "bg-tl-s3 text-tl-gold border-tl-gold/20 hover:bg-tl-s3"
+                    : "bg-tl-gold text-tl-bg border-tl-gold hover:opacity-90 active:scale-95"}
+                `}
               >
-                <span>{showPdf ? "📄" : "📝"}</span>
-                {showPdf ? "Switch to Text" : "View in PDF"}
+                <span>
+                  {showPdf ? (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  ) : (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                  )}
+                </span>
+                <span>{showPdf ? "View Text" : "View PDF"}</span>
               </button>
             </div>
 
@@ -222,156 +222,133 @@ export default function SourceViewer({
             {highlightedHavfItem ? (
               <div
                 ref={highlightRef}
-                className="flex-shrink-0 border-b border-tl-b1 bg-tl-s1 shadow-sm overflow-hidden"
+                className="flex-shrink-0 border-b border-tl-b1 bg-tl-s1 relative z-10 transition-all duration-500 ease-in-out"
               >
-                <div className="px-4 py-3 space-y-3">
-                  {/* Top info bar */}
+                <div className="px-6 py-4 space-y-4">
+                  {/* Evidence Header - Always Visible */}
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-mono font-bold text-tl-gold px-1.5 py-0.5 bg-tl-gold/5 border border-tl-gold/10 rounded">
-                        {highlightedHavfItem.citation_ref ?? "REF"}
-                      </span>
+                    <div className="flex items-center gap-3">
+                      <div className="px-3 py-1 bg-tl-gold/10 border border-tl-gold/20 rounded-full">
+                         <span className="text-[10px] font-mono font-bold text-tl-gold tracking-widest uppercase">
+                          {highlightedHavfItem.citation_ref ?? "CIT"}
+                        </span>
+                      </div>
                       <ConfidenceBadge
                         score={highlightedHavfItem.score}
                         confidence={highlightedHavfItem.confidence}
                       />
                     </div>
-                    {highlightedHavfItem.score != null && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-tl-t3">
-                          {Math.round(highlightedHavfItem.score * 100)}% match
-                        </span>
-                        <div className="w-16 h-1 bg-tl-b2 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full transition-all duration-700 ${
-                              highlightedHavfItem.confidence === "HIGH"
-                                ? "bg-tl-hi"
-                                : highlightedHavfItem.confidence === "MEDIUM"
-                                  ? "bg-tl-med"
-                                  : "bg-tl-low"
-                            }`}
-                            style={{
-                              width: `${highlightedHavfItem.score * 100}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => setIsContextExpanded(!isContextExpanded)}
+                        className="flex items-center gap-1.5 text-[9px] font-mono font-bold text-tl-t4 uppercase tracking-widest hover:text-tl-gold transition-colors"
+                      >
+                        <svg 
+                          className={`w-3 h-3 transition-transform duration-300 ${isContextExpanded ? 'rotate-180' : ''}`} 
+                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+                        </svg>
+                        <span>{isContextExpanded ? "Hide Details" : "Show Details"}</span>
+                      </button>
+                      {!showPdf && (
+                        <button
+                          onClick={() => {
+                            const el = document.getElementById(highlightedHavfItem.sentence_key);
+                            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }}
+                          className="text-[9px] font-mono font-bold text-tl-gold uppercase tracking-widest hover:underline"
+                        >
+                          Jump to context ↓
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  {/* The Source Passage */}
-                  <div className="relative">
-                    <div className="absolute -left-4 top-0 bottom-0 w-1 bg-tl-gold/20 rounded-r" />
-                    <div className="pl-1 space-y-2">
-                      <div className="text-[13px] text-tl-t1 leading-relaxed font-serif italic markdown-body-source">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {highlightedHavfItem.source_sentence}
-                        </ReactMarkdown>
-                      </div>
-
-                      {/* Full Context Disclosure */}
-                      {highlightedHavfItem.full_context && (
-                        <details className="mt-2 pt-2 border-t border-tl-b1/30">
-                          <summary className="text-[9px] font-mono uppercase tracking-widest text-tl-t4 cursor-pointer hover:text-tl-gold transition-colors">
-                            See Full Context
-                          </summary>
-                          <div className="mt-2 text-[11px] text-tl-t3 leading-relaxed bg-tl-s3/30 p-2 rounded border border-tl-b1/30 max-h-48 overflow-y-auto markdown-body-source">
+                  {/* Collapsible Content */}
+                  <div className={`overflow-hidden transition-all duration-500 ease-in-out ${isContextExpanded ? 'max-h-[1000px] opacity-100 mt-4' : 'max-h-0 opacity-0'}`}>
+                    <div className="space-y-5 pb-2">
+                      {/* The Source Passage - High Readability */}
+                      <div className="bg-tl-bg/30 p-5 rounded-2xl border border-tl-b1/50 relative overflow-hidden group">
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-tl-gold opacity-30 group-hover:opacity-100 transition-opacity" />
+                        <div className="space-y-4">
+                          <div className="text-[15px] text-tl-t1 leading-relaxed font-sans selection:bg-tl-gold/30 markdown-body-source">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {highlightedHavfItem.full_context}
+                              {highlightedHavfItem.source_sentence}
                             </ReactMarkdown>
                           </div>
-                        </details>
-                      )}
-                    </div>
-                  </div>
 
-                  {/* Verification Metadata & Actions */}
-                  <div className="flex items-center justify-between gap-2 py-1.5 border-t border-tl-b1/30">
-                    <div className="flex items-center gap-4">
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
-                          Page
-                        </span>
-                        <span className="text-[10px] font-mono text-tl-t2">
-                          {highlightedHavfItem.page_number != null
-                            ? `p.${highlightedHavfItem.page_number + 1}`
-                            : "N/A"}
-                        </span>
+                          {/* Transformation Classification Card */}
+                          {highlightedHavfItem.transformation_type && (
+                            <div className="pt-4 border-t border-tl-b1/30">
+                              <div className="flex flex-wrap items-center gap-3 mb-3">
+                                <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-[0.2em] font-bold">Transformation Type:</span>
+                                <span className="px-2.5 py-1 rounded-lg bg-tl-s3 text-[10px] font-bold text-tl-gold border border-tl-gold/20 tracking-tighter">
+                                  {highlightedHavfItem.transformation_type.replace("_", " ").toUpperCase()}
+                                </span>
+                              </div>
+                              {highlightedHavfItem.transformation_reason && (
+                                <div className="bg-tl-s1/50 p-3 rounded-xl border border-tl-b1/30">
+                                  <p className="text-[11px] text-tl-t3 font-sans leading-relaxed italic opacity-80 mb-2">
+                                    "{highlightedHavfItem.transformation_reason}"
+                                  </p>
+                                  <div className="flex items-center gap-2 text-[10px] font-medium text-tl-t4 border-t border-tl-b1/20 pt-2">
+                                    <span className="text-tl-gold">●</span>
+                                    <span>
+                                      {highlightedHavfItem.transformation_type === "direct_quote" && "Verify wording accuracy. Can cite directly."}
+                                      {highlightedHavfItem.transformation_type === "paraphrase" && "Verify semantics. Can cite with attribution."}
+                                      {highlightedHavfItem.transformation_type === "synthesis" && "Verify integration. Cite multiple sources."}
+                                      {highlightedHavfItem.transformation_type === "inference" && "Verify reasoning. Citation may require qualification."}
+                                      {highlightedHavfItem.transformation_type === "uncertain" && "Verify manually. Ambiguous classification."}
+                                      {highlightedHavfItem.transformation_type === "unsupported" && "Caution: Potential hallucination or weak support."}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
-                          Method
-                        </span>
-                        <span className="text-[10px] font-mono text-tl-t2">
-                          {highlightedHavfItem.verification_method ||
-                            "Direct Match"}
-                        </span>
-                      </div>
-                      {highlightedHavfItem.chunk_type && (
-                        <div className="flex flex-col">
-                          <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-tighter">
-                            Context
-                          </span>
-                          <span className="text-[10px] font-mono text-tl-t2 capitalize">
-                            {highlightedHavfItem.chunk_type}
+
+                      {/* Metadata Row */}
+                      <div className="flex flex-wrap items-center gap-6 px-1">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[8px] font-mono text-tl-t4 uppercase tracking-[0.2em] font-bold opacity-50">Spatial Loc</span>
+                          <span className="text-[10px] font-mono text-tl-t2 font-bold tracking-widest uppercase">
+                            {highlightedHavfItem.page_number != null
+                              ? `PG. ${highlightedHavfItem.page_number + 1}`
+                              : "N/A"}
                           </span>
                         </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => {
-                          if (highlightedHavfItem?.source_sentence) {
-                            navigator.clipboard.writeText(
-                              highlightedHavfItem.source_sentence,
-                            );
-                          }
-                        }}
-                        title="Copy sentence"
-                        className="px-2 py-1 bg-tl-s3 border border-tl-b1 rounded text-[9px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-all"
-                      >
-                        [Copy sentence]
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (highlightedHavfItem?.citation_ref) {
-                            navigator.clipboard.writeText(
-                              highlightedHavfItem.citation_ref,
-                            );
-                          }
-                        }}
-                        title="Copy citation"
-                        className="px-2 py-1 bg-tl-s3 border border-tl-b1 rounded text-[9px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-all"
-                      >
-                        [Copy citation]
-                      </button>
-                      {active && sessionId && (
-                        <a
-                          href={papersApi.getPdfUrl(sessionId, active.id)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Open PDF"
-                          className="px-2 py-1 bg-tl-s3 border border-tl-b1 rounded text-[9px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-all"
-                        >
-                          [Open PDF]
-                        </a>
-                      )}
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[8px] font-mono text-tl-t4 uppercase tracking-[0.2em] font-bold opacity-50">Auth Method</span>
+                          <span className="text-[10px] font-mono text-tl-t2 font-bold tracking-widest uppercase">
+                            {highlightedHavfItem.verification_method || "DIRECT"}
+                          </span>
+                        </div>
+                        {highlightedHavfItem.chunk_type && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[8px] font-mono text-tl-t4 uppercase tracking-[0.2em] font-bold opacity-50">Context</span>
+                            <span className="text-[10px] font-mono text-tl-t2 font-bold tracking-widest uppercase">
+                              {highlightedHavfItem.chunk_type}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             ) : (
-              /* If no citation is selected, show a hint */
-              <div className="flex-shrink-0 px-4 py-8 text-center bg-tl-s2 border-b border-tl-b1 border-dashed">
-                <p className="text-xs font-mono text-tl-t4 italic">
-                  Select a citation from the chat to see detailed verification.
+              <div className="flex-shrink-0 px-6 py-12 text-center bg-tl-bg/20 border-b border-tl-b1/50 border-dashed m-6 rounded-2xl">
+                <p className="text-[11px] font-sans text-tl-t4 uppercase tracking-widest font-medium opacity-60">
+                  Focus a verified claim to see source alignment.
                 </p>
               </div>
             )}
 
             {/* ── VIEWER AREA ── */}
-            <div className="flex-1 min-h-0 relative">
+            <div className="flex-1 min-h-0 relative bg-tl-bg/20">
               {showPdf && active ? (
                 <HighlighterPdfViewer
                   key={`pdf-${highlightedHavfItem?.sentence_key || active.id}-pg${highlightedHavfItem?.page_number}`}
@@ -384,200 +361,138 @@ export default function SourceViewer({
                   chunkType={highlightedHavfItem?.chunk_type}
                 />
               ) : (
-                <div className="h-full overflow-y-auto px-4 py-4 space-y-6">
+                <div className="h-full overflow-y-auto px-6 py-8 space-y-10 scroll-smooth">
                   {highlightedHavfItem?.claim && (
-                    <div className="bg-tl-s2 border border-tl-b1 rounded-lg p-3">
-                      <h4 className="text-[10px] font-mono text-tl-t4 uppercase tracking-wider mb-2">
-                        System Claim
+                    <div className="bg-tl-s3/30 border border-tl-b1/50 rounded-2xl p-6 shadow-sm">
+                      <h4 className="text-[9px] font-mono text-tl-t4 uppercase tracking-[0.2em] font-bold mb-4 opacity-50">
+                        Verification Objective
                       </h4>
-                      <p className="text-xs text-tl-t2 leading-relaxed italic">
-                        {highlightedHavfItem.claim}
+                      <p className="text-sm text-tl-t2 leading-relaxed italic font-serif">
+                        "{highlightedHavfItem.claim}"
                       </p>
                     </div>
                   )}
 
-                  <div className="space-y-3">
-                    <h4 className="text-[10px] font-mono text-tl-t4 uppercase tracking-wider">
-                      Paper Metadata
+                  <div className="space-y-6">
+                    <h4 className="text-[9px] font-mono text-tl-t4 uppercase tracking-[0.2em] font-bold opacity-50 border-b border-tl-b1/30 pb-2">
+                      Full Source Context
                     </h4>
-                    <PaperMetadataSummary paper={active} />
-                  </div>
-
-                  {highlightedHavfItem && (
-                    <div className="space-y-3">
-                      <h4 className="text-[10px] font-mono text-tl-t4 uppercase tracking-wider">
-                        Source Text
-                      </h4>
-                      {sectionEntries.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {sectionEntries.map((section) => (
-                            <button
-                              key={section.id}
-                              onClick={() => jumpToSection(section.id)}
-                              className="px-2 py-1 rounded-full border border-tl-b1 bg-tl-s2 text-[10px] font-mono text-tl-t3 hover:text-tl-gold hover:border-tl-gold/30 transition-colors"
-                            >
-                              {section.title}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {chunksLoading && (
-                        <p className="text-xs font-mono text-tl-t4">
-                          Loading source text...
-                        </p>
-                      )}
-                      {chunksError && (
-                        <p className="text-xs font-mono text-tl-low">
-                          {chunksError}
-                        </p>
-                      )}
-                      {!chunksLoading && !chunksError && chunks.length === 0 && (
-                        <p className="text-xs font-mono text-tl-t4">
-                          No source text available yet.
-                        </p>
-                      )}
-                      {!chunksLoading && !chunksError && chunks.length > 0 && (
-                        <div className="space-y-4">
-                          {renderChunkText(
-                            chunks,
-                            highlightedHavfItem?.sentence_key,
-                            sectionEntries,
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {!highlightedHavfItem && (
-                    <div className="flex flex-col items-center justify-center pt-20 text-tl-b2">
-                      <svg
-                        className="w-12 h-12 mb-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={1}
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
-                      </svg>
-                      <p className="text-xs font-mono text-tl-t4">
-                        Awaiting citation focus...
+                    
+                    {chunksLoading && (
+                      <div className="space-y-4 animate-pulse">
+                         {[1,2,3,4].map(i => <div key={i} className="h-3 bg-tl-s2 rounded-full w-full" style={{ width: `${90 - i * 5}%` }} />)}
+                      </div>
+                    )}
+                    {chunksError && (
+                      <p className="text-xs font-mono text-tl-low bg-tl-low/5 p-4 rounded-xl border border-tl-low/20">
+                        {chunksError}
                       </p>
-                    </div>
-                  )}
+                    )}
+                    {!chunksLoading && !chunksError && chunks.length === 0 && (
+                      <p className="text-[11px] font-sans text-tl-t4 text-center py-10 uppercase tracking-widest opacity-40">
+                        Source stream unavailable.
+                      </p>
+                    )}
+                    {!chunksLoading && !chunksError && chunks.length > 0 && (
+                      <div className="space-y-10 pb-20">
+                        {renderChunkText(
+                          chunks,
+                          highlightedHavfItem?.sentence_key,
+                          sectionEntries,
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           </div>
         ) : (
           active && (
-            <div className="flex-1 flex flex-col space-y-4 h-full p-4">
-              {highlightedHavfItem && (
-                <div
-                  ref={highlightRef}
-                  className="mb-4 animate-pulse"
-                  id={`source-${highlightedHavfItem.sentence_key}`}
-                >
-                  <HighlightedSource item={highlightedHavfItem} />
-                </div>
-              )}
-              {/* Title and top metadata */}
-              <div className="flex-shrink-0">
-                <h2 className="text-sm font-bold text-tl-t1 leading-tight font-serif mb-0.5">
+            <div className="flex-1 flex flex-col space-y-8 h-full p-8 animate-in fade-in duration-700">
+               {/* Meta Display for non-completed (loading) state */}
+               <div className="space-y-2">
+                <h1 className="text-2xl font-bold text-tl-t1 leading-tight font-serif">
                   {active.title ?? active.filename}
-                </h2>
+                </h1>
                 {active.authors?.length > 0 && (
-                  <p className="text-xs text-tl-t3 font-mono">
+                  <p className="text-sm text-tl-gold font-sans font-medium uppercase tracking-widest opacity-80">
                     {(Array.isArray(active.authors)
                       ? active.authors
                       : [active.authors]
                     ).join(", ")}
                   </p>
                 )}
-                {active.year && (
-                  <p className="text-xs text-tl-t4 font-mono">{active.year}</p>
-                )}
               </div>
 
-              <div className="flex-col space-y-4">
-                {/* Status + progress */}
-                <div className="bg-tl-s2 border border-tl-b1 rounded-md p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono text-tl-t3">Status</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-tl-s2/50 border border-tl-b1/50 rounded-2xl p-6 space-y-6">
+                   <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-tl-t4 uppercase tracking-widest font-bold">Semantic Status</span>
                     <span
-                      className={`text-xs font-mono font-semibold ${STATUS_COLOR[active.status] ?? "text-tl-t2"}`}
+                      className={`text-[10px] font-mono font-bold uppercase tracking-widest ${STATUS_COLOR[active.status] ?? "text-tl-t2"}`}
                     >
                       {STATUS_LABEL[active.status] ?? active.status}
                     </span>
                   </div>
+                  
                   {active.progress != null && active.status !== "COMPLETED" && (
-                    <>
-                      <div className="h-1 w-full bg-tl-b2 rounded">
+                    <div className="space-y-3">
+                      <div className="h-1.5 w-full bg-tl-b1 rounded-full overflow-hidden">
                         <div
-                          className="h-1 rounded bg-tl-gold transition-all"
+                          className="h-full bg-gradient-to-r from-tl-gold to-tl-hi transition-all duration-1000 ease-out"
                           style={{
                             width: `${Math.round((active.progress ?? 0) * 100)}%`,
                           }}
                         />
                       </div>
-                      <p className="text-[10px] text-tl-t4 font-mono text-right">
-                        {Math.round((active.progress ?? 0) * 100)}%
+                      <p className="text-[9px] text-tl-t4 font-mono font-bold tracking-widest text-right">
+                        SYNCHRONIZING {Math.round((active.progress ?? 0) * 100)}%
                       </p>
-                    </>
-                  )}
-                  {active.page_count != null && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono text-tl-t3">
-                        Pages
-                      </span>
-                      <span className="text-xs font-mono text-tl-t2">
-                        {active.page_count}
-                      </span>
                     </div>
                   )}
-                  {active.chunk_count != null && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono text-tl-t3">
-                        Chunks
-                      </span>
-                      <span className="text-xs font-mono text-tl-t2">
-                        {active.chunk_count}
-                      </span>
+
+                  <div className="pt-4 border-t border-tl-b1/30 space-y-3">
+                    <div className="flex items-center justify-between text-[11px] font-sans">
+                      <span className="text-tl-t4 font-bold uppercase tracking-widest opacity-60">Extent</span>
+                      <span className="text-tl-t2 font-bold">{active.page_count ?? "—"} PG</span>
                     </div>
-                  )}
-                  {active.file_size_mb != null && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono text-tl-t3">Size</span>
-                      <span className="text-xs font-mono text-tl-t2">
-                        {active.file_size_mb.toFixed(1)} MB
-                      </span>
+                    <div className="flex items-center justify-between text-[11px] font-sans">
+                      <span className="text-tl-t4 font-bold uppercase tracking-widest opacity-60">Density</span>
+                      <span className="text-tl-t2 font-bold">{active.chunk_count ?? "—"} NODES</span>
                     </div>
-                  )}
+                    <div className="flex items-center justify-between text-[11px] font-sans">
+                      <span className="text-tl-t4 font-bold uppercase tracking-widest opacity-60">Payload</span>
+                      <span className="text-tl-t2 font-bold">{active.file_size_mb?.toFixed(1) ?? "—"} MB</span>
+                    </div>
+                  </div>
                 </div>
 
-                {/* Abstract */}
                 {active.abstract && (
-                  <div>
-                    <h3 className="text-xs font-mono font-semibold text-tl-t3 uppercase tracking-wider mb-1.5">
-                      Abstract
+                  <div className="space-y-4">
+                    <h3 className="text-[10px] font-mono font-bold text-tl-gold uppercase tracking-[0.2em] opacity-80">
+                      Semantic Abstract
                     </h3>
-                    <p className="text-sm text-tl-t2 leading-relaxed">
+                    <p className="text-[13px] text-tl-t2 leading-loose font-sans bg-tl-s2/30 p-6 rounded-2xl border border-tl-b1/30 shadow-inner italic">
                       {active.abstract}
                     </p>
                   </div>
                 )}
+              </div>
 
-                {active.error_message && (
-                  <div className="bg-tl-low/10 border border-tl-low/30 rounded-md p-3">
-                    <p className="text-xs font-mono text-tl-low">
+              {active.error_message && (
+                <div className="bg-tl-low/5 border border-tl-low/30 rounded-2xl p-6 flex items-start gap-4">
+                    <svg className="w-5 h-5 text-tl-low mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                   <div>
+                    <p className="text-[10px] font-mono text-tl-low uppercase tracking-widest font-bold mb-1">Indexation Failure</p>
+                    <p className="text-sm text-tl-low/80 font-sans leading-relaxed">
                       {active.error_message}
                     </p>
-                  </div>
-                )}
-              </div>
+                   </div>
+                </div>
+              )}
             </div>
           )
         )}
@@ -620,7 +535,7 @@ function renderChunkText(chunks, highlightedSentenceKey, sectionEntries = []) {
         <h5
           key={sectionId}
           id={sectionId}
-          className="text-[11px] font-mono text-tl-t3 uppercase tracking-wider"
+          className="text-[10px] font-mono text-tl-gold uppercase tracking-[0.2em] font-bold border-b border-tl-gold/20 pb-1 mt-12 mb-6"
         >
           {chunk.section_title}
         </h5>,
@@ -635,24 +550,33 @@ function renderChunkText(chunks, highlightedSentenceKey, sectionEntries = []) {
       <div
         key={chunk.paragraph_id}
         id={`para-${chunk.paragraph_id}`}
-        className="text-[12px] leading-relaxed text-tl-t1"
+        className="text-[13px] leading-[1.7] text-tl-t2 font-sans mb-8 selection:bg-tl-gold/30"
       >
         {sentenceEntries.length > 0
-          ? sentenceEntries.map((sentence, idx) => (
-              <span
-                key={sentence.key}
-                id={sentence.key}
-                className={
-                  sentence.key === highlightedSentenceKey
-                    ? "bg-tl-gold/20 ring-1 ring-tl-gold/40 rounded px-0.5"
-                    : ""
-                }
-              >
-                {sentence.text}
-                {idx < sentenceEntries.length - 1 ? " " : ""}
-              </span>
-            ))
+          ? sentenceEntries.map((sentence, idx) => {
+              const isHighlighted = sentence.key === highlightedSentenceKey;
+              return (
+                <span
+                  key={sentence.key}
+                  id={sentence.key}
+                  className={`
+                    transition-all duration-500 rounded-md py-0.5 px-0.5
+                    ${isHighlighted 
+                      ? "bg-tl-gold/20 text-tl-t1 font-medium ring-1 ring-tl-gold/40 shadow-sm shadow-tl-gold/10 px-1.5" 
+                      : "hover:bg-tl-s3/50"}
+                  `}
+                >
+                  {sentence.text}
+                  {idx < sentenceEntries.length - 1 ? " " : ""}
+                </span>
+              );
+            })
           : chunk.text}
+        {chunk.paragraph_id && (
+          <sup className="ml-1 text-[10px] font-mono text-tl-gold/40 hover:text-tl-gold transition-colors cursor-help select-none font-bold" title={`Paragraph ID: ${chunk.paragraph_id}`}>
+            [{chunk.paragraph_id.split('_').pop()}]
+          </sup>
+        )}
       </div>,
     );
   });

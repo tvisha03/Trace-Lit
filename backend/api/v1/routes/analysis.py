@@ -6,10 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.v1.schemas import (
     KeywordResponse,
     KeywordItem,
-    GapAnalysisResponse,
-    ThemeItem,
     ReviewResponse,
     SummaryResponse,
+    GapAnalysisResponse,
 )
 from app.dependencies import get_db
 from infrastructure.db.crud.paper_crud import get_paper, get_papers_by_session
@@ -17,11 +16,12 @@ from infrastructure.db.crud.session_crud import get_session
 from infrastructure.llm.fallback_chain import FallbackChain
 from services.analysis_service import (
     get_paper_keywords,
-    get_session_gap_analysis,
     generate_literature_review,
     generate_paper_summary,
     stream_literature_review,
     stream_paper_summary,
+    generate_research_gaps,
+    stream_research_gaps,
 )
 from shared.enums import PaperStatus
 from shared.errors import ForbiddenError, InsufficientDataError, NotFoundError
@@ -30,7 +30,7 @@ from shared.utils.rate_limiter import SlidingWindowRateLimiter
 router = APIRouter()
 
 _analysis_limiter = SlidingWindowRateLimiter(
-    max_calls=10, window_seconds=60.0, resource_name="analysis requests",
+    max_calls=20, window_seconds=60.0, resource_name="analysis requests",
 )
 
 def _get_llm(request: Request) -> FallbackChain:
@@ -57,38 +57,7 @@ async def paper_keywords(
         keywords=[KeywordItem(**k) for k in keywords],
     )
 
-@router.get("/gaps", response_model=GapAnalysisResponse)
-async def gap_analysis(
-    session_id: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    _analysis_limiter.enforce(request)
-    session = await get_session(db, session_id)
-    if not session:
-        raise NotFoundError("Session", session_id)
 
-    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
-    if not papers:
-        raise InsufficientDataError(
-            f"No completed papers in session '{session_id}'. "
-            "Please wait for paper processing to finish before running gap analysis."
-        )
-
-    if len(papers) < 2:
-        raise InsufficientDataError(
-            f"Gap analysis requires at least 2 completed papers, but session "
-            f"'{session_id}' has only {len(papers)}. Upload more papers to "
-            f"identify research gaps across multiple studies."
-        )
-
-    result = await get_session_gap_analysis(session_id, db, _get_llm(request))
-    return GapAnalysisResponse(
-        themes=[ThemeItem(**t) for t in result["themes"]],
-        underexplored=[ThemeItem(**t) for t in result["underexplored"]],
-        narrative=result.get("narrative"),
-        provider=result.get("provider"),
-    )
 
 @router.get("/review", response_model=ReviewResponse)
 async def literature_review(
@@ -202,6 +171,58 @@ async def paper_summary_stream(
     _analysis_limiter.enforce(request)
     llm = _get_llm(request)
     generator = stream_paper_summary(paper_id, db, llm, user_question=question)
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+@router.get("/gaps", response_model=GapAnalysisResponse)
+async def research_gaps(
+    session_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _analysis_limiter.enforce(request)
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
+
+    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+    if not papers:
+        raise InsufficientDataError(
+            f"No completed papers in session '{session_id}'. "
+            "Please wait for paper processing to finish before analyzing gaps."
+        )
+
+    llm = _get_llm(request)
+    result = await generate_research_gaps(session_id, db, llm)
+    return GapAnalysisResponse(**result)
+
+@router.get("/gaps/stream", response_class=StreamingResponse)
+async def research_gaps_stream(
+    session_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _analysis_limiter.enforce(request)
+
+    session = await get_session(db, session_id)
+    if not session:
+        raise NotFoundError("Session", session_id)
+
+    papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+    if not papers:
+        raise InsufficientDataError(
+            f"No completed papers in session '{session_id}'. "
+            "Please wait for paper processing to finish before analyzing gaps."
+        )
+
+    llm = _get_llm(request)
+    generator = stream_research_gaps(session_id, db, llm)
     return StreamingResponse(
         generator,
         media_type="text/event-stream",

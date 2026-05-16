@@ -6,10 +6,11 @@ import RightPanel from "./components/layout/RightPanel";
 import ChatInterface from "./components/chat/ChatInterface";
 import ComparisonTable from "./components/compare/ComparisonTable";
 import ExportPanel from "./components/export/ExportPanel";
-import GapFinderPanel from "./components/analysis/GapFinderPanel";
 import KeywordsPanel from "./components/analysis/KeywordsPanel";
 import LiteratureReviewPanel from "./components/analysis/LiteratureReviewPanel";
 import VerifyPanel from "./components/verify/VerifyPanel";
+import PaperSummaryPanel from "./components/analysis/PaperSummaryPanel";
+import GapAnalysisPanel from "./components/analysis/GapAnalysisPanel";
 import SettingsPanel from "./components/settings/SettingsPanel";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import useSessionStore from "./stores/sessionStore";
@@ -22,11 +23,13 @@ function App() {
   const [activeTab, setActiveTab] = useState("chat");
   // ── Right panel active tab ─────────────────────────────────────────────────
   const [rightTab, setRightTab] = useState("papers");
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
 
   // ── Shared state ───────────────────────────────────────────────────────────
   const { highlightedHavfItem, setHighlightedHavfItem } = useChatStore();
   const [activePaperId, setActivePaperId] = useState(null);
   const [sessionError, setSessionError] = useState(null);
+  const [externalQuery, setExternalQuery] = useState(null);
 
   // ── Comparison state ───────────────────────────────────────────────────────
   const [comparisonData, setComparisonData] = useState(null);
@@ -72,16 +75,21 @@ function App() {
           setActiveSession(matched);
         } else if (fetchedSessions?.length > 0) {
           setActiveSession(fetchedSessions[0]);
-        } else {
+        } else if (fetchedSessions?.length === 0 && !savedId) {
+          // Only create Session 1 if truly empty and no previous session was tracked
           try {
             await createSession("Session 1");
           } catch (createErr) {
             console.error("[App] Failed to create default session:", createErr);
             setSessionError(
               createErr.message ||
-                "Failed to create session. Is the backend running?",
+              "Failed to create session. Is the backend running?",
             );
           }
+        } else if (fetchedSessions?.length === 0 && savedId) {
+          // If we have a saved ID but no sessions returned, maybe the backend is still loading
+          // or the sessions were deleted. For now, just don't create a new one automatically.
+          console.warn("[App] Saved session ID exists but no sessions returned from backend.");
         }
       }
     } catch (err) {
@@ -133,6 +141,12 @@ function App() {
     setHighlightedHavfItem(havfItem);
     if (havfItem.paper_id) setActivePaperId(havfItem.paper_id);
     setRightTab("source"); // auto-switch right panel to source
+    setIsRightPanelOpen(true); // auto-open right panel
+  }, []);
+
+  const handleAskQuestion = useCallback((q) => {
+    setActiveTab("chat");
+    setExternalQuery({ query: q, t: Date.now() });
   }, []);
 
   // ── Comparison generation ─────────────────────────────────────────────────
@@ -153,7 +167,7 @@ function App() {
       if (result) {
         try {
           localStorage.setItem(`tracelit_cached_comparison_${activeSession.id}`, JSON.stringify(result));
-        } catch {}
+        } catch { }
       }
     } catch (err) {
       console.error("Comparison failed:", err);
@@ -196,21 +210,21 @@ function App() {
         {papers.some(
           (p) => !["COMPLETED", "FAILED"].includes(p.status?.toUpperCase()),
         ) && (
-          <span
-            className="flex items-center gap-1.5 px-2.5 py-[3px] rounded-full text-[11.5px] font-mono border"
-            style={{
-              background: "var(--s2)",
-              borderColor: "var(--b1)",
-              color: "var(--t3)",
-            }}
-          >
             <span
-              className="w-1 h-1 rounded-full inline-block"
-              style={{ background: "var(--med)" }}
-            />
-            Processing…
-          </span>
-        )}
+              className="flex items-center gap-1.5 px-2.5 py-[3px] rounded-full text-[11.5px] font-mono border"
+              style={{
+                background: "var(--s2)",
+                borderColor: "var(--b1)",
+                color: "var(--t3)",
+              }}
+            >
+              <span
+                className="w-1 h-1 rounded-full inline-block"
+                style={{ background: "var(--med)" }}
+              />
+              Processing…
+            </span>
+          )}
         {readyCount === 0 && papers.length === 0 && (
           <span className="font-mono text-[11px] text-tl-t4">
             Upload papers in the right panel to begin
@@ -229,6 +243,8 @@ function App() {
             sessionError={sessionError}
             onRetrySession={initSession}
             onCitationClick={handleCitationClick}
+            externalQuery={externalQuery}
+            onAskQuestion={handleAskQuestion}
           />
         </div>
 
@@ -248,12 +264,12 @@ function App() {
             <button
               onClick={handleGenerateComparison}
               disabled={comparisonLoading || !activeSession || readyCount < 2}
-              title={
-                readyCount < 2
-                  ? `Need ${2 - readyCount} more indexed paper${2 - readyCount !== 1 ? "s" : ""} to enable comparison`
-                  : "Generate comparison table"
-              }
-              className="px-3.5 py-1.5 text-xs rounded font-mono text-tl-bg bg-tl-gold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+              className={`
+                flex items-center justify-center gap-2 px-5 py-2 rounded-xl transition-all duration-300 font-sans text-xs font-bold uppercase tracking-widest shadow-lg
+                ${comparisonLoading || !activeSession || readyCount < 2
+                  ? 'bg-tl-s3 text-tl-t4 cursor-not-allowed opacity-50'
+                  : 'bg-tl-gold text-tl-bg shadow-tl-gold/20 hover:scale-[1.02] active:scale-95'}
+              `}
             >
               {comparisonLoading
                 ? "Generating…"
@@ -332,19 +348,38 @@ function App() {
               </p>
             </div>
           )}
-          <ComparisonTable data={comparisonData} />
+          <ComparisonTable data={comparisonData} onCitationClick={handleCitationClick} />
         </div>
 
-        {/* Gaps */}
-        <div className={`overflow-auto h-full p-5 ${activeTab === "gaps" ? "" : "hidden"}`}>
-          <GapFinderPanel sessionId={activeSession?.id} />
+        {/* Summary */}
+        <div className={`overflow-auto h-full p-5 ${activeTab === "summary" ? "" : "hidden"}`}>
+          <PaperSummaryPanel
+            sessionId={activeSession?.id}
+            paper={papers.find(p => p.id === activePaperId) || papers.find(p => p.status === 'COMPLETED')}
+          />
+        </div>
+
+        {/* Keywords */}
+        <div className={`overflow-auto h-full p-5 ${activeTab === "keywords" ? "" : "hidden"}`}>
+          <KeywordsPanel
+            sessionId={activeSession?.id}
+            papers={papers.filter(p => p.status?.toUpperCase() === 'COMPLETED')}
+          />
         </div>
 
         {/* Review */}
         <div className={`overflow-auto h-full p-5 ${activeTab === "review" ? "" : "hidden"}`}>
           <LiteratureReviewPanel
             sessionId={activeSession?.id}
-            papers={papers}
+            papers={papers.filter((p) => p.status?.toUpperCase() === "COMPLETED")}
+          />
+        </div>
+
+        {/* Gaps */}
+        <div className={`overflow-auto h-full p-5 ${activeTab === "gaps" ? "" : "hidden"}`}>
+          <GapAnalysisPanel
+            sessionId={activeSession?.id}
+            papers={papers.filter((p) => p.status?.toUpperCase() === "COMPLETED")}
           />
         </div>
 
@@ -364,19 +399,17 @@ function App() {
           <VerifyPanel
             sessionId={activeSession?.id}
             papers={papers}
+            onUpload={() => {
+              setRightTab('papers');
+              setIsRightPanelOpen(true);
+            }}
             initialHavfItem={highlightedHavfItem}
-          />
-        </div>
-
-        {/* Keywords */}
-        <div className={`overflow-auto h-full p-5 ${activeTab === "keywords" ? "" : "hidden"}`}>
-          <KeywordsPanel
-            sessionId={activeSession?.id}
-            papers={papers}
+            onCitationClick={handleCitationClick}
           />
         </div>
       </div>
     </div>
+
 
   );
 
@@ -446,29 +479,42 @@ function App() {
             }}
             onExport={() => setActiveTab("export")}
             comparedCount={readyCount}
+            isRightPanelOpen={isRightPanelOpen}
+            onToggleRightPanel={() => setIsRightPanelOpen(!isRightPanelOpen)}
           />
         }
         leftPanel={
           <Sidebar
             activeTab={activeTab}
             onTabChange={setActiveTab}
-            onRightTabChange={setRightTab}
+            onRightTabChange={(tab) => {
+              setRightTab(tab);
+              setIsRightPanelOpen(true);
+            }}
             sessionError={sessionError}
             onRetrySession={handleRetrySession}
+            onAskQuestion={handleAskQuestion}
           />
         }
         mainPanel={mainPanel}
         rightPanel={
-          <RightPanel
-            rightTab={rightTab}
-            onRightTabChange={setRightTab}
-            papers={papers}
-            progressMap={progressMap}
-            sessionId={activeSession?.id}
-            activePaperId={activePaperId}
-            onPaperChange={setActivePaperId}
-            highlightedHavfItem={highlightedHavfItem}
-          />
+          isRightPanelOpen ? (
+            <RightPanel
+              rightTab={rightTab}
+              onRightTabChange={(t) => {
+            setRightTab(t);
+            setIsRightPanelOpen(true);
+          }}
+              papers={papers}
+              progressMap={progressMap}
+              sessionId={activeSession?.id}
+              activePaperId={activePaperId}
+              onPaperChange={setActivePaperId}
+              highlightedHavfItem={highlightedHavfItem}
+              onAskQuestion={handleAskQuestion}
+              onClose={() => setIsRightPanelOpen(false)}
+            />
+          ) : null
         }
       />
     </ErrorBoundary>

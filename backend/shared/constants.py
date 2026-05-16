@@ -2,10 +2,9 @@ EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"
 EMBEDDING_DIMENSIONS: int = 384
 EMBEDDING_BATCH_SIZE: int = 64
 
-# Context budget — sized for Ollama Cloud's 8192 num_ctx.
-# Local Ollama (4096 ctx) still works: retriever fills what it can up to this
-# ceiling and the LLM simply receives less context, it won't overflow.
-MAX_CONTEXT_TOKENS: int = 6_000
+# Context budget — raised to 12k to utilize Groq/Gemini capacity and
+# prevent truncation when multiple papers are uploaded.
+MAX_CONTEXT_TOKENS: int = 12_000
 MAX_QUERY_TOKENS: int = 512
 MIN_PARAGRAPHS_PER_PAPER: int = 1
 HISTORY_TOKEN_BUDGET: int = 2_500
@@ -16,7 +15,7 @@ MAX_CONVERSATION_TURNS: int = 5
 CHUNK_TARGET_TOKENS: int = 400
 CHUNK_MAX_TOKENS: int = 800
 
-FAISS_TOP_K_PER_PAPER: int = 3
+FAISS_TOP_K_PER_PAPER: int = 15
 FAISS_MAX_VECTORS: int = 200_000
 
 # Per-paper context budget for comparison — raised to fill Ollama Cloud's

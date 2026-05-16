@@ -52,8 +52,8 @@ class Settings(BaseSettings):
     OLLAMA_CLOUD_MODEL: str = "qwen3.5:397b"
     OLLAMA_CLOUD_VISION_MODEL: str = "qwen3-vl:235b"
     OLLAMA_CLOUD_TIMEOUT: int = 120
-    OLLAMA_CLOUD_MAX_TOKENS: int = 4096
-    OLLAMA_CLOUD_NUM_CTX: int = 8192
+    OLLAMA_CLOUD_MAX_TOKENS: int = 8192
+    OLLAMA_CLOUD_NUM_CTX: int = 16384
 
     @field_validator("OLLAMA_BASE_URL")
     @classmethod
@@ -76,13 +76,13 @@ class Settings(BaseSettings):
             pass
         return v.rstrip("/")
 
-    LLM_TIMEOUT: int = 60
+    LLM_TIMEOUT: int = 180
     OLLAMA_TIMEOUT: int = 600
     OLLAMA_KEEP_ALIVE: str = "0s"
-    OLLAMA_NUM_CTX: int = 4096
+    OLLAMA_NUM_CTX: int = 8192
     OLLAMA_NUM_THREADS: int = 0
-    OLLAMA_MAX_TOKENS: int = 2048
-    COMPARISON_MAX_TOKENS: int = 4096
+    OLLAMA_MAX_TOKENS: int = 8192
+    COMPARISON_MAX_TOKENS: int = 8192
     LLM_MAX_RETRIES: int = 1
     LLM_RETRY_DELAY_BASE: float = 1.0
     LLM_RATE_LIMIT_COOLDOWN_SECONDS: int = 60
@@ -127,6 +127,7 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
+        "extra": "ignore",
     }
 
     @property

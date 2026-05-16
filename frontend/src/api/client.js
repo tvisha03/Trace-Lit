@@ -175,6 +175,9 @@ export const chatApi = {
 
     return () => ctrl.abort();
   },
+
+  getSuggestedQuestions: (sessionId) =>
+    request(sp(sessionId, '/chat/suggested-questions')),
 };
 
 // ─── Comparison ───────────────────────────────────────────────────────────────
@@ -198,9 +201,7 @@ export const analysisApi = {
   keywords: (sessionId, paperId) =>
     request(sp(sessionId, `/analysis/keywords/${paperId}`)),
 
-  // GET → { themes: ThemeItem[], underexplored: ThemeItem[], narrative, provider }
-  //        ThemeItem: { label, keywords: string[], papers_covering?: string[], coverage_ratio: float }
-  gaps: (sessionId) => request(sp(sessionId, '/analysis/gaps')),
+
 
   // GET → { paper_id, title, summary, provider }
   // Optional `question` focuses the summary (e.g. "What methodology is used?")
@@ -241,6 +242,28 @@ export const analysisApi = {
     const qs = question ? `?question=${encodeURIComponent(question)}` : '';
 
     fetch(`${API_BASE}${sp(sessionId, `/analysis/summary/${paperId}/stream${qs}`)}`, {
+      method: 'GET',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) { onError?.(new Error(`HTTP ${res.status}`)); return; }
+        await consumeSseStream(res, {
+          token: (d) => onToken?.(typeof d === 'string' ? d : d.token ?? ''),
+          done: (d) => onDone?.(d),
+          error: (d) => onError?.(new Error(typeof d === 'string' ? d : JSON.stringify(d))),
+        });
+      })
+      .catch((err) => { if (err.name !== 'AbortError') onError?.(err); });
+
+    return () => ctrl.abort();
+  },
+
+  /** Stream research gaps. Events: token → {token}, done → {provider, full_text} */
+  gapsStream: (sessionId, handlers = {}) => {
+    const ctrl = new AbortController();
+    const { onToken, onDone, onError } = handlers;
+
+    fetch(`${API_BASE}${sp(sessionId, '/analysis/gaps/stream')}`, {
       method: 'GET',
       signal: ctrl.signal,
     })

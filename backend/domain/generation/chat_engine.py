@@ -8,6 +8,7 @@ from domain.generation.prompts import (
     SUMMARY_PROMPT_TEMPLATE,
     build_context_block,
     build_history_block,
+    SUGGESTED_QUESTIONS_PROMPT_TEMPLATE,
 )
 from domain.retrieval.query_router import classify_query
 from domain.retrieval.retriever import retrieve, RetrievedChunk
@@ -281,6 +282,26 @@ async def generate_response(
         paper_count=len(paper_ids),
     )
 
+    # Filter papers based on query keywords to avoid including irrelevant papers in comparison
+    try:
+        from domain.retrieval.paper_detector import detect_target_papers
+        from infrastructure.db.crud.paper_crud import get_paper
+        
+        papers_meta = []
+        for pid in paper_ids:
+            paper = await get_paper(db_session, pid)
+            if paper:
+                papers_meta.append({"id": str(paper.id), "title": paper.title or ""})
+        
+        paper_boosts = detect_target_papers(query, papers_meta)
+        targeted_pids = [pid for pid, score in paper_boosts.items() if score > 1.0]
+        
+        if targeted_pids:
+            logger.info(f"Filtering papers for query: {len(paper_ids)} -> {len(targeted_pids)}")
+            paper_ids = targeted_pids
+    except Exception as e:
+        logger.warning(f"Failed to filter papers in generate_response: {e}")
+
     if classification.query_type == QueryType.METADATA:
         return await _handle_metadata_query(
             query,
@@ -304,6 +325,7 @@ async def generate_response(
 
     if is_eval_query:
         try:
+            # pyrefly: ignore [missing-import]
             from sqlalchemy import select
             from infrastructure.db.models.evaluation import EvaluationCache
 
@@ -345,6 +367,13 @@ async def generate_response(
         classification,
         keywords,
     )
+
+    # Final sanity check: only include papers in the prompt that actually provided context
+    if chunks:
+        retrieved_pids = {c.paper_id for c in chunks}
+        if len(retrieved_pids) < len(paper_ids):
+            logger.info(f"Pruning papers with no retrieval hits: {len(paper_ids)} -> {len(retrieved_pids)}")
+            paper_ids = [pid for pid in paper_ids if pid in retrieved_pids]
 
     if is_eval_query:
         try:
@@ -410,6 +439,10 @@ Your response MUST be ONLY valid JSON array. Do NOT add extra text.
             papers_data = json.loads(res_text)
             if isinstance(papers_data, dict):
                 papers_data = [papers_data]
+            
+            if not isinstance(papers_data, list):
+                logger.warning(f"Unexpected JSON structure from extraction LLM: {type(papers_data)}")
+                raise ValueError("LLM did not return a JSON array or object")
 
             # Format output for all papers
             formatted_parts = []
@@ -702,3 +735,61 @@ async def generate_summary(
         max_tokens=settings.OLLAMA_CLOUD_MAX_TOKENS,
     )
     return response_text, provider
+
+
+async def generate_suggested_questions(
+    paper_metadata: list[dict],
+    llm: FallbackChain,
+    history: str = "(No conversation history)",
+) -> list[str]:
+    """
+    Generate 3-4 suggested questions based on paper metadata and conversation history.
+    """
+    if not paper_metadata:
+        return [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]
+
+    formatted_meta = []
+    for i, meta in enumerate(paper_metadata, 1):
+        title = meta.get("title") or f"Paper {i}"
+        abstract = meta.get("abstract") or "No abstract available."
+        formatted_meta.append(f"Paper {i}: {title}\nAbstract: {abstract[:400]}...")
+
+    metadata_text = "\n\n".join(formatted_meta)
+    
+    user_prompt = SUGGESTED_QUESTIONS_PROMPT_TEMPLATE.format(
+        metadata=metadata_text,
+        history=history
+    )
+    
+    try:
+        response_text, _, _ = await llm.generate(
+            system_prompt="You are a research assistant. Return ONLY a list of questions starting with -.",
+            user_prompt=user_prompt,
+            max_tokens=256
+        )
+        
+        # Parse questions starting with -
+        questions = []
+        for line in response_text.split("\n"):
+            line = line.strip()
+            if line.startswith("-"):
+                q = line.lstrip("-").strip()
+                if q:
+                    questions.append(q)
+        
+        return questions[:4] if questions else [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]
+    except Exception as exc:
+        logger.warning(f"Failed to generate suggested questions: {exc}")
+        return [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]

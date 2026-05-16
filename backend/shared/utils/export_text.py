@@ -115,7 +115,8 @@ def extract_citation_ids(text: str) -> list[str]:
 
 def _is_table_line(line: str) -> bool:
     stripped = line.strip()
-    return "|" in stripped and stripped.count("|") >= 2
+    # Accept any line with at least one pipe, or multiple tabs, unless it's a clear heading
+    return ("|" in stripped or stripped.count("\t") >= 2) and not stripped.startswith("#")
 
 
 def _is_heading_line(line: str) -> bool:
@@ -180,7 +181,9 @@ def _cleanup_plain_segment(text: str) -> str:
 def _normalize_source_text(text: str) -> str:
     text = text or ""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.replace("<br/>", "\n").replace("<br />", "\n").replace("<br>", "\n")
+    # Do NOT convert <br> to \n here as it breaks pipe-table parsing by splitting rows.
+    # The table parser handles <br> as inline content.
+    # text = text.replace("<br/>", "\n").replace("<br />", "\n").replace("<br>", "\n")
     # Strip the disclaimer note before further processing so it never reaches
     # the exported document body.
     text = _DISCLAIMER_RE.sub("", text)
@@ -208,6 +211,20 @@ def _normalize_source_text(text: str) -> str:
             if output_lines and output_lines[-1] != "":
                 output_lines.append("")
             continue
+
+        # Convert tab-separated lines to pipe-separated for the table parser
+        if "\t" in line and "|" not in line and line.count("\t") >= 2:
+            line = "|" + line.replace("\t", "|") + "|"
+
+        # Repair logic: if this line starts with a citation and the previous line was a paragraph or table,
+        # it was likely accidentally wrapped by the LLM. Join it back.
+        if _CITATION_TAG.match(line):
+            if paragraph_buffer:
+                paragraph_buffer[-1] = f"{paragraph_buffer[-1]} {line}"
+                continue
+            elif output_lines and (_is_table_line(output_lines[-1]) or not output_lines[-1].startswith("#")):
+                output_lines[-1] = f"{output_lines[-1]} {line}"
+                continue
 
         if _is_heading_line(line) or _is_list_line(line) or _is_table_line(line):
             flush_buffer()
@@ -274,12 +291,14 @@ def inline_tokens_to_text(tokens: list[InlineToken]) -> str:
     return _cleanup_spacing("".join(parts))
 
 
-def _split_table_row(line: str) -> list[str]:
+def _split_table_row(line: str, raw: bool = False) -> list[str]:
     stripped = line.strip().strip("|")
+    if raw:
+        return [cell.strip() for cell in stripped.split("|")]
     return [inline_tokens_to_text(parse_inline_tokens(cell.strip())) for cell in stripped.split("|")]
 
 
-def build_export_blocks(text: str) -> list[ExportBlock]:
+def build_export_blocks(text: str, raw_cells: bool = False) -> list[ExportBlock]:
     normalized = _normalize_source_text(text)
     if not normalized:
         return []
@@ -295,11 +314,11 @@ def build_export_blocks(text: str) -> list[ExportBlock]:
             continue
 
         if _is_table_line(line) and index + 1 < len(lines) and _MD_TABLE_SEP_RE.match(lines[index + 1].strip()):
-            headers = _split_table_row(line)
+            headers = _split_table_row(line, raw=raw_cells)
             index += 2
             rows: list[list[str]] = []
             while index < len(lines) and _is_table_line(lines[index]):
-                row = _split_table_row(lines[index])
+                row = _split_table_row(lines[index], raw=raw_cells)
                 if row:
                     rows.append(row)
                 index += 1

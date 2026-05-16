@@ -210,7 +210,7 @@ async def analyze_figures(
 
         remaining = len(figures) - (batch_start + len(batch))
         if remaining > 0:
-            # Only throttle when Gemini is available and its rate limit applies.
+            # Only throttle when Gemini is the primary provider and its rate limit applies.
             # When Gemini is in cooldown we fall back to local Ollama, which has
             # no API rate limit — adding a delay here only wastes time.
             gemini_cooldown = (
@@ -218,11 +218,17 @@ async def analyze_figures(
                 if hasattr(llm_chain, "rate_monitor")
                 else 0.0
             )
+            
+            # Check if any figure in the batch was actually processed by Gemini
+            # If we're already using local fallback, don't sleep.
             if gemini_cooldown <= 0:
                 # sleep = (60s × batch_size) / RPM_limit
                 # e.g. batch_size=2, RPM=10 → 12 s between batches
                 inter_batch_sleep = (60.0 * batch_size) / _GEMINI_VISION_RPM
+                logger.debug(f"Throttling figure analysis: sleeping {inter_batch_sleep:.1f}s for Gemini RPM")
                 await asyncio.sleep(inter_batch_sleep)
+            else:
+                logger.debug("Gemini in cooldown/unavailable, skipping throttle sleep.")
 
     logger.info(f"Analyzed {len(analyzed)}/{len(figures)} figures successfully")
     return analyzed

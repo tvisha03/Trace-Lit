@@ -61,6 +61,9 @@ async def verify_text_against_papers(
         cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
     )
 
+    from domain.verification.transformation_classifier import classify_transformations
+    havf_results = await classify_transformations(havf_results)
+
     return [
         {
             "claim": r.claim,
@@ -76,6 +79,12 @@ async def verify_text_against_papers(
             "chunk_type": r.chunk_type,
             "citation_ref": r.citation_ref,
             "page_number": r.page_number,
+            "bbox": r.bbox,
+            "full_context": r.full_context,
+            "transformation_type": r.transformation_type,
+            "transformation_reason": r.transformation_reason,
+            "cross_encoder_score": r.cross_encoder_score,
+            "semantic_score": r.semantic_score,
         }
         for r in havf_results
     ]

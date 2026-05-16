@@ -70,7 +70,7 @@ export default function CitationTooltip({ havfItem, refLabel }) {
 
   const paper = papers.find((p) => p.id === havfItem.paper_id) ?? null;
   const shortCite = buildShortCitation(paper);
-  const conf = havfItem.confidence ?? "LOW";
+  const conf = (havfItem.confidence ?? "low").toUpperCase();
   const confCls = CONF_COLOR[conf] ?? CONF_COLOR.LOW;
   const dotCls = CONF_DOT[conf] ?? CONF_DOT.LOW;
 
@@ -116,7 +116,14 @@ export default function CitationTooltip({ havfItem, refLabel }) {
             </span>
           )}
           {havfItem.paragraph_id && (
-            <span className="text-[10px] font-mono text-tl-t4">
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                onCitationClick?.(havfItem);
+              }}
+              className="text-[10px] font-mono text-tl-t4 hover:text-tl-gold cursor-pointer transition-colors border-b border-dotted border-tl-t4/30 hover:border-tl-gold/50"
+              title="Jump to source paragraph"
+            >
               · {havfItem.paragraph_id}
             </span>
           )}
@@ -132,6 +139,31 @@ export default function CitationTooltip({ havfItem, refLabel }) {
           <p className="text-xs text-tl-t2 leading-relaxed line-clamp-4 italic">
             "{havfItem.source_sentence}"
           </p>
+        </div>
+      )}
+
+      {/* Transformation Classification */}
+      {havfItem.transformation_type && (
+        <div className="px-3 pb-2 border-t border-tl-b1/30 mt-1 pt-2">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="text-[9px] font-mono text-tl-t4 uppercase tracking-wider">
+              Transformation:
+            </span>
+            <span className="text-[10px] font-bold text-tl-gold px-1 rounded bg-tl-gold/10">
+              {havfItem.transformation_type.replace("_", " ").toUpperCase()}
+            </span>
+          </div>
+          <p className="text-[10px] text-tl-hi font-bold mb-1">
+            {havfItem.transformation_type?.toLowerCase() === 'direct_quote' ? '✓ Can be cited directly without modification' : 
+             havfItem.transformation_type?.toLowerCase() === 'paraphrase' ? '⚠ Requires verification of wording accuracy' :
+             havfItem.transformation_type?.toLowerCase() === 'synthesis' ? '⚠ Must verify all contributing sources independently' :
+             havfItem.transformation_type?.toLowerCase() === 'inference' ? '❌ MUST be independently verified before citing' : ''}
+          </p>
+          {havfItem.transformation_reason && (
+            <p className="text-[10px] text-tl-t3 font-mono leading-snug italic">
+              "{havfItem.transformation_reason}"
+            </p>
+          )}
         </div>
       )}
 

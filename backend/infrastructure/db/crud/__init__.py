@@ -26,6 +26,8 @@ from infrastructure.db.crud.chunk_crud import (
     get_chunks_by_paper,
     get_chunk_by_paragraph_id,
     get_chunks_by_ids,
+    get_chunks_by_paragraph_ids,
+    get_non_text_chunks_by_paper,
     delete_chunks_by_paper,
 )
 
@@ -50,6 +52,8 @@ __all__ = [
     "get_chunks_by_paper",
     "get_chunk_by_paragraph_id",
     "get_chunks_by_ids",
+    "get_chunks_by_paragraph_ids",
+    "get_non_text_chunks_by_paper",
     "delete_chunks_by_paper",
 ]
 

@@ -1,11 +1,13 @@
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from domain.generation.chat_engine import generate_response, ChatResponse
+from domain.generation.chat_engine import generate_response, ChatResponse, generate_suggested_questions
 from domain.generation.streaming import stream_chat_response
+from domain.verification.transformation_classifier import TransformationClassifier
 from infrastructure.db.crud.message_crud import create_message, get_recent_messages
 from infrastructure.db.crud.paper_crud import get_papers_by_session
 from infrastructure.db.crud.session_crud import get_session
+from infrastructure.db.crud.chunk_crud import get_chunks_by_paper
 from infrastructure.llm.fallback_chain import FallbackChain
 from infrastructure.vector_store.faiss_store import FAISSStore
 from shared.enums import PaperStatus, MessageRole
@@ -14,6 +16,9 @@ from shared.logger import get_logger
 from shared.utils.text_utils import extract_paragraph_ids, normalize_paragraph_ids
 
 logger = get_logger(__name__)
+
+
+_classifier = TransformationClassifier()
 
 
 async def validate_response_has_citations(
@@ -67,25 +72,38 @@ async def validate_response_has_citations(
     return response, citations_stripped
 
 
-async def _format_havf_data(response: ChatResponse) -> list[dict]:
-    return [
-        {
-            "claim": r.claim,
-            "confidence": r.confidence.value,
-            "score": r.score,
-            "source_sentence": r.source_sentence,
-            "paragraph_id": r.paragraph_id,
-            "paper_id": r.paper_id,
-            "sentence_key": r.sentence_key,
-            "verification_method": r.verification_method.value
-            if r.verification_method
-            else None,
-            "chunk_type": r.chunk_type,
-            "citation_ref": r.citation_ref,
-            "page_number": r.page_number,
-        }
-        for r in response.havf_results
+async def _format_havf_data(response: ChatResponse) -> list:
+    """
+    Apply transformation classification to HAVF results and format for the API.
+    Modifies the VerificationResult objects in the response.
+    """
+    if not response.havf_results:
+        return []
+
+    from domain.verification.transformation_classifier import TransformationClassifier
+    classifier = TransformationClassifier()
+
+    all_chunks = [
+        {"text": getattr(c, "text", ""), "paper_id": str(getattr(c, "paper_id", ""))} 
+        for c in response.retrieved_chunks
     ]
+
+    for r in response.havf_results:
+        # Get transformation classification
+        trans_res = classifier.classify(
+            claim=r.claim,
+            source_sentence=r.source_sentence,
+            semantic_similarity=r.semantic_score or r.score,
+            cross_encoder_score=r.cross_encoder_score,
+            all_retrieved_sources=all_chunks
+        )
+        
+        r.transformation_type = trans_res.type
+        r.transformation_confidence = trans_res.confidence
+        r.transformation_reason = trans_res.reason
+
+    from dataclasses import asdict
+    return [asdict(r) for r in response.havf_results]
 
 
 async def _validate_and_update_response_content(
@@ -120,13 +138,18 @@ async def _process_and_save_response(
     if not is_metadata:
         await _validate_and_update_response_content(response, paper_ids)
 
+    havf_data = await _format_havf_data(response)
+    
+
+
+    from dataclasses import asdict
     await create_message(
         db,
         session_id=session_id,
         role=MessageRole.ASSISTANT,
         content=response.content,
         provider=response.provider.value,
-        havf_results=await _format_havf_data(response),
+        havf_results=[asdict(r) for r in havf_data],
         token_count=response.token_count,
         latency_ms=response.latency_ms,
     )
@@ -184,6 +207,8 @@ async def chat(
         keywords=keywords,
     )
     await _process_and_save_response(response, session_id, paper_ids, db)
+    # Update response object with formatted havf data (including transformation fields)
+    response.havf_results = await _format_havf_data(response)
     return response
 
 
@@ -219,3 +244,42 @@ async def chat_stream(
     except Exception as exc:
         logger.error(f"Error during chat stream setup: {exc}")
         raise
+
+
+async def get_suggested_questions(
+    session_id: str,
+    db: AsyncSession,
+    llm: FallbackChain,
+) -> list[str]:
+    """
+    Get suggested questions for a session, relevant to context and history.
+    """
+    from domain.generation.prompts import build_history_block
+    try:
+        # Fetch papers for context
+        papers = await get_papers_by_session(db, session_id, status=PaperStatus.COMPLETED)
+        
+        # Fetch recent chat history for session-specific relevance
+        messages = await get_recent_messages(db, session_id, max_turns=3)
+        history_text = build_history_block(messages, max_turns=3)
+
+        if not papers:
+            # If no papers, just use history to suggest follow-ups (if any)
+            return await generate_suggested_questions([], llm, history=history_text)
+
+        paper_metadata = [
+            {
+                "title": p.title,
+                "abstract": p.abstract,
+            }
+            for p in papers
+        ]
+
+        return await generate_suggested_questions(paper_metadata, llm, history=history_text)
+    except Exception as exc:
+        logger.error(f"Failed to get suggested questions: {exc}")
+        return [
+            "What are the main findings across my library?",
+            "How do the methodologies in these papers compare?",
+            "What are the common limitations found in this research?",
+        ]

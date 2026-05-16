@@ -19,8 +19,8 @@ _COMPARISON_PATTERNS = re.compile(
 )
 
 _SUMMARY_PATTERNS = re.compile(
-    r"\b(summar|overview|outline|describe|explain.*paper|what is.*paper|"
-    r"gist|brief|tl;?dr|recap|main points?)\b",
+    r"\b(summar|overview|outline|gist|brief|tl;?dr|recap|main points?)\b|"
+    r"\b(describe|explain|what is)\b.*?\b(paper|article|work|document|study|research)\b",
     re.IGNORECASE,
 )
 
@@ -138,12 +138,12 @@ def classify_query(
     return classification
 
 _ROUTING_HINTS: dict[QueryType, tuple[int, bool]] = {
-    QueryType.COMPARISON: (3, True),
-    QueryType.SUMMARY: (15, False),
-    QueryType.MULTI_HOP: (6, False),
+    QueryType.COMPARISON: (10, True),
+    QueryType.SUMMARY: (20, False),
+    QueryType.MULTI_HOP: (15, False),
     QueryType.METADATA: (0, False),
-    QueryType.FOLLOW_UP: (4, False),
-    QueryType.SIMPLE_QA: (4, False),
+    QueryType.FOLLOW_UP: (15, False),
+    QueryType.SIMPLE_QA: (15, False),
 }
 
 def _build_classification(

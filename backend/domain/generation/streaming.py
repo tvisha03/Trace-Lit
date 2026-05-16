@@ -18,6 +18,9 @@ from domain.retrieval.query_router import classify_query, QueryClassification
 from infrastructure.vector_store.faiss_store import FAISSStore
 from shared.utils.streaming_utils import sse_event
 from shared.logger import get_logger
+# pyrefly: ignore [missing-import]
+from sqlalchemy import select
+from infrastructure.db.models.evaluation import EvaluationCache
 
 logger = get_logger(__name__)
 
@@ -31,6 +34,10 @@ def _validate_and_strip_citations(
     session_id: str,
 ) -> tuple[str, bool]:
     valid_pids = {c.paragraph_id for c in chunks}
+    # Add short IDs to valid set to prevent stripping ambiguous citations
+    for pid in list(valid_pids):
+        if "_" in pid:
+            valid_pids.add(pid.split("_")[-1])
     raw_cited = set(extract_paragraph_ids(full_text))
 
     cited_ids, short_to_long = normalize_paragraph_ids(raw_cited, valid_pids)
@@ -97,6 +104,13 @@ async def _emit_havf_results(full_text: str, chunks: list, paper_ids: list[str],
         medium_threshold=settings.HAVF_MEDIUM_THRESHOLD,
         cross_encoder_threshold=settings.HAVF_CROSS_ENCODER_THRESHOLD,
     )
+
+    from services.chat_service import _classifier
+    all_chunks = [
+        {"text": c.text, "paper_id": str(c.paper_id)} 
+        for c in chunks
+    ]
+
     return [
         {
             "claim": r.claim,
@@ -114,6 +128,17 @@ async def _emit_havf_results(full_text: str, chunks: list, paper_ids: list[str],
             "page_number": r.page_number,
             "bbox": r.bbox,
             "full_context": r.full_context,
+            "cross_encoder_score": r.cross_encoder_score,
+            "semantic_score": r.semantic_score,
+            "transformation_type": (t := _classifier.classify(
+                claim=r.claim,
+                source_sentence=r.source_sentence,
+                semantic_similarity=r.semantic_score or r.score,
+                cross_encoder_score=r.cross_encoder_score,
+                all_retrieved_sources=all_chunks
+            )).type,
+            "transformation_confidence": t.confidence,
+            "transformation_reason": t.reason,
         }
         for r in havf_results
     ]
@@ -322,6 +347,27 @@ async def stream_chat_response(
         classification = await _classify_and_validate_query(
             query, len(paper_ids), history
         )
+
+        # Filter papers based on query keywords
+        try:
+            from domain.retrieval.paper_detector import detect_target_papers
+            from infrastructure.db.crud.paper_crud import get_paper
+            
+            papers_meta = []
+            for pid in paper_ids:
+                paper = await get_paper(db_session, pid)
+                if paper:
+                    papers_meta.append({"id": str(paper.id), "title": paper.title or ""})
+            
+            paper_boosts = detect_target_papers(query, papers_meta)
+            targeted_pids = [pid for pid, score in paper_boosts.items() if score > 1.0]
+            
+            if targeted_pids:
+                logger.info(f"Filtering papers for streaming query: {len(paper_ids)} -> {len(targeted_pids)}")
+                paper_ids = targeted_pids
+        except Exception as e:
+            logger.warning(f"Failed to filter papers in stream_chat_response: {e}")
+
         yield sse_event(
             "query_type", json.dumps({"type": classification.query_type.value})
         )
@@ -330,11 +376,15 @@ async def stream_chat_response(
             query, paper_ids, faiss_store, db_session, classification, keywords
         )
 
+        # Final sanity check: only include papers in the prompt that actually provided context
+        if chunks:
+            retrieved_pids = {c.paper_id for c in chunks}
+            if len(retrieved_pids) < len(paper_ids):
+                logger.info(f"Pruning papers with no retrieval hits in streaming: {len(paper_ids)} -> {len(retrieved_pids)}")
+                paper_ids = [pid for pid in paper_ids if pid in retrieved_pids]
+
         if is_eval_query:
             try:
-                from sqlalchemy import select
-                from infrastructure.db.models.evaluation import EvaluationCache
-
                 pids_str = ",".join(sorted(paper_ids))
                 stmt = select(EvaluationCache).where(
                     EvaluationCache.query == query,

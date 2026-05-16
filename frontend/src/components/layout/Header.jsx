@@ -1,7 +1,7 @@
 /**
  * TraceLit — Topbar
  *
- * Full-width 50 px header: logo • nav tabs • status dot • session picker •
+ * Full-width 60 px header: logo • nav tabs • status dot • session picker •
  * export button • avatar.
  *
  * Props:
@@ -17,11 +17,11 @@
 import { useState, useRef, useEffect } from 'react';
 
 const NAV = [
-  { id: 'chat',    label: 'Chat' },
+  { id: 'chat', label: 'Chat' },
   { id: 'compare', label: 'Compare' },
-  { id: 'gaps',    label: 'Gaps' },
-  { id: 'review',  label: 'Review' },
-  { id: 'verify',  label: 'Verify' },
+  { id: 'review', label: 'Review' },
+  { id: 'gaps', label: 'Gaps' },
+  { id: 'verify', label: 'Verify' },
 ];
 
 export default function Header({
@@ -33,6 +33,8 @@ export default function Header({
   onNewSession,
   onExport,
   comparedCount = 0,
+  isRightPanelOpen = true,
+  onToggleRightPanel,
 }) {
   const [sessionOpen, setSessionOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -50,22 +52,13 @@ export default function Header({
 
   return (
     <header
-      className="flex items-center h-[50px] px-4 bg-tl-s1 border-b border-tl-b1 flex-shrink-0 gap-4"
+      className="flex items-center h-[60px] px-4 bg-tl-s1 border-b border-tl-b1 flex-shrink-0 gap-4"
       style={{ minWidth: 0 }}
     >
       {/* ── Logo ─────────────────────────────────────────────────────── */}
-      <div className="flex items-baseline gap-1.5 flex-shrink-0">
-        <span className="font-serif text-[17px] tracking-tight text-tl-t1">
+      <div className="flex items-baseline gap-2 flex-shrink-0 mr-4">
+        <span className="font-serif text-[20px] font-bold tracking-tight text-tl-t1">
           TraceLit
-        </span>
-        <span
-          className="font-mono text-[9px] tracking-[0.12em] uppercase text-tl-gold px-[5px] py-[1px] rounded-sm"
-          style={{
-            border: '1px solid rgba(201,169,110,0.35)',
-            background: 'rgba(201,169,110,0.06)',
-          }}
-        >
-          BETA
         </span>
       </div>
 
@@ -78,17 +71,15 @@ export default function Header({
             <button
               key={id}
               onClick={() => onTabChange(id)}
-              className={`flex items-center gap-1.5 px-3 py-[5px] rounded text-[13px] whitespace-nowrap transition-colors ${
-                isActive
-                  ? 'bg-tl-s3 text-tl-t1'
+              className={`flex items-center gap-2 px-4 py-[7px] rounded-full text-[13px] font-medium whitespace-nowrap transition-all duration-300 ${isActive
+                  ? 'bg-tl-gold/10 text-tl-gold shadow-sm ring-1 ring-tl-gold/20'
                   : 'text-tl-t3 hover:text-tl-t2 hover:bg-tl-s2'
-              }`}
+                }`}
             >
               {label}
               {badge && (
                 <span
-                  className="font-mono text-[9px] px-[5px] py-px rounded text-tl-gold"
-                  style={{ background: 'rgba(201,169,110,0.15)' }}
+                  className="font-mono text-[9px] px-[6px] py-[1px] rounded-full text-tl-bg font-bold bg-tl-gold"
                 >
                   {badge}
                 </span>
@@ -105,12 +96,12 @@ export default function Header({
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setSessionOpen((o) => !o)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11.5px] text-tl-t3 bg-tl-s2 border border-tl-b1 hover:bg-tl-s3 hover:text-tl-t2 hover:border-tl-b2 transition-colors"
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-[12px] font-medium text-tl-t2 bg-tl-s2 border border-tl-b1 hover:bg-tl-s3 hover:text-tl-t1 hover:border-tl-b2 transition-all shadow-sm"
           >
-            <span className="max-w-[100px] truncate">
+            <span className="max-w-[120px] truncate">
               {activeSession?.title ?? 'No session'}
             </span>
-            <span className="text-tl-t4">▾</span>
+            <span className="text-tl-t4 text-[10px]">▼</span>
           </button>
 
           {sessionOpen && (
@@ -122,11 +113,10 @@ export default function Header({
                 <button
                   key={s.id}
                   onClick={() => { onSessionChange(s); setSessionOpen(false); }}
-                  className={`w-full text-left px-3.5 py-2.5 text-[12px] transition-colors ${
-                    s.id === activeSession?.id
+                  className={`w-full text-left px-3.5 py-2.5 text-[12px] transition-colors ${s.id === activeSession?.id
                       ? 'text-tl-gold bg-tl-s3'
                       : 'text-tl-t2 hover:bg-tl-s3 hover:text-tl-t1'
-                  }`}
+                    }`}
                 >
                   {s.title}
                 </button>
@@ -154,6 +144,26 @@ export default function Header({
           onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(201,169,110,0.1)'; }}
         >
           ↓ Export
+        </button>
+
+        {/* Panel Toggle */}
+        <button
+          onClick={onToggleRightPanel}
+          className={`w-[32px] h-[32px] flex items-center justify-center rounded-full transition-all duration-300 ${isRightPanelOpen
+              ? 'bg-tl-gold text-tl-bg shadow-lg shadow-tl-gold/20'
+              : 'bg-tl-s2 text-tl-t3 border border-tl-b1 hover:bg-tl-s3'
+            }`}
+          title={isRightPanelOpen ? "Close Library Panel" : "Open Library Panel"}
+        >
+          {isRightPanelOpen ? (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+          ) : (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1m-6 4h4m-2 2v-4" />
+            </svg>
+          )}
         </button>
 
         {/* Avatar */}

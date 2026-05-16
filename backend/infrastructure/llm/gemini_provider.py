@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
+# pyrefly: ignore [missing-import]
 from google import genai
 from google.genai import types
 

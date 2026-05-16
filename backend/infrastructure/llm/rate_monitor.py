@@ -22,14 +22,14 @@ _PERSISTENCE_PATH = Path(
 
 _PROVIDER_LIMITS: dict[str, dict[str, int]] = {
     LLMProvider.GEMINI.value: {
-        # Gemini 2.5 Flash free tier: 10 RPM, 250k TPD, ~500 RPD (conservative)
-        "tpm": 250_000,
-        "rpm": 10,
-        "rpd": 500,
+        # Gemini 1.5/2.5 Flash free tier: 15 RPM, 1M TPM, 1500 RPD
+        "tpm": 1_000_000,
+        "rpm": 15,
+        "rpd": 1500,
     },
     LLMProvider.GROQ.value: {
-        # llama-3.1-8b-instant free tier: 20k TPM, 30 RPM, 14.4k RPD
-        "tpm": 20_000,
+        # llama-3.1-8b-instant free tier: 30k TPM, 30 RPM, 14.4k RPD
+        "tpm": 30_000,
         "rpm": 30,
         "rpd": 14_400,
     },

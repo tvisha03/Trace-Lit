@@ -39,7 +39,7 @@ export default function PdfViewer({
     if (displayPage && displayPage >= 1) {
       hashParts.push(`page=${displayPage}`);
     }
-    hashParts.push("zoom=auto");
+    hashParts.push("zoom=90");
     const hash = hashParts.length > 0 ? `#${hashParts.join("&")}` : "";
     return `${url}${hash}`;
   }, [url, targetPage]);

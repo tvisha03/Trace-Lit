@@ -18,15 +18,16 @@ import { analysisApi, sessionsApi } from "../../api/client";
 
 // ─── Tool definitions ─────────────────────────────────────────────────────────
 const ANALYSIS_TOOLS = [
-  { id: "compare", icon: "⊞", label: "Compare", key: "C" },
-  { id: "keywords", icon: "🔑", label: "Keywords", key: "K" },
-  { id: "gaps", icon: "◈", label: "Gaps", key: "G" },
-  { id: "review", icon: "≡", label: "Review", key: "R" },
-  { id: "verify", icon: "✓", label: "Verify", key: "V" },
+  { id: "summary", icon: "", label: "Summary", key: "S" },
+  { id: "compare", icon: "", label: "Compare", key: "C" },
+  { id: "keywords", icon: "", label: "Keywords", key: "K" },
+  { id: "review", icon: "", label: "Review", key: "R" },
+  { id: "gaps", icon: "", label: "Gaps", key: "G" },
+  { id: "verify", icon: "", label: "Verify", key: "V" },
 ];
 
 const PAPER_TOOLS = [
-  { id: "source", icon: "📄", label: "Source", key: "S" },
+  { id: "papers", icon: "", label: "Papers", key: "P" },
 ];
 
 export default function Sidebar({
@@ -36,6 +37,7 @@ export default function Sidebar({
   width = 224,
   sessionError: parentSessionError,
   onRetrySession,
+  onAskQuestion,
 }) {
   const { papers, fetchPapers, applyProgressEvent, progressMap } =
     usePaperStore();
@@ -195,7 +197,7 @@ export default function Sidebar({
     if (!sessionId) return;
     retriesRef.current = 0;
     cleanup();
-    
+
     // Defer connection slightly to bypass React StrictMode double-mount warnings
     const t = setTimeout(() => {
       if (websocketSessionId === sessionId && websocketUrl) {
@@ -392,16 +394,15 @@ export default function Sidebar({
                 ) : (
                   <button
                     onClick={() => setActiveSession(s)}
-                    className={`w-full text-left px-4 py-[10px] pr-12 transition-colors ${
-                      isActive
-                        ? "text-tl-t1"
+                    className={`w-full text-left px-5 py-[14px] pr-12 transition-all duration-300 ${isActive
+                        ? "text-tl-t1 bg-tl-gold/5"
                         : "text-tl-t2 hover:bg-tl-s2 hover:text-tl-t1"
-                    }`}
+                      }`}
                   >
-                    <div className="text-[12.5px] font-medium truncate">
+                    <div className="text-[13px] font-semibold truncate tracking-tight">
                       {s.title}
                     </div>
-                    <div className="font-mono text-[10px] text-tl-t3 mt-0.5">
+                    <div className="font-mono text-[9px] text-tl-t4 mt-1 uppercase tracking-widest opacity-80">
                       {s.paper_count != null
                         ? `${s.paper_count} paper${s.paper_count !== 1 ? "s" : ""}`
                         : "Session"}
@@ -461,9 +462,9 @@ export default function Sidebar({
       </div>
 
       {/* ── Tools pane ─────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto py-3">
+      <div className="flex-1 overflow-y-auto py-6">
         {/* Analysis tools */}
-        <div className="mb-3">
+        <div className="mb-6">
           <div className="px-4 pb-1.5">
             <span className="font-mono text-[9px] tracking-[0.1em] uppercase text-tl-t4">
               Analysis
@@ -475,11 +476,10 @@ export default function Sidebar({
               <button
                 key={tool.id}
                 onClick={() => handleToolClick(tool)}
-                className={`w-full flex items-center gap-2.5 px-4 py-[8px] transition-colors ${
-                  isActive
+                className={`w-full flex items-center gap-3 px-5 py-[10px] transition-all duration-300 ${isActive
                     ? "text-tl-gold"
                     : "text-tl-t2 hover:bg-tl-s2 hover:text-tl-t1"
-                }`}
+                  }`}
                 style={
                   isActive
                     ? { background: "rgba(201,169,110,0.07)" }
@@ -509,11 +509,10 @@ export default function Sidebar({
             <button
               key={tool.id}
               onClick={() => handleToolClick(tool)}
-              className={`w-full flex items-center gap-2.5 px-4 py-[8px] transition-colors ${
-                tool.id === "keywords" && showKeywords
+              className={`w-full flex items-center gap-2.5 px-4 py-[8px] transition-colors ${tool.id === "keywords" && showKeywords
                   ? "text-tl-gold"
                   : "text-tl-t2 hover:bg-tl-s2 hover:text-tl-t1"
-              }`}
+                }`}
               style={
                 tool.id === "keywords" && showKeywords
                   ? { background: "rgba(201,169,110,0.07)" }
@@ -604,15 +603,15 @@ export default function Sidebar({
                   style={
                     i < 10
                       ? {
-                          color: "var(--gold)",
-                          borderColor: "rgba(201,169,110,0.35)",
-                          background: "rgba(201,169,110,0.1)",
-                        }
+                        color: "var(--gold)",
+                        borderColor: "rgba(201,169,110,0.35)",
+                        background: "rgba(201,169,110,0.1)",
+                      }
                       : {
-                          color: "var(--t3)",
-                          borderColor: "var(--b1)",
-                          background: "var(--s1)",
-                        }
+                        color: "var(--t3)",
+                        borderColor: "var(--b1)",
+                        background: "var(--s1)",
+                      }
                   }
                   title={`Score: ${Math.round(score * 100)}%`}
                 >

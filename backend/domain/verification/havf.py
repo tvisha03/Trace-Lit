@@ -9,6 +9,15 @@ from shared.enums import ConfidenceLevel, VerificationMethod
 from shared.utils.text_utils import split_into_sentences
 from shared.logger import get_logger
 from shared.utils.time_utils import timer
+# pyrefly: ignore [missing-import]
+import numpy as np
+# pyrefly: ignore [missing-import]
+from sqlalchemy import select
+# pyrefly: ignore [missing-import]
+import pymupdf
+from infrastructure.db.database import async_session_factory
+from infrastructure.db.models.paper import Paper
+from domain.retrieval.indexer import encode_texts
 
 logger = get_logger(__name__)
 
@@ -30,6 +39,10 @@ _TABLE_DESC_LINE_RE = re.compile(
 )
 _TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
 _MAX_DISPLAY_CHARS = 300
+
+# Cache for table enhancement results to avoid redundant LLM calls during a request
+# Key: (paper_id, paragraph_id), Value: bbox dict
+_TABLE_ENHANCEMENT_CACHE: dict[tuple[str, str], dict] = {}
 
 
 def _clean_table_source(stripped: str, caption: str | None) -> str:
@@ -133,6 +146,8 @@ def _postprocess_display_sources(
             page_number=r.page_number,
             bbox=r.bbox,
             full_context=r.full_context,
+            cross_encoder_score=r.cross_encoder_score,
+            semantic_score=r.semantic_score,
         )
         for r in results
     ]
@@ -175,14 +190,30 @@ def _extract_cited_para_id(claim: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _build_para_source_index(source_sentences: list[dict]) -> dict[str, dict]:
-    index: dict[str, dict] = {}
+def _build_para_source_index(source_sentences: list[dict]) -> dict[str, list[dict]]:
+    # Change: Store a list of candidates for each ID to handle multi-paper collisions
+    index: dict[str, list[dict]] = {}
     for src in source_sentences:
         pid = src.get("paragraph_id")
-        if pid and pid not in index:
-            # Also handle the sentence-level key if needed, 
-            # but primary index is by paragraph_id for citation matching
-            index[pid] = src
+        if not pid:
+            continue
+            
+        # Index by full ID (abc12345_P12)
+        if pid not in index:
+            index[pid] = [src]
+        else:
+            index[pid].append(src)
+            
+        # Also index by short ID (P12)
+        short_id = pid.split("_")[-1] if "_" in pid else pid
+        if short_id not in index:
+            index[short_id] = [src]
+        else:
+            # If P12 already exists (from another paper), add this one as a candidate
+            # Avoid adding the same exact src twice if pid was already short
+            if src not in index[short_id]:
+                index[short_id].append(src)
+                
     return index
 
 
@@ -195,28 +226,41 @@ def _apply_citation_correction(
     if ce_threshold is None:
         ce_threshold = get_settings().HAVF_CROSS_ENCODER_THRESHOLD
     
-    from domain.retrieval.indexer import encode_texts
-    import numpy as np
-
     corrected = []
     for result in results:
         cited_pid = _extract_cited_para_id(result.claim)
+        
+        # Check all candidates for this ID
+        candidates = []
         if cited_pid and cited_pid in para_source_index:
-            src = para_source_index[cited_pid]
+            candidates = para_source_index[cited_pid]
+
+        if candidates:
+            if len(candidates) == 1:
+                src = candidates[0]
+            else:
+                # Disambiguate across multiple papers using the reranker.
+                # We wrap the claim in a dict as expected by rerank_claims.
+                temp_results = [{"claim": result.claim}]
+                rerank_claims(temp_results, source_sentences=candidates)
+                
+                # The reranker updates the dict in-place with the winning paragraph_id.
+                winner_pid = temp_results[0].get("paragraph_id")
+                src = next((c for c in candidates if c["paragraph_id"] == winner_pid), candidates[0])
+
             
-            # If the current result already matched the cited PID, keep it
-            if result.paragraph_id == cited_pid:
+            # If the current result already matched the winner, keep it
+            if result.paragraph_id == src["paragraph_id"]:
                 corrected.append(result)
                 continue
 
-            # If it matched something ELSE, we must re-evaluate against the cited PID
-            # to ensure the 'Source' shown in UI actually matches the claim.
-            logger.debug(f"Citation correction: overriding match {result.paragraph_id} with cited {cited_pid}")
+            logger.debug(f"Citation correction: mapped {cited_pid} to {src['paragraph_id']}")
             
-            # Simple embedding check for the corrected source
+            # Use the score we might have already calculated if we did collision resolution
+            # but for consistency we re-calculate or use the one from candidate search
             claim_vec = encode_texts([result.claim])
             src_vec = encode_texts([src["text"]])
-            new_score = (claim_vec @ src_vec.T).item()
+            new_score = float((claim_vec @ src_vec.T).flatten()[0])
             
             settings = get_settings()
             new_conf = ConfidenceLevel.LOW
@@ -239,6 +283,8 @@ def _apply_citation_correction(
                 page_number=src.get("page_number"),
                 bbox=src.get("bbox"),
                 full_context=src.get("full_context"),
+                cross_encoder_score=result.cross_encoder_score,
+                semantic_score=new_score,
             ))
         else:
             corrected.append(result)
@@ -260,6 +306,11 @@ class VerificationResult:
     page_number: int | None = None
     full_context: str | None = None
     bbox: dict | None = None
+    cross_encoder_score: float | None = None
+    semantic_score: float | None = None
+    transformation_type: str | None = None
+    transformation_confidence: float | None = None
+    transformation_reason: str | None = None
 
 
 _PARAGRAPH_TYPE_MAP: dict[str, str] = {"F": "figure", "T": "table", "E": "formula"}
@@ -395,20 +446,41 @@ async def verify_response(
             medium_threshold=m_thresh,
         )
         results = await _process_verification_results(
-            level1_results, valid_claims, source_sentences, ce_thresh
+            level1_results, valid_claims, source_sentences, ce_thresh, h_thresh
         )
         all_results = short_results + results
+        # Level 2: Citation Correction & Table Enhancement
         para_index = _build_para_source_index(source_sentences)
         all_results = _apply_citation_correction(all_results, para_index, ce_thresh)
         all_results = _postprocess_display_sources(all_results)
 
+        # Level 3: Visual Enhancement (BBoxes)
         try:
-            enhanced_results = []
+            # Group by paper+para to avoid redundant processing
+            unique_table_citations = {}
             for r in all_results:
-                if r.chunk_type == "table":
-                    r = await _enhance_table_result(r)
-                enhanced_results.append(r)
-            all_results = enhanced_results
+                if r.chunk_type == "table" and r.paper_id and r.paragraph_id:
+                    key = (r.paper_id, r.paragraph_id)
+                    if key not in unique_table_citations:
+                        unique_table_citations[key] = r
+
+            # Process unique table citations (results are cached in module)
+            for key, representative_r in unique_table_citations.items():
+                if key not in _TABLE_ENHANCEMENT_CACHE:
+                    enhanced = await _enhance_table_result(representative_r)
+                    if enhanced.bbox:
+                        _TABLE_ENHANCEMENT_CACHE[key] = enhanced.bbox
+
+            # Apply cached enhancements to all matching results
+            for r in all_results:
+                if r.chunk_type == "table" and r.paper_id and r.paragraph_id:
+                    cached_bbox = _TABLE_ENHANCEMENT_CACHE.get((r.paper_id, r.paragraph_id))
+                    if cached_bbox:
+                        r.bbox = cached_bbox
+                        # Also update page number if it was corrected
+                        if "page" in cached_bbox:
+                            r.page_number = cached_bbox["page"]
+
         except Exception as exc:
             logger.warning(f"Failed to enhance table bboxes: {exc}")
 
@@ -443,7 +515,7 @@ Rules:
 - If no table is identified, return all fields as null"""
 
     try:
-        llm = FallbackChain()
+        llm = FallbackChain(use_local_only=True)
         res_text, provider, _ = await llm.generate(
             system_prompt="You are a helpful academic assistant that extracts info in JSON.",
             user_prompt=prompt,
@@ -608,7 +680,7 @@ Return JSON:
 }}"""
 
     try:
-        llm = FallbackChain()
+        llm = FallbackChain(use_local_only=True)
         res_text, provider, _ = await llm.generate(
             system_prompt="You are a helpful academic assistant that returns verification in JSON.",
             user_prompt=prompt,
@@ -627,12 +699,6 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
     if not r.paper_id:
         return r
     
-    from infrastructure.db.database import async_session_factory
-    from sqlalchemy import select
-    from infrastructure.db.models.paper import Paper
-    import pymupdf
-    import re
-
     paper_path = None
     async with async_session_factory() as db:
         try:
@@ -666,8 +732,8 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
         return r
 
     try:
-        orig_page = r.page_number if r.page_number is not None else 1
-        page_idx = orig_page - 1
+        orig_page = r.page_number if r.page_number is not None else 0
+        page_idx = orig_page
 
         caption_bbox = None
         found_page_idx = page_idx
@@ -704,11 +770,11 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
             is_valid = await _verify_table_region(chunk_text, text_near_candidate)
             
             if is_valid:
-                r.page_number = found_page_idx + 1
+                r.page_number = found_page_idx
                 r.bbox = {
                     "source_type": "table",
-                    "table_id": f"table_{found_page_idx + 1}_{table_num or 1}",
-                    "page": found_page_idx + 1,
+                    "table_id": f"table_{found_page_idx}_{table_num or 0}",
+                    "page": found_page_idx,
                     "caption_bbox": caption_bbox,
                     "table_bbox": actual_table_bbox or estimated_table_bbox,
                     "caption_text": caption_text or f"Table {table_num or 1}",
@@ -729,8 +795,8 @@ async def _enhance_table_result(r: VerificationResult) -> VerificationResult:
 
             r.bbox = {
                 "source_type": "table",
-                "table_id": f"table_{found_page_idx + 1}_1",
-                "page": found_page_idx + 1,
+                "table_id": f"table_{found_page_idx}_1",
+                "page": found_page_idx,
                 "table_bbox": first_image_rect or (50.0, page_height * 0.2, page_width - 50.0, page_height * 0.8),
                 "caption_text": f"Table {table_num or 1}",
             }
@@ -810,6 +876,7 @@ async def _process_verification_results(
     claims: list[str],
     source_sentences: list[dict],
     cross_encoder_threshold: float,
+    high_threshold: float,
 ) -> list[VerificationResult]:
     uncertain = [r for r in level1_results if r.get("needs_reranking")]
     resolved = [r for r in level1_results if not r.get("needs_reranking")]
@@ -820,6 +887,7 @@ async def _process_verification_results(
             uncertain,
             source_sentences=source_sentences,
             cross_encoder_threshold=cross_encoder_threshold,
+            high_threshold=high_threshold,
         )
         resolved.extend(reranked)
 
@@ -852,6 +920,8 @@ def _build_final_results(
                 page_number=r.get("page_number"),
                 bbox=r.get("bbox"),
                 full_context=r.get("full_context"),
+                cross_encoder_score=r.get("cross_encoder_score"),
+                semantic_score=r.get("semantic_score", r.get("best_score")),
             )
         )
     return final

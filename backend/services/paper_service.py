@@ -1,7 +1,9 @@
 import asyncio
 import uuid
+from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+# pyrefly: ignore [missing-import]
+from sqlalchemy.ext.asyncio import AsyncSession # pyreflow: ignore
 
 from domain.extraction.pdf_processor import extract_pdf
 from domain.extraction.section_parser import parse_sections
@@ -426,7 +428,7 @@ def _remove_paper_from_faiss(
 
 def _delete_paper_pdf(
     paper_id: str,
-    pdf_path: "Path | None",
+    pdf_path: Path | None,
 ) -> None:
     if not pdf_path:
         return
@@ -440,8 +442,6 @@ def _delete_paper_images(
     paper_id: str,
     image_paths: list[str],
 ) -> None:
-    from pathlib import Path
-
     deleted_images = 0
     for img_str in image_paths:
         try:
@@ -457,7 +457,6 @@ async def delete_paper(
     db: AsyncSession,
     faiss_store: FAISSStore,
 ) -> bool:
-    from pathlib import Path
     from infrastructure.db.crud.chunk_crud import delete_chunks_by_paper
     from infrastructure.db.crud.paper_crud import delete_paper as db_delete_paper
 

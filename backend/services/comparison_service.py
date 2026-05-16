@@ -1,6 +1,7 @@
 import asyncio
 import csv
 
+# pyrefly: ignore [missing-import]
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -97,33 +98,12 @@ async def _run_comparison(
 
 
 def _normalize_cell_text(text: str) -> str:
-    return " ".join(part.strip() for part in (text or "").replace("<br>", "\n").splitlines() if part.strip())
-
-
-def _parse_delimited_rows(comparison_text: str, expected_columns: int) -> list[list[str]]:
-    lines = [line.strip() for line in (comparison_text or "").splitlines() if line.strip()]
-    candidate_lines = [line for line in lines if any(delim in line for delim in (",", "\t", ";"))]
-    if len(candidate_lines) < 2:
-        return []
-
-    sample = "\n".join(candidate_lines[: min(5, len(candidate_lines))])
-    try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-    except csv.Error:
-        dialect = csv.excel
-
-    rows = [
-        [cell.strip().strip('"') for cell in row]
-        for row in csv.reader(candidate_lines, dialect)
-    ]
-    rows = [row for row in rows if any(cell for cell in row)]
-    if len(rows) < 2:
-        return []
-
-    column_count = max(len(row) for row in rows)
-    if column_count < expected_columns:
-        return []
-    return rows
+    """Keep markdown formatting while cleaning up excess whitespace."""
+    if not text:
+        return ""
+    # Convert <br> to newline to support multiline cells in the frontend
+    text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+    return text.strip()
 
 
 def _build_comparison_rows(
@@ -131,13 +111,10 @@ def _build_comparison_rows(
     paper_ids: list[str],
     titles: list[str],
 ) -> list[dict]:
-    # Replace <br> variants with a plain space BEFORE calling build_export_blocks.
-    # _normalize_source_text converts <br> to \n, which splits a single pipe-table
-    # row (whose cells use <br> for inline line breaks) into multiple fragment lines
-    # that the table parser cannot reassemble, causing misaligned or missing columns.
-    import re as _re
-    safe_text = _re.sub(r'<br\s*/?>', ' ', comparison_text, flags=_re.IGNORECASE)
-    for block in build_export_blocks(safe_text):
+    # Collect all candidate tables found in the response
+    candidate_tables: list[list[dict]] = []
+    
+    for block in build_export_blocks(comparison_text, raw_cells=True):
         if block.kind != "table" or not block.rows:
             continue
 
@@ -167,51 +144,13 @@ def _build_comparison_rows(
                 }
             )
         if rows:
-            return rows
+            candidate_tables.append(rows)
 
-    parsed_rows = _parse_delimited_rows(safe_text, expected_columns=len(paper_ids) + 2)
-    if parsed_rows:
-        header, *data_rows = parsed_rows
-        rows: list[dict] = []
-        for row in data_rows:
-            if not row:
-                continue
-            dimension = _normalize_cell_text(row[0]) or _FALLBACK_DIMENSION
-            cells = []
-            for idx, paper_id in enumerate(paper_ids, start=1):
-                cell_text = _normalize_cell_text(row[idx] if idx < len(row) else "")
-                cells.append(
-                    {
-                        "paper_id": paper_id,
-                        "paper_title": titles[idx - 1],
-                        "content": cell_text,
-                    }
-                )
-            synthesis_index = len(paper_ids) + 1
-            rows.append(
-                {
-                    "dimension": dimension,
-                    "cells": cells,
-                    "synthesis": _normalize_cell_text(row[synthesis_index] if synthesis_index < len(row) else ""),
-                }
-            )
-        if rows:
-            return rows
-
-    return [
-        {
-            "dimension": _FALLBACK_DIMENSION,
-            "cells": [
-                {
-                    "paper_id": paper_id,
-                    "paper_title": titles[idx],
-                    "content": "",
-                }
-                for idx, paper_id in enumerate(paper_ids)
-            ],
-            "synthesis": comparison_text.strip(),
-        }
-    ]
+    if not candidate_tables:
+        return []
+        
+    # Return the "best" table (the one with the most rows)
+    return max(candidate_tables, key=len)
 
 
 async def compare_papers(
@@ -239,8 +178,26 @@ async def compare_papers(
 
     logger.info(f"Compared {len(paper_ids)} papers using {provider.value}")
     comparison_table = _build_comparison_rows(text, paper_ids, titles)
+    
+    # Extract narrative (non-table blocks) for the UI overview
+    narrative_parts = []
+    for block in build_export_blocks(text):
+        if block.kind == "table":
+            continue
+        # Aggressively filter out blocks that look like tables but weren't caught by the parser
+        # (e.g. lines with many pipes or tabs)
+        block_lines = block.text.splitlines()
+        clean_lines = [
+            line for line in block_lines 
+            if "|" not in line and line.count("\t") < 2
+        ]
+        if clean_lines:
+            narrative_parts.append("\n".join(clean_lines).strip())
+    narrative = "\n\n".join(narrative_parts).strip()
+
     return {
         "comparison": text,
+        "narrative": narrative,
         "comparison_table": comparison_table,
         "paper_ids": paper_ids,
         "paper_titles": titles,

@@ -14,7 +14,7 @@ from shared.utils.rate_limiter import SlidingWindowRateLimiter
 router = APIRouter()
 
 _comparison_limiter = SlidingWindowRateLimiter(
-    max_calls=10, window_seconds=60.0, resource_name="comparison requests",
+    max_calls=20, window_seconds=60.0, resource_name="comparison requests",
 )
 
 def _get_llm(request: Request) -> FallbackChain:
